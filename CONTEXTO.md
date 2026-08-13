@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance).
 
-**Última actualización:** 2026-08-12
+**Última actualización:** 2026-08-13
 
 ## Estado actual
 
@@ -14,8 +14,10 @@ No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza)
 |---|---|
 | Remoto | `https://github.com/henguido/SibuTestLab8583.git` |
 | Rama | `main`, con seguimiento de `origin/main` |
-| Commits | 1 — `d2b8e77` |
-| Versionado | `PROYECTO.md`, `FICHA-APROBACION.md`, y nada más |
+| Versionado | `PROYECTO.md`, `FICHA-APROBACION.md`, `CONTEXTO.md`, y nada más |
+
+Para el estado exacto de Git —commits, `HEAD`, publicaciones pendientes— consultar `git log` y
+`git status`, no este archivo.
 
 **No existe todavía:** ninguna implementación del simulador (cero archivos de código),
 `CLAUDE.md`, `BITACORA.md`, `README.md`, documento de arquitectura, diagramas, `.gitignore`,
@@ -72,6 +74,7 @@ El motor de carga es fase posterior y reutilizará esos módulos sin modificarlo
 | 2026-08-12 | Se define el stack y la arquitectura: web con FastAPI, SQLite tras un puerto, `pyiso8583`, perfiles de marca y gobernanza de PAN |
 | 2026-08-12 | Corrección de rumbo: el transporte pasa de sockets bloqueantes en threadpool a asíncrono con `asyncio` |
 | 2026-08-12 | Se inicializa Git en `main`, commit `d2b8e77` con los dos documentos aprobados, `origin` configurado y `main` publicado con push normal |
+| 2026-08-12 | Commit `4269e03` incorpora `CONTEXTO.md` como memoria operativa del proyecto |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -130,4 +133,6 @@ Actualizar tras cada iteración significativa. Registrar hechos, no intenciones:
 implementado solo porque fue aprobado. "Estado actual" es la fotografía del presente; "Historial de
 avances" es acumulativo y solo de hitos; "Próximo paso" se actualiza siempre. Si una decisión
 cambia, actualizar "Decisiones vigentes" y dejar la evidencia en el historial. Nunca incluir
-secretos, PAN completos ni credenciales.
+secretos, PAN completos ni credenciales. No duplicar aquí información dinámica que Git provee de
+forma autoritativa —cantidad de commits, SHA de `HEAD`—: conservar SHA solo cuando identifiquen
+un hito histórico concreto.
