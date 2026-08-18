@@ -1,0 +1,45 @@
+# Bases de datos locales.
+# Pueden contener PAN reales de un ambiente de pruebas: nunca se versionan.
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Secretos y configuración de entorno.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Entornos virtuales de Python.
+.venv/
+venv/
+env/
+
+# Cachés y artefactos de Python.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Configuración local de Claude Code, propia de cada máquina.
+# NO se ignora toda la carpeta .claude/: el skill del proyecto debe versionarse.
+.claude/settings.local.json
+
+# Artefactos temporales y de editor.
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

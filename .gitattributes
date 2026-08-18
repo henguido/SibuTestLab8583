@@ -1,0 +1,27 @@
+# Finales de línea reproducibles, independientes del core.autocrlf de cada máquina.
+# Git normaliza a LF al almacenar; el árbol de trabajo usa LF en todas las plataformas.
+* text=auto eol=lf
+
+# Tipos de texto declarados explícitamente.
+*.md      text eol=lf
+*.mmd     text eol=lf
+*.py      text eol=lf
+*.html    text eol=lf
+*.css     text eol=lf
+*.js      text eol=lf
+*.sql     text eol=lf
+*.toml    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.txt     text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# Binarios: Git no debe intentar normalizarlos.
+*.png     binary
+*.jpg     binary
+*.pdf     binary
+*.db      binary
+*.sqlite  binary
+*.sqlite3 binary

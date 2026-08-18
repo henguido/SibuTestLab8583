@@ -1,0 +1,61 @@
+%% SibuTestLab8583 - Recorrido de compra 0100 / 0110
+%% Corresponde a PROYECTO.md seccion 3. Nada de esto esta implementado todavia.
+%% Orden: armar -> validar RN-4 -> codificar -> enviar.
+
+sequenceDiagram
+    autonumber
+    actor U as Usuario
+    participant W as Web
+    participant O as Orquestador
+    participant V as Validacion
+    participant C as Codec
+    participant T as Transporte TCP
+    participant F as FramingStrategy
+    participant H as Host simulado
+    participant R as Repositorio
+
+    U->>W: elige compra y completa tarjeta y monto
+    W->>O: ejecutar_compra(datos, destino, perfil)
+    O->>O: armar mensaje 0100
+
+    O->>V: validar_envio(mensaje, perfil)
+    Note over V: RN-4 campos obligatorios del MTI.<br/>Se valida en el dominio ANTES de codificar.
+    alt falta un campo obligatorio del MTI (RN-4)
+        V-->>O: rechazado, no se envia
+        O->>R: guardar ejecucion no enviada
+        O-->>W: aviso de mensaje mal armado
+        W-->>U: muestra el campo faltante
+    else mensaje completo
+        V-->>O: aprobado para envio
+
+        O->>C: codificar(mensaje, perfil)
+        C-->>O: bytes opacos
+
+        O->>T: enviar(bytes, destino, limite 10 s)
+        T->>F: preparar(bytes)
+        F-->>T: bytes enmarcados
+        T->>H: 0100 enmarcado
+
+        alt sin respuesta en 10 s
+            T-->>O: Timeout
+            Note over O: RN-2 el orquestador convierte el Timeout<br/>en resultado de ejecucion y lo persiste<br/>aparte de un rechazo explicito.
+            O->>R: guardar ejecucion como timeout
+            O-->>W: resultado timeout
+        else respuesta recibida
+            H-->>T: 0110 enmarcado
+            T->>F: leer_mensaje_completo(stream)
+            F-->>T: bytes de un mensaje completo
+            T-->>O: bytes opacos de respuesta
+
+            O->>C: decodificar(bytes, perfil)
+            C-->>O: mensaje interpretado por campo
+
+            O->>V: evaluar_respuesta(envio, respuesta, catalogo)
+            Note over V: RN-1 campo 39 segun catalogo.<br/>RN-3 los demas campos coinciden.
+            V-->>O: Aprobada, Rechazada o Invalida
+            O->>R: guardar envio, respuesta y resultado
+        end
+
+        O-->>W: resultado y campos interpretados
+        W-->>U: isoscopio con PAN enmascarado
+    end

@@ -1,0 +1,64 @@
+%% SibuTestLab8583 - Componentes, dependencias y limites
+%% Alcance: compra 0100 -> TCP -> respuesta 0110
+%% Nada de esto esta implementado todavia.
+
+flowchart TD
+
+    subgraph interfaz["Interfaz"]
+        WEB["Web - FastAPI + Jinja<br/>formulario · isoscopio · historial"]
+    end
+
+    subgraph aplicacion["Aplicacion"]
+        ORQ["Orquestador<br/>armar · validar · enviar<br/>interpretar · evaluar · persistir"]
+    end
+
+    subgraph dominio["Dominio y puertos"]
+        VAL["Validacion<br/>RN-1 a RN-4 · pura"]
+        PERF["Perfiles<br/>PerfilDeMarca"]
+        CAT["CatalogoDeRespuestas"]
+        PTRANS(["puerto<br/>Transporte"])
+        PFRAM(["puerto<br/>FramingStrategy"])
+        PREPO(["puerto<br/>Repositorios · async"])
+    end
+
+    subgraph adaptadores["Adaptadores"]
+        CODEC["Codec ISO 8583<br/>sobre pyiso8583"]
+        TCP["Transporte TCP<br/>asyncio"]
+        FRAM["Framing concreto<br/>por definir"]
+        REPO["Repositorio SQLite<br/>aiosqlite"]
+    end
+
+    HOST["Host simulado<br/>servidor TCP · proceso aparte"]
+    CARGA["Motor de carga<br/>FASE POSTERIOR"]
+
+    WEB --> ORQ
+    ORQ --> VAL
+    ORQ --> CODEC
+    ORQ --> PERF
+    ORQ --> PTRANS
+    ORQ --> PREPO
+    VAL --> CAT
+    VAL --> PERF
+    CODEC --> PERF
+    PTRANS -.implementado por.-> TCP
+    PFRAM -.implementado por.-> FRAM
+    PREPO -.implementado por.-> REPO
+    TCP --> PFRAM
+    TCP -. socket TCP .-> HOST
+    HOST --> CODEC
+    CARGA -. reutiliza sin modificar .-> PTRANS
+    CARGA -. reutiliza sin modificar .-> VAL
+    CARGA -. reutiliza sin modificar .-> PREPO
+
+    subgraph limites["Limites que no se cruzan"]
+        L1["La web no conoce SQLite, sockets ni pyiso8583"]
+        L2["El transporte no conoce ISO 8583: recibe bytes opacos<br/>y delega enmarcado y desenmarcado a FramingStrategy"]
+        L3["La web y el orquestador no conocen el formato de framing"]
+        L4["La validacion es pura: sin red ni base de datos.<br/>RN-4 se valida antes de codificar"]
+        L5["PerfilDeMarca y CatalogoDeRespuestas no se acoplan"]
+    end
+
+    classDef posterior stroke-dasharray: 5 5;
+    class CARGA posterior;
+    classDef nota fill:none,stroke:none;
+    class L1,L2,L3,L4,L5 nota;
