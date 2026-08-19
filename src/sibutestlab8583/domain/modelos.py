@@ -114,6 +114,74 @@ class MensajeIso:
 
 
 @dataclass(frozen=True)
+class CampoInterpretado:
+    """Un campo ISO tal como quedo tras decodificar.
+
+    Conserva el valor, los bytes crudos y la descripcion del perfil: es lo que
+    alimentara el isoscopio.
+    """
+
+    numero: str
+    valor: str
+    crudo: str
+    descripcion: str
+
+
+@dataclass(frozen=True)
+class MensajeInterpretado:
+    """Resultado de decodificar un mensaje, campo por campo."""
+
+    mti: str
+    campos: Mapping[str, CampoInterpretado] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "campos", MappingProxyType(dict(self.campos)))
+
+    def como_mensaje(self) -> MensajeIso:
+        """Vista de dominio, sin los detalles de codificacion."""
+        return MensajeIso(self.mti, {n: c.valor for n, c in self.campos.items()})
+
+    def valor(self, numero: str) -> str | None:
+        campo = self.campos.get(numero)
+        return campo.valor if campo else None
+
+    def enmascarado(self) -> MensajeInterpretado:
+        """Copia con los campos de tarjeta enmascarados, apta para mostrar o guardar."""
+        return MensajeInterpretado(
+            self.mti,
+            {
+                numero: (
+                    campo
+                    if numero not in CAMPOS_SENSIBLES
+                    else CampoInterpretado(
+                        numero=campo.numero,
+                        valor=enmascarar_pan(campo.valor),
+                        crudo=enmascarar_pan(campo.crudo),
+                        descripcion=campo.descripcion,
+                    )
+                )
+                for numero, campo in self.campos.items()
+            },
+        )
+
+    def __str__(self) -> str:
+        return f"MensajeInterpretado(mti={self.mti}, campos={sorted(self.campos)})"
+
+    __repr__ = __str__
+
+
+@dataclass(frozen=True)
+class TiempoAgotado:
+    """El destino no respondio dentro del limite.
+
+    No es una excepcion: es un resultado esperado del transporte, y RN-2 exige
+    contarlo aparte de un rechazo explicito del switch.
+    """
+
+    limite_segundos: float
+
+
+@dataclass(frozen=True)
 class ResultadoValidacion:
     """Salida de la validacion previa al envio (RN-4)."""
 
@@ -166,3 +234,25 @@ class Ejecucion:
     latencia_ms: int | None = None
     creada_en: datetime = field(default_factory=_ahora)
     id: int | None = None
+
+
+@dataclass(frozen=True)
+class ResultadoCompra:
+    """Lo que el orquestador devuelve tras ejecutar un recorrido completo.
+
+    Lleva todo lo que la interfaz web y el isoscopio necesitaran mas adelante,
+    ya enmascarado. No expone bytes crudos con datos de tarjeta.
+    """
+
+    ejecucion: Ejecucion
+    solicitud: MensajeIso
+    respuesta: MensajeInterpretado | None = None
+    motivos: tuple[str, ...] = ()
+
+    @property
+    def estado(self) -> EstadoEjecucion:
+        return self.ejecucion.estado
+
+    @property
+    def aprobada(self) -> bool:
+        return self.ejecucion.estado is EstadoEjecucion.APROBADA

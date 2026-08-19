@@ -4,12 +4,12 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-08-17
+**Última actualización:** 2026-08-19
 
 ## Estado actual
 
-**Fase:** Sesión 5 del calendario de `PROYECTO.md` §9 — fundación ejecutable construida; el
-recorrido de compra todavía no funciona de extremo a extremo.
+**Fase:** Sesión 5 del calendario de `PROYECTO.md` §9 — el recorrido de compra funciona de
+extremo a extremo contra el host simulado. Falta la interfaz web.
 
 | | |
 |---|---|
@@ -21,20 +21,19 @@ recorrido de compra todavía no funciona de extremo a extremo.
 Para el estado exacto de Git —commits, `HEAD`, qué está publicado— consultar `git log` y
 `git status`, no este archivo.
 
-**Qué funciona y está verificado:** el paquete se instala en modo editable; el perfil genérico
-codifica y decodifica un `0100` y un `0110` reales con `pyiso8583`; el catálogo genérico expone
-los seis códigos con solo `00` aprobado; la base SQLite se inicializa de forma idempotente
-(`sibu-init-db`) y los tres repositorios asíncronos guardan y recuperan. 28 pruebas en verde
-sobre **Python 3.13.3**, la única versión instalada en la máquina de desarrollo.
+**Qué funciona y está verificado:** una compra completa `0100 → TCP → 0110` contra el host
+simulado propio, con codec, framing, transporte y SQLite reales, terminando en una ejecución
+persistida y enmascarada. Las cuatro reglas de negocio están implementadas y probadas. El
+paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
+**75 pruebas en verde** sobre **Python 3.13.3**, la única versión instalada en la máquina.
 
-**Todavía NO existe:** el recorrido `0100`/`0110` de extremo a extremo, el codec como adaptador,
-la validación de las cuatro reglas, el transporte TCP, el framing concreto, el host simulado, el
-orquestador, la interfaz web, el motor de carga, `README.md`, integración continua, Docker ni
+**Todavía NO existe:** la interfaz web (FastAPI, HTML/Jinja, isoscopio en pantalla), el motor
+de carga, los perfiles reales de Visa y Mastercard, `README.md`, integración continua, Docker ni
 skill propio en `.claude/`.
 
 ## Decisiones vigentes
 
-Todas acordadas. **Aún no implementadas en código funcional.**
+Acordadas y, salvo donde se indique, **ya implementadas y probadas**.
 
 | Ámbito | Decisión |
 |---|---|
@@ -44,8 +43,8 @@ Todas acordadas. **Aún no implementadas en código funcional.**
 | Persistencia | Contrato de repositorio **asíncrono**; adaptador inicial SQLite con `aiosqlite` para el MVP. PostgreSQL es evolución futura y no se implementa ahora |
 | Codec ISO 8583 | `pyiso8583`; recibe la especificación como parámetro, lo que sirve de punto de inyección de perfiles |
 | Transporte TCP | Asíncrono desde el inicio (`asyncio.open_connection()`), para que el motor de carga reutilice el mismo contrato sin reescritura |
-| Framing | Contrato independiente (`FramingStrategy`), invocado por el transporte y solo por él; la web y el orquestador no conocen el formato. Sin formato concreto asignado todavía |
-| Perfiles de marca | La arquitectura contempla Visa y Mastercard, pero **no se inventan sus especificaciones**: solo se implementan con documentos autorizados dentro del proyecto |
+| Framing | Contrato independiente (`FramingStrategy`), invocado por el transporte y solo por él; la web y el orquestador no conocen el formato. Implementado un framing **de demostración**: prefijo binario de 2 bytes big-endian. El de un switch real dependerá de su especificación |
+| Perfiles de marca | La arquitectura contempla Visa y Mastercard, pero **no se inventan sus especificaciones**: solo se implementan con documentos autorizados dentro del proyecto. Hoy existe únicamente el perfil genérico |
 | Catálogo de respuestas | Genérico para la demostración: `00`, `05`, `14`, `51`, `54`, `94` |
 | Portabilidad | Ejecutable en local, en infraestructura bancaria, en contenedor o como servicio cloud. Docker es distribución posterior, no dependencia para desarrollar |
 
@@ -64,15 +63,23 @@ Mastercard no contradice el alcance: lo excluido son los catálogos de *respuest
 - Fuera de su pantalla de mantenimiento, mostrar solo `************1234`.
 - El archivo SQLite que contenga tarjetas reales de QA no debe versionarse.
 
-## Arquitectura acordada — todavía no implementada
+## Arquitectura
 
 Documento completo en `docs/arquitectura/ARQUITECTURA.md`, con diagramas versionados en
 `componentes.mmd` y `flujo-compra.mmd`. Aquí solo lo indispensable para orientarse:
 
 Dirección de dependencia: `web → application service → dominio/puertos → adaptadores`.
 
-Módulos: web, orquestador, perfiles, codec ISO 8583, validación, transporte TCP, framing,
-persistencia, host simulado, y motor de carga como fase posterior.
+Módulos implementados: orquestador, perfiles, codec ISO 8583, validación, framing, transporte
+TCP, persistencia y host simulado. Pendientes: web y motor de carga.
+
+RN-3 compara los campos **3, 4, 7, 11 y 41**, derivados del perfil (obligatorios de la respuesta
+menos el campo 39). RN-3 se evalúa **antes** que RN-1: una respuesta aprobada que no corresponde
+a la solicitud es `Invalida`, nunca `Aprobada`. Ese orden es el mecanismo contra falsos positivos
+que exige `PROYECTO.md` §7.6.
+
+Framing de demostración: prefijo binario de 2 bytes big-endian con la longitud del payload. No se
+atribuye a ninguna marca.
 
 Tres límites que no se cruzan: la web no conoce SQLite, sockets ni `pyiso8583`; el transporte no
 conoce ISO 8583 —recibe bytes opacos y delega el enmarcado a `FramingStrategy`—; la validación de
@@ -89,19 +96,20 @@ reglas de negocio es pura y RN-4 se aplica antes de codificar.
 | 2026-08-12 | Commit `4269e03` incorpora `CONTEXTO.md` como memoria operativa del proyecto |
 | 2026-08-13 | Primera iteración arquitectónica: se crean `CLAUDE.md`, `BITACORA.md`, `.gitignore`, `.gitattributes` y `docs/arquitectura/`. Se decide persistencia asíncrona con `aiosqlite` y framing como contrato independiente |
 | 2026-08-17 | Commit `5072c51` publica esa iteración arquitectónica |
-| 2026-08-17 | Fundación ejecutable: proyecto Python instalable, modelos de dominio, perfil genérico, catálogo, persistencia SQLite asíncrona con inicialización idempotente y 20 pruebas técnicas en verde |
+| 2026-08-17 | Fundación ejecutable: proyecto Python instalable, modelos de dominio, perfil genérico, catálogo, persistencia SQLite asíncrona con inicialización idempotente. Commit `93708f0` |
+| 2026-08-19 | Núcleo transaccional: codec, las cuatro reglas de negocio, framing de demostración, transporte TCP asíncrono, host simulado y orquestador. Recorrido `0100`/`0110` completo por TCP real, con 75 pruebas en verde |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
 ## Decisiones pendientes
 
-1. Formato concreto del framing TCP (el contrato existe; el formato no está asignado).
+1. Formato concreto del framing para un switch QA real. El de demostración existe (prefijo de 2 bytes); el del ambiente real dependerá de su especificación.
 2. Especificaciones reales de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca — bloqueadas por falta de documentos autorizados.
 3. Compatibilidad con Python 3.11 y 3.12. `requires-python` declara `>=3.13` porque es la única versión instalada en la máquina de desarrollo. **No significa que el código sea incompatible con 3.11 o 3.12** —no usa nada exclusivo de 3.13—: significa que ese soporte no se ha probado y por eso no se declara. En la Sesión 6, CI debe ejecutar una matriz de versiones y ampliar el rango si la evidencia lo permite.
 4. Si el motor de carga corre dentro del proceso web o aparte.
 5. Estrategia de datos de demostración reproducibles para un clon limpio, sin PAN reales.
 6. Herramienta y configuración de integración continua.
-7. Mecanismo concreto para detectar si el simulador afirma que una prueba fue exitosa sin serlo (`PROYECTO.md` §7.6).
+7. Otros escenarios de falso positivo (`PROYECTO.md` §7.6). El primero ya está cubierto: una respuesta con código aprobado pero correlación incorrecta se registra `Invalida`. Faltan los demás casos.
 8. Cifrado en reposo del catálogo de tarjetas de QA — fuera del alcance académico, necesario para una evolución comercial.
 
 ## Restricciones de alcance
@@ -117,9 +125,9 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Completar la Sesión 5: cerrar el recorrido `0100`/`0110` de extremo a extremo sobre la fundación
-ya construida. Falta el codec como adaptador, la validación de las cuatro reglas, el framing
-concreto, el transporte TCP asíncrono, el host simulado, el orquestador y la interfaz web mínima.
+Interfaz web mínima con FastAPI y plantillas Jinja sobre el núcleo ya funcionando: formulario de
+compra, isoscopio con los campos interpretados —enmascarados— e historial de ejecuciones. La web
+consume el orquestador y no conoce SQLite, sockets ni `pyiso8583`.
 
 ## Archivos importantes
 
@@ -133,7 +141,7 @@ concreto, el transporte TCP asíncrono, el host simulado, el orquestador y la in
 | `docs/arquitectura/ARQUITECTURA.md` | Módulos, contratos y decisiones de diseño |
 | `docs/arquitectura/*.mmd` | Diagramas Mermaid: componentes y flujo de compra |
 | `pyproject.toml` | Dependencias, empaquetado y configuración de `pytest` |
-| `src/sibutestlab8583/` | Código: `domain/`, `profiles/`, `adapters/persistence/` |
+| `src/sibutestlab8583/` | Código: `domain/`, `application/`, `profiles/`, `adapters/` |
 | `tests/` | Pruebas técnicas de la fundación |
 
 Para levantar el proyecto desde cero: crear un entorno virtual, `pip install -e ".[dev]"`,

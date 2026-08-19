@@ -271,6 +271,71 @@ de versiones y ampliar `requires-python` si la evidencia lo permite. No se modif
 veces: seis códigos de respuesta, una tarjeta sintética, cero duplicados, `ejecuciones` sin
 columna de PAN, y ninguna base SQLite visible para Git. La suite quedó en 28 pruebas.
 
+## 2026-08-19 · Núcleo transaccional de extremo a extremo
+
+Se implementan codec, validación de las cuatro reglas, framing, transporte TCP asíncrono, host
+simulado y orquestador. Una compra viaja por TCP real hasta el host simulado y vuelve.
+La suite pasa de 30 a 75 pruebas. **No** se implementaron FastAPI, HTML, isoscopio web ni motor
+de carga.
+
+**Framing elegido: prefijo binario de 2 bytes, big-endian, con la longitud del payload.**
+Es el framing de demostración de SibuTestLab8583 y no se atribuye a ninguna marca. Razones:
+es simple, suficiente para los mensajes de la demostración, y corresponde a un patrón utilizado
+por implementaciones de ISO 8583 sobre TCP. **No representa una especificación de Visa ni de
+Mastercard, ni pretende ser un framing universal de ISO 8583.** Big-endian es el orden de red y
+`int.from_bytes` lo resuelve sin ambigüedad de plataforma; dos bytes admiten 65 535, muy por
+encima de un `0100` de este perfil. Se descartó la longitud en ASCII porque obliga a decidir relleno y codificación,
+y difumina el límite entre enmarcado y contenido. Se descartó un delimitador centinela porque el
+payload es binario y podría contenerlo. El framing del switch real dependerá de su
+especificación y será otra `FramingStrategy`, sin tocar el transporte.
+
+**Campos que compara RN-3.** Se derivan del perfil, no se inventan: son los obligatorios de la
+respuesta menos el campo 39, que por definición lo origina el autorizador y no viaja en la
+solicitud. Con el perfil genérico son **3 (código de proceso), 4 (monto), 7 (fecha y hora de
+transmisión), 11 (STAN) y 41 (terminal)**. Además se comprueba que el MTI sea el `0110`
+esperado y que la respuesta traiga sus obligatorios.
+
+**Mecanismo concreto contra falsos positivos (`PROYECTO.md` §7.6).** El orden de evaluación es
+deliberado: **RN-3 se comprueba antes que RN-1**. Una respuesta cuyo campo 39 diga `00` pero
+cuyo STAN no corresponda a la solicitud enviada se registra como `INVALIDA`, nunca como
+`APROBADA`. Invertir ese orden convertiría el simulador en una fuente de falsos positivos, que
+es exactamente lo que la sección 7.6 obliga a poder detectar. Está probado de dos formas: una
+prueba parametrizada altera *cada* campo de correlación y exige `INVALIDA`, y una prueba de
+integración levanta el host simulado configurado para responder `00` con un STAN ajeno.
+
+### Correcciones surgidas durante la implementación
+
+**Bloqueo al detener el host simulado.** La primera versión mantenía la conexión abierta con
+`asyncio.sleep(3600)` para provocar el caso de RN-2. La suite se colgó: desde Python 3.12,
+`Server.wait_closed()` espera a que terminen los manejadores activos, de modo que apagar el host
+esperaba una hora. Se sustituyó por un `asyncio.Event` de apagado que `detener()` avisa **antes**
+de cerrar. El diagnóstico salió de razonar sobre la semántica de `wait_closed()`, no de tantear.
+
+**Comportamiento observado con un puerto cerrado.** Se escribió una prueba que conectaba a un
+puerto cerrado de loopback esperando `ErrorDeConexion`, y falló. Hecho observado, comprobado con
+un script aparte: **en el entorno Windows probado, una conexión a un puerto loopback cerrado
+agotó el tiempo de espera en lugar de producir un rechazo inmediato** —también con un puerto
+efímero recién liberado—. No se generaliza ese comportamiento a otros sistemas ni a otras
+configuraciones de red, y **las pruebas no dependen de él**: la prueba pasó a forzar el fallo de
+conexión con un host irresoluble, que es portable.
+
+**La guardia de PAN detectó una violación propia.** Al escribir la prueba de RN-3 se usó un
+literal de doce dígitos como valor alterado. `test_ningun_archivo_versionable_contiene_un_pan_completo`
+lo detectó y falló el build. Se sustituyó por un valor construido alterando el primer carácter y
+conservando el largo. Es la segunda vez que esa guardia justifica su existencia.
+
+**Divergencia con `ARQUITECTURA.md`, corregida en el documento.** El contrato documentado era
+`evaluar_respuesta(envio, respuesta, catalogo)`. Al implementar RN-3 quedó claro que **qué campos
+deben correlacionar es una definición del perfil**, no del catálogo, así que la firma real recibe
+también el perfil. Se actualizó el documento porque la firma anterior había dejado de ser cierta;
+no se cambió ninguna decisión de fondo.
+
+**Sin cambios en el esquema de la base de datos.** Las columnas `solicitud_enmascarada` y
+`respuesta_enmascarada` bastaron para persistir los mensajes. El orquestador serializa siempre la
+versión enmascarada, y `_serializar` verifica que ningún campo sensible llegue en claro: si un
+cambio futuro colara un PAN completo hacia la persistencia, falla en el acto en lugar de
+guardarlo.
+
 ---
 
 ## Gobernanza
