@@ -525,6 +525,66 @@ Se revisó `pyproject.toml`: se actualizaron dos comentarios que habían quedado
 usa—. No se congelaron dependencias: la estrategia de reproducibilidad exacta se decidirá viendo
 lo que reporte el CI, como estaba previsto.
 
+## 2026-08-19 · Defecto corregido: el STAN se repetía en cada transacción
+
+Iteración dedicada a un solo problema, detectado en la auditoría del prototipo. No se tocó
+ningún otro hallazgo.
+
+**El defecto.** Todas las compras hechas desde la web llevaban el mismo número de trazabilidad,
+`000001`. Comprobado ejecutando tres compras de montos distintos: las tres se persistieron con
+`STAN=000001`.
+
+**La causa.** El contador nacía dentro de `_contador_de_stan()`, llamado en el constructor del
+`Orquestador`; y la composición construye un `Orquestador` **por petición**, porque el destino lo
+elige el usuario en el formulario. Cada petición arrancaba su propio contador en 1. El estado que
+debía ser compartido y duradero vivía en un objeto efímero.
+
+**Por qué importaba.** El campo 11 es uno de los cinco que RN-3 compara para correlacionar la
+respuesta con la solicitud. Con el STAN repetido, RN-3 no podía distinguir *esta* transacción de
+otra. Además, un código del catálogo aprobado —`94`, transacción duplicada— existe precisamente
+para ese caso.
+
+**La solución.** Un puerto nuevo, `GeneradorStan`, con una operación asíncrona `siguiente()`. Es
+un puerto y no una función porque la unicidad exige estado compartido: el dominio declara la
+necesidad y no sabe dónde vive ese estado. La composición inyecta la implementación.
+
+**Por qué se descartó `MAX(id)+1`.** Dos peticiones concurrentes leerían el mismo máximo antes de
+que ninguna insertara, y entregarían el mismo STAN. Además cuenta filas, no trazas.
+
+**Atomicidad: una sola sentencia.**
+
+```sql
+UPDATE secuencias SET valor = (valor % 999999) + 1
+ WHERE nombre = 'stan'
+RETURNING valor
+```
+
+SQLite mantiene el bloqueo de escritura durante toda la sentencia, de modo que leer el valor,
+incrementarlo y escribirlo son indivisibles. Una segunda conexión simultánea **espera** al bloqueo
+y después vuelve a leer el valor ya incrementado. Lo que se evitó explícitamente es un `SELECT`
+seguido de un `UPDATE` en sentencias separadas: ahí ambas conexiones pueden leer el mismo valor
+antes de que ninguna escriba.
+
+**Se comprobó que esa diferencia es real, no teórica.** Con 25 solicitudes simultáneas sobre la
+misma base: la implementación con `UPDATE … RETURNING` entregó **25 valores distintos de 25**; una
+implementación deliberadamente ingenua con `SELECT` + `UPDATE` entregó **1 valor distinto de 25**.
+La prueba de concurrencia no es vacía: detecta el enfoque incorrecto.
+
+**Ciclo al llegar al máximo.** El módulo hace que tras `999999` la secuencia vuelva a `000001`.
+Seis dígitos no alcanzan para ser únicos indefinidamente: eso es propio del campo 11 de ISO 8583.
+Por la misma razón **no** se puso una restricción `UNIQUE` sobre `ejecuciones.stan`.
+
+**Idempotencia.** `sibu-init-db` crea la secuencia con `INSERT OR IGNORE`. Ejecutarlo de nuevo no
+reinicia el contador, no duplica filas y no destruye el historial: comprobado tras dos ejecuciones
+adicionales sobre una base con cinco ejecuciones ya registradas.
+
+**Una prueba existente pasaba por la razón equivocada.**
+`test_rn2_el_timeout_se_persiste_y_se_cuenta_aparte_del_rechazo` fabricaba una respuesta enlatada
+con `STAN=000001`. Correlacionaba **solo porque el STAN siempre era 000001**: dependía del
+defecto. Al corregirlo, RN-3 detectó correctamente que la respuesta no correspondía y la prueba
+falló. Se corrigió el doble de transporte para que construya la respuesta a partir de la solicitud
+que recibe, como hace el host real, de modo que no pueda volver a esconder este problema.
+
 ---
 
 ## Gobernanza

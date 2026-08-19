@@ -70,7 +70,18 @@ CREATE TABLE IF NOT EXISTS ejecuciones (
 
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_creada_en ON ejecuciones(creada_en);
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_card_id   ON ejecuciones(card_id);
+
+-- Secuencias persistentes. Existe para que el numero de trazabilidad sobreviva
+-- a los reinicios y sea unico entre peticiones concurrentes. NO se deriva de
+-- MAX(id) de ejecuciones: dos peticiones simultaneas leerian el mismo maximo.
+CREATE TABLE IF NOT EXISTS secuencias (
+    nombre  TEXT    PRIMARY KEY,
+    valor   INTEGER NOT NULL
+);
 """
+
+#: Nombre de la secuencia del numero de trazabilidad.
+SECUENCIA_STAN = "stan"
 
 # Tarjeta de demostracion SINTETICA.
 #
@@ -103,6 +114,18 @@ async def _sembrar_catalogo(conexion: aiosqlite.Connection, catalogo: CatalogoDe
     )
 
 
+async def _sembrar_secuencias(conexion: aiosqlite.Connection) -> None:
+    """Crea la secuencia del STAN si no existe.
+
+    `INSERT OR IGNORE` es lo que hace idempotente la inicializacion: si la
+    secuencia ya avanzo, volver a ejecutar `sibu-init-db` no la reinicia.
+    """
+    await conexion.execute(
+        "INSERT OR IGNORE INTO secuencias (nombre, valor) VALUES (?, 0)",
+        (SECUENCIA_STAN,),
+    )
+
+
 async def _sembrar_tarjeta_demo(conexion: aiosqlite.Connection) -> None:
     await conexion.execute(
         "INSERT OR IGNORE INTO tarjetas_prueba"
@@ -131,6 +154,7 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
     async with aiosqlite.connect(destino) as conexion:
         await conexion.execute("PRAGMA foreign_keys = ON")
         await conexion.executescript(DDL)
+        await _sembrar_secuencias(conexion)
         await _sembrar_catalogo(conexion, CATALOGO_GENERICO)
         if con_datos_demo:
             await _sembrar_tarjeta_demo(conexion)

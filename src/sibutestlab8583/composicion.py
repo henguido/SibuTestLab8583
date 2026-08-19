@@ -20,6 +20,7 @@ from .adapters.host_simulado import HostSimulado
 from .adapters.iso8583.codec import CodecIso8583
 from .adapters.persistence.esquema import ruta_base_datos
 from .adapters.persistence.sqlite_repos import (
+    GeneradorStanSQLite,
     RepositorioEjecucionesSQLite,
     RepositorioTarjetasSQLite,
 )
@@ -75,6 +76,9 @@ class Composicion:
         self._framing = FramingDemostracion()
         self._tarjetas = RepositorioTarjetasSQLite(configuracion.ruta_base_datos)
         self._ejecuciones = RepositorioEjecucionesSQLite(configuracion.ruta_base_datos)
+        # El STAN vive en la base, no en memoria: debe seguir siendo unico
+        # aunque el orquestador se construya de nuevo en cada peticion.
+        self._stan = GeneradorStanSQLite(configuracion.ruta_base_datos)
 
     @property
     def consultas(self) -> ServicioConsultas:
@@ -109,6 +113,7 @@ class Composicion:
             ),
             repositorio_ejecuciones=self._ejecuciones,
             repositorio_tarjetas=self._tarjetas,
+            generador_stan=self._stan,
             destino=destino,
             codigo_proceso=CODIGO_PROCESO_COMPRA,
             tiempo_limite=self.configuracion.tiempo_limite,

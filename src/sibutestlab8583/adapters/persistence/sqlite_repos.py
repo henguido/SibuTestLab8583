@@ -15,8 +15,14 @@ from typing import Sequence
 import aiosqlite
 
 from ...domain.catalogo import CatalogoDeRespuestas, CodigoRespuesta
-from ...domain.modelos import Ejecucion, EstadoEjecucion, TarjetaPrueba
-from .esquema import ruta_base_datos
+from ...domain.modelos import (
+    LARGO_STAN,
+    STAN_MAXIMO,
+    Ejecucion,
+    EstadoEjecucion,
+    TarjetaPrueba,
+)
+from .esquema import SECUENCIA_STAN, ruta_base_datos
 
 
 class _RepositorioSQLite:
@@ -31,6 +37,58 @@ class _RepositorioSQLite:
 
     def _conectar(self) -> aiosqlite.Connection:
         return aiosqlite.connect(self._ruta)
+
+
+class GeneradorStanSQLite(_RepositorioSQLite):
+    """Secuencia persistente del numero de trazabilidad.
+
+    ATOMICIDAD
+    ==========
+    Todo ocurre en **una sola sentencia**:
+
+        UPDATE secuencias SET valor = (valor % :maximo) + 1
+         WHERE nombre = 'stan'
+        RETURNING valor
+
+    SQLite ejecuta esa sentencia manteniendo el bloqueo de escritura de la base
+    durante toda su duracion, de modo que la lectura del valor, su incremento y
+    su escritura son indivisibles. Una segunda conexion que intente lo mismo al
+    mismo tiempo **espera** al bloqueo (hasta el `busy timeout` del driver) y
+    despues vuelve a leer el valor ya incrementado. Por eso dos compradores
+    concurrentes no pueden obtener el mismo STAN.
+
+    Lo que NO se hace, y es justamente el error que esto evita: un `SELECT valor`
+    seguido de un `UPDATE` en sentencias separadas. Ahi ambas conexiones podrian
+    leer el mismo valor antes de que ninguna escriba, y las dos entregarian el
+    mismo STAN. Tampoco se usa `MAX(id)` de `ejecuciones`, que tiene el mismo
+    defecto y ademas cuenta filas, no trazas.
+
+    CICLO
+    =====
+    El modulo `%` hace que tras `999999` la secuencia vuelva a `000001`. Seis
+    digitos no alcanzan para ser unicos indefinidamente: eso es propio del campo
+    11 de ISO 8583, no de esta implementacion. Por la misma razon `ejecuciones`
+    no lleva una restriccion `UNIQUE` sobre `stan`.
+    """
+
+    async def siguiente(self) -> str:
+        async with self._conectar() as conexion:
+            async with conexion.execute(
+                "UPDATE secuencias SET valor = (valor % ?) + 1"
+                " WHERE nombre = ? RETURNING valor",
+                (STAN_MAXIMO, SECUENCIA_STAN),
+            ) as cursor:
+                fila = await cursor.fetchone()
+            if fila is None:
+                raise SecuenciaNoInicializada(
+                    f"no existe la secuencia {SECUENCIA_STAN!r}: ejecute sibu-init-db"
+                )
+            await conexion.commit()
+        return str(fila[0]).rjust(LARGO_STAN, "0")
+
+
+class SecuenciaNoInicializada(RuntimeError):
+    """La base existe pero le falta la fila de la secuencia."""
 
 
 class RepositorioTarjetasSQLite(_RepositorioSQLite):

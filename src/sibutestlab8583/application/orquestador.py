@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from itertools import count
 from typing import Callable
 
 from ..domain.armado import armar_compra
@@ -33,10 +32,13 @@ from ..domain.modelos import (
     ResultadoCompra,
     TiempoAgotado,
 )
-from ..domain.puertos import RepositorioEjecuciones, RepositorioTarjetas, Transporte
+from ..domain.puertos import (
+    GeneradorStan,
+    RepositorioEjecuciones,
+    RepositorioTarjetas,
+    Transporte,
+)
 from ..domain.validacion import CAMPO_CODIGO_RESPUESTA, evaluar_respuesta, validar_envio
-
-LARGO_STAN = 6
 
 
 class TarjetaDesconocida(Exception):
@@ -53,10 +55,10 @@ class Orquestador:
         transporte: Transporte,
         repositorio_ejecuciones: RepositorioEjecuciones,
         repositorio_tarjetas: RepositorioTarjetas,
+        generador_stan: GeneradorStan,
         destino: DestinoTcp,
         codigo_proceso: str,
         tiempo_limite: float | None = None,
-        generador_stan: Callable[[], str] | None = None,
         reloj: Callable[[], datetime] | None = None,
     ) -> None:
         self._codec = codec
@@ -68,7 +70,7 @@ class Orquestador:
         self._destino = destino
         self._codigo_proceso = codigo_proceso
         self._tiempo_limite = tiempo_limite
-        self._stan = generador_stan or _contador_de_stan()
+        self._stan = generador_stan
         self._reloj = reloj or (lambda: datetime.now(timezone.utc))
 
     async def ejecutar_compra(self, datos: DatosCompra) -> ResultadoCompra:
@@ -77,7 +79,10 @@ class Orquestador:
             raise TarjetaDesconocida(f"no existe la tarjeta {datos.card_id!r}")
 
         momento = self._reloj()
-        stan = self._stan()
+        # El STAN lo entrega un puerto persistente, no un contador de esta
+        # instancia: el orquestador se construye por peticion y un contador
+        # local reiniciaria en 1 cada vez.
+        stan = await self._stan.siguiente()
         solicitud = armar_compra(
             datos,
             tarjeta,
@@ -198,8 +203,3 @@ def _serializar(mensaje: MensajeIso) -> str:
         partes.append(f"{numero}={valor}")
     return " | ".join(partes)
 
-
-def _contador_de_stan() -> Callable[[], str]:
-    """STAN incremental de seis digitos, unico dentro de una corrida."""
-    secuencia = count(1)
-    return lambda: str(next(secuencia) % 10**LARGO_STAN).rjust(LARGO_STAN, "0")

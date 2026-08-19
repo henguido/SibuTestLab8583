@@ -22,6 +22,13 @@ MTI_RESPUESTA_COMPRA = "0110"
 #: Campos ISO que transportan datos de tarjeta y nunca se persisten en claro.
 CAMPOS_SENSIBLES = frozenset({"2", "35"})
 
+#: El numero de trazabilidad (campo 11) tiene exactamente seis digitos.
+LARGO_STAN = 6
+#: Ultimo valor del ciclo. Al superarlo, la secuencia vuelve a 000001: seis
+#: digitos no alcanzan para ser unicos indefinidamente, y eso es inherente al
+#: formato, no una limitacion de esta implementacion.
+STAN_MAXIMO = 10**LARGO_STAN - 1
+
 
 def _ahora() -> datetime:
     return datetime.now(timezone.utc)

@@ -8,8 +8,8 @@ No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza)
 
 ## Estado actual
 
-**Fase:** Sesión 6 — integración continua definida y refactorización aplicada. El simulador se
-usa desde el navegador sobre el recorrido real.
+**Fase:** calendario detenido a propósito para auditar y mejorar el prototipo. CI en verde en
+Python 3.11, 3.12 y 3.13. En curso: corrección de los defectos hallados en la auditoría.
 
 | | |
 |---|---|
@@ -76,7 +76,12 @@ Documento completo en `docs/arquitectura/ARQUITECTURA.md`, con diagramas version
 Dirección de dependencia: `web → application service → dominio/puertos → adaptadores`.
 
 Módulos implementados: web, composición, orquestador, consultas, perfiles, codec ISO 8583,
-validación, framing, transporte TCP, persistencia y host simulado. Pendiente: motor de carga.
+validación, framing, transporte TCP, persistencia, generador de STAN y host simulado.
+Pendiente: motor de carga.
+
+El número de trazabilidad (campo 11) lo entrega el puerto `GeneradorStan`, con una secuencia
+persistente en la tabla `secuencias` e incrementada con una sola sentencia
+`UPDATE … RETURNING`, atómica frente a peticiones concurrentes. Tras `999999` reinicia el ciclo.
 
 La infraestructura se cablea en un solo lugar, `composicion.py`. La web recibe esa composición
 por inyección y no construye adaptadores en sus endpoints.
@@ -107,7 +112,8 @@ reglas de negocio es pura y RN-4 se aplica antes de codificar.
 | 2026-08-17 | Fundación ejecutable: proyecto Python instalable, modelos de dominio, perfil genérico, catálogo, persistencia SQLite asíncrona con inicialización idempotente. Commit `93708f0` |
 | 2026-08-19 | Núcleo transaccional: codec, las cuatro reglas de negocio, framing de demostración, transporte TCP asíncrono, host simulado y orquestador. Commit `de84818` |
 | 2026-08-19 | Interfaz web con FastAPI y Jinja: formulario, resultado, isoscopio enmascarado e historial sobre el núcleo real. Commit `dc8cc8b` |
-| 2026-08-19 | Workflow de GitHub Actions con matriz 3.11/3.12/3.13 y refactorización de lo acumulado. Sin funcionalidad nueva; 101 pruebas en verde |
+| 2026-08-19 | Workflow de GitHub Actions con matriz 3.11/3.12/3.13 y refactorización de lo acumulado. Commit `deb7f63`; CI en verde en las tres versiones |
+| 2026-08-19 | Auditoría del prototipo y corrección del primer defecto: el STAN se repetía en cada transacción. Puerto `GeneradorStan` con secuencia persistente y atómica en SQLite. 111 pruebas |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -136,10 +142,10 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Observar el primer resultado del CI. Si las tres versiones de Python pasan, ampliar
-`requires-python` a `>=3.11` con esa evidencia. Después, `README.md` usando el procedimiento de
-instalación que el CI haya demostrado reproducible, y la Sesión 7: skill de arranque y motor de
-pruebas de carga.
+Seguir con los hallazgos de la auditoría, uno por iteración: P0-2 (los fallos de conexión y de
+codificación no se persisten, así que el intento desaparece del historial) y P0-3 (un timeout de
+conexión se presenta como timeout de respuesta). Pendiente aparte: ampliar `requires-python` a
+`>=3.11`, para lo que el CI ya aportó evidencia.
 
 ## Archivos importantes
 

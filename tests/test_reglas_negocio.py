@@ -135,14 +135,11 @@ async def test_rn2_sin_respuesta_el_resultado_es_timeout(base, datos_compra):
 
 
 async def test_rn2_el_timeout_se_persiste_y_se_cuenta_aparte_del_rechazo(base, datos_compra):
-    solicitud = _solicitud_valida()
-    rechazo = CODEC.codificar(_respuesta_correlacionada(solicitud, "05"), PERFIL_GENERICO)
-
     orquestador_timeout = construir_orquestador(
         base, TransporteFalso(TiempoAgotado(limite_segundos=0.01))
     )
     await orquestador_timeout.ejecutar_compra(datos_compra)
-    await construir_orquestador(base, TransporteFalso(rechazo)).ejecutar_compra(datos_compra)
+    await construir_orquestador(base, TransporteFalso(codigo="05")).ejecutar_compra(datos_compra)
 
     guardadas = await RepositorioEjecucionesSQLite(base).listar()
     estados = [e.estado for e in guardadas]

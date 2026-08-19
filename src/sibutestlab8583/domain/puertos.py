@@ -59,6 +59,21 @@ class Transporte(Protocol):
 
 
 @runtime_checkable
+class GeneradorStan(Protocol):
+    """Entrega el siguiente numero de trazabilidad (campo 11).
+
+    Es un puerto y no una funcion suelta porque la unicidad exige estado
+    compartido y duradero: entre peticiones, entre peticiones concurrentes y
+    entre reinicios. Un contador en memoria no puede darla, y el dominio no debe
+    saber donde vive ese estado.
+    """
+
+    async def siguiente(self) -> str:
+        """Devuelve un STAN de seis digitos, distinto del anterior."""
+        ...
+
+
+@runtime_checkable
 class RepositorioTarjetas(Protocol):
     """Catalogo de tarjetas de prueba. Unico lugar que devuelve el PAN completo."""
 
