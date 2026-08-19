@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block titulo %}Historial · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<h1>Ejecuciones recientes</h1>
+<p class="sub">Las tarjetas se identifican por <code>card_id</code>, nunca por su numero.</p>
+
+<div class="panel">
+  {% if ejecuciones %}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha y hora</th>
+          <th>Tarjeta</th>
+          <th class="num">Monto</th>
+          <th>Estado</th>
+          <th>Codigo</th>
+          <th class="num">Latencia</th>
+          <th>Destino</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ejecucion in ejecuciones %}
+        <tr>
+          <td>{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td><code>{{ ejecucion.card_id }}</code></td>
+          <td class="num">{{ ejecucion.monto }}</td>
+          <td>
+            <span class="etiqueta {{ avisos[ejecucion.estado].tono }}">
+              {{ ejecucion.estado.value }}
+            </span>
+          </td>
+          <td><code>{{ ejecucion.codigo_respuesta or '—' }}</code></td>
+          <td class="num">{% if ejecucion.latencia_ms is not none %}{{ ejecucion.latencia_ms }} ms{% else %}—{% endif %}</td>
+          <td>{% if ejecucion.destino_host %}{{ ejecucion.destino_host }}:{{ ejecucion.destino_puerto }}{% else %}<span class="vacio">no se envio</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vacio">Todavia no hay ejecuciones registradas.</p>
+  {% endif %}
+</div>
+
+<p><a href="/">← Nueva compra</a></p>
+{% endblock %}

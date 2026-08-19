@@ -8,27 +8,37 @@ version = "0.1.0"
 description = "Simulador de transacciones ISO 8583 - recorrido de compra 0100/0110"
 requires-python = ">=3.13"
 
-# Versiones minimas tomadas de lo realmente resuelto en el entorno (Python 3.13.3),
-# no inventadas. Ver BITACORA.md.
+# Los limites inferiores son las versiones realmente resueltas en este entorno
+# (Python 3.13.3), no valores inventados. Que una version este comprobada NO
+# significa que el rango se limite a ella: `>=` admite versiones posteriores
+# todavia no comprobadas. La reproducibilidad exacta del conjunto de
+# dependencias se resolvera despues, con el mecanismo de congelado y CI del
+# proyecto. Ver BITACORA.md.
 dependencies = [
     "pyiso8583>=4.0.1",   # codec ISO 8583; recibe la especificacion como parametro
     "aiosqlite>=0.22.1",  # adaptador de persistencia asincrono
-    "fastapi>=0.141.1",   # backend web aprobado; todavia sin usar
-    "uvicorn>=0.52.3",    # servidor ASGI; todavia sin usar
-    "jinja2>=3.1.6",      # plantillas HTML del servidor; todavia sin usar
+    "fastapi>=0.141.1",   # backend web
+    "uvicorn>=0.52.3",    # servidor ASGI
+    "jinja2>=3.1.6",      # plantillas HTML del servidor
+    "python-multipart>=0.0.20",  # FastAPI lo necesita para leer formularios
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "httpx2>=2.12.0",  # lo exige el cliente de pruebas de Starlette
 ]
 
 [project.scripts]
 sibu-init-db = "sibutestlab8583.adapters.persistence.esquema:main"
+sibu-host-demo = "sibutestlab8583.adapters.host_simulado.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sibutestlab8583 = ["web/plantillas/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block titulo %}Nueva compra · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<h1>Nueva compra</h1>
+<p class="sub">
+  Arma un mensaje <code>0100</code>, lo envia por TCP al destino indicado e interpreta
+  la respuesta <code>0110</code>.
+</p>
+
+{% if aviso %}
+<div class="aviso {{ aviso.tono }}">
+  <h2>{{ aviso.titulo }}</h2>
+  <p>{{ aviso.detalle }}</p>
+</div>
+{% endif %}
+
+{% if error %}
+<div class="aviso error">
+  <h2>Revise los datos</h2>
+  <p>{{ error }}</p>
+</div>
+{% endif %}
+
+<form class="panel" method="post" action="/compra">
+  <fieldset>
+    <legend>Tarjeta</legend>
+    <div class="campos">
+      <div>
+        <label for="card_id">Tarjeta de prueba</label>
+        <select id="card_id" name="card_id" required>
+          {% for tarjeta in tarjetas %}
+          <option value="{{ tarjeta.card_id }}"
+                  {% if tarjeta.card_id == card_id %}selected{% endif %}>
+            {{ tarjeta.card_id }} — {{ tarjeta.pan_enmascarado }}
+          </option>
+          {% else %}
+          <option value="" disabled selected>No hay tarjetas cargadas</option>
+          {% endfor %}
+        </select>
+        <p class="pista">
+          Se elige por identificador. La interfaz solo recibe el PAN enmascarado; el PAN
+          completo permanece restringido al procesamiento transaccional del servidor.
+        </p>
+      </div>
+      <div>
+        <label for="monto">Monto</label>
+        <input id="monto" name="monto" inputmode="decimal" placeholder="150.00"
+               value="{{ monto }}" required>
+        <p class="pista">En la moneda del terminal. Use punto decimal.</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Destino</legend>
+    <div class="campos">
+      <div>
+        <label for="host">Host</label>
+        <input id="host" name="host" value="{{ host }}" required>
+        <p class="pista">Host simulado propio o switch de QA accesible.</p>
+      </div>
+      <div>
+        <label for="puerto">Puerto</label>
+        <input id="puerto" name="puerto" inputmode="numeric" value="{{ puerto }}" required>
+        <p class="pista">Limite de espera: {{ '%g'|format(tiempo_limite) }} s.</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <button type="submit">Ejecutar compra</button>
+</form>
+
+{% if tarjetas %}
+<div class="panel">
+  <h2>Tarjetas disponibles</h2>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Identificador</th><th>Numero</th><th>Descripcion</th><th>Origen</th></tr>
+      </thead>
+      <tbody>
+        {% for tarjeta in tarjetas %}
+        <tr>
+          <td><code>{{ tarjeta.card_id }}</code></td>
+          <td><code>{{ tarjeta.pan_enmascarado }}</code></td>
+          <td>{{ tarjeta.descripcion or '—' }}</td>
+          <td>{{ 'Sintetica' if tarjeta.sintetica else 'Ambiente de pruebas' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

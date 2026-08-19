@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block titulo %}Resultado · SibuTestLab8583{% endblock %}
+
+{% macro isoscopio(titulo, filas, con_crudo, vacio) %}
+<div class="panel">
+  <h2>{{ titulo }}</h2>
+  {% if filas %}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th class="num">Campo</th>
+          <th>Descripcion</th>
+          <th>Valor interpretado</th>
+          {% if con_crudo %}<th>Tal como viajo</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr>
+          <td class="num"><code>{{ fila.numero }}</code></td>
+          <td>{{ fila.descripcion }}</td>
+          <td>
+            <code>{{ fila.valor }}</code>
+            {% if fila.sensible %}<span class="marca-sensible">· enmascarado</span>{% endif %}
+          </td>
+          {% if con_crudo %}<td><code>{{ fila.crudo }}</code></td>{% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vacio">{{ vacio }}</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% block contenido %}
+<h1>Resultado de la compra</h1>
+<p class="sub">Ejecucion registrada. Los campos de tarjeta se muestran enmascarados.</p>
+
+<div class="aviso {{ aviso.tono }}">
+  <h2>{{ aviso.titulo }}</h2>
+  <p>{{ aviso.detalle }}</p>
+</div>
+
+<div class="panel">
+  <div class="datos">
+    <div class="dato"><span class="k">Estado</span>
+      <span class="v">{{ resultado.estado.value }}</span></div>
+    <div class="dato"><span class="k">Codigo (campo 39)</span>
+      <span class="v">{{ resultado.ejecucion.codigo_respuesta or '—' }}</span></div>
+    <div class="dato"><span class="k">STAN</span>
+      <span class="v">{{ resultado.ejecucion.stan }}</span></div>
+    <div class="dato"><span class="k">Latencia</span>
+      <span class="v">{% if resultado.ejecucion.latencia_ms is not none %}{{ resultado.ejecucion.latencia_ms }} ms{% else %}—{% endif %}</span></div>
+    <div class="dato"><span class="k">Monto</span>
+      <span class="v">{{ resultado.ejecucion.monto }}</span></div>
+    <div class="dato"><span class="k">Tarjeta</span>
+      <span class="v">{{ resultado.ejecucion.card_id }}</span></div>
+    <div class="dato"><span class="k">Destino</span>
+      <span class="v">{{ destino }}</span></div>
+    <div class="dato"><span class="k">MTI</span>
+      <span class="v">{{ resultado.ejecucion.mti_solicitud }}{% if resultado.ejecucion.mti_respuesta %} → {{ resultado.ejecucion.mti_respuesta }}{% endif %}</span></div>
+  </div>
+</div>
+
+{% if resultado.motivos %}
+<div class="panel">
+  <h2>Por que</h2>
+  <ul>
+    {% for motivo in resultado.motivos %}<li>{{ motivo }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{{ isoscopio('Isoscopio · solicitud 0100', filas_solicitud, false,
+             'No se armo ningun mensaje.') }}
+{{ isoscopio('Isoscopio · respuesta 0110', filas_respuesta, true,
+             'No se recibio respuesta que interpretar.') }}
+
+<p><a href="/">← Ejecutar otra compra</a></p>
+{% endblock %}

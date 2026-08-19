@@ -1,0 +1,107 @@
+{# Estilos embebidos a proposito: una sola hoja pequena y propia, sin
+   framework CSS ni archivos estaticos que montar. #}
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block titulo %}SibuTestLab8583{% endblock %}</title>
+<style>
+  :root {
+    --tinta: #16202b; --tenue: #5b6b7c; --borde: #d8e0e8; --fondo: #f4f7fa;
+    --panel: #ffffff; --acento: #1f5fa9;
+    --ok: #1a7f4b; --ok-f: #e8f6ee;
+    --no: #b0452a; --no-f: #fdeee9;
+    --mal: #8a5a00; --mal-f: #fdf4e2;
+    --esp: #4a5a8a; --esp-f: #eef0fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--fondo); color: var(--tinta);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--borde);
+    padding: .9rem 1.25rem;
+  }
+  .barra {
+    max-width: 1000px; margin: 0 auto; display: flex; flex-wrap: wrap;
+    gap: .75rem 1.25rem; align-items: baseline;
+  }
+  .marca { font-weight: 650; font-size: 1.05rem; letter-spacing: -.01em; }
+  .marca small { font-weight: 400; color: var(--tenue); margin-left: .5rem; }
+  nav { margin-left: auto; display: flex; gap: 1rem; }
+  nav a { color: var(--acento); text-decoration: none; }
+  nav a:hover { text-decoration: underline; }
+  main { max-width: 1000px; margin: 0 auto; padding: 1.25rem; }
+  h1 { font-size: 1.3rem; margin: 0 0 .35rem; }
+  h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; }
+  .sub { color: var(--tenue); margin: 0 0 1.25rem; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--borde);
+    border-radius: 10px; padding: 1.1rem; margin-bottom: 1.1rem;
+  }
+  fieldset { border: 0; padding: 0; margin: 0 0 1.1rem; }
+  legend {
+    font-weight: 600; font-size: .82rem; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--tenue); padding: 0 0 .5rem;
+  }
+  .campos { display: grid; gap: .9rem; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  label { display: block; font-weight: 550; margin-bottom: .3rem; font-size: .9rem; }
+  input, select {
+    width: 100%; padding: .5rem .6rem; font: inherit; color: inherit;
+    border: 1px solid var(--borde); border-radius: 6px; background: #fff;
+  }
+  input:focus, select:focus { outline: 2px solid var(--acento); outline-offset: 1px; }
+  .pista { color: var(--tenue); font-size: .82rem; margin-top: .3rem; }
+  button {
+    font: inherit; font-weight: 600; padding: .58rem 1.15rem; cursor: pointer;
+    color: #fff; background: var(--acento); border: 0; border-radius: 6px;
+  }
+  button:hover { background: #17497f; }
+  .aviso { border-radius: 8px; padding: .9rem 1rem; margin-bottom: 1.1rem; border: 1px solid; }
+  .aviso h2 { margin: 0 0 .25rem; font-size: 1.05rem; }
+  .aviso p { margin: 0; }
+  .aprobada  { background: var(--ok-f);  border-color: #b6e0c6; color: var(--ok); }
+  .rechazada { background: var(--no-f);  border-color: #f2c4b6; color: var(--no); }
+  .invalida  { background: var(--mal-f); border-color: #f0dcae; color: var(--mal); }
+  .timeout   { background: var(--esp-f); border-color: #c8cfec; color: var(--esp); }
+  .no-enviada{ background: var(--mal-f); border-color: #f0dcae; color: var(--mal); }
+  .error     { background: var(--no-f);  border-color: #f2c4b6; color: var(--no); }
+  .datos { display: grid; gap: .8rem; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .dato .k { display: block; font-size: .78rem; text-transform: uppercase;
+             letter-spacing: .05em; color: var(--tenue); }
+  .dato .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .89rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--borde); }
+  th { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--tenue); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: .88em; }
+  .marca-sensible { color: var(--tenue); }
+  .vacio { color: var(--tenue); font-style: italic; }
+  .pie { color: var(--tenue); font-size: .82rem; margin-top: 1.5rem; }
+  .etiqueta {
+    display: inline-block; padding: .12rem .5rem; border-radius: 999px;
+    font-size: .78rem; font-weight: 600; border: 1px solid;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="barra">
+    <span class="marca">SibuTestLab8583 <small>Simulador ISO 8583 · compra 0100/0110</small></span>
+    <nav>
+      <a href="/">Nueva compra</a>
+      <a href="/historial">Historial</a>
+    </nav>
+  </div>
+</header>
+<main>
+{% block contenido %}{% endblock %}
+  <p class="pie">
+    Datos de demostracion sinteticos. Los numeros de tarjeta se muestran siempre enmascarados.
+  </p>
+</main>
+</body>
+</html>

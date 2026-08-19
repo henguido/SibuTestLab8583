@@ -181,7 +181,8 @@ framing concreto, codec como adaptador, orquestador ni interfaz web.
 
 **Versiones de dependencias: verificadas, no inventadas.** Se creó un entorno virtual y se
 instalaron las dependencias sin fijar versión para observar qué resuelve realmente el entorno
-(Python 3.13.3). Los mínimos declarados en `pyproject.toml` son exactamente lo resuelto:
+(Python 3.13.3). Los **límites inferiores** declarados en `pyproject.toml` son exactamente lo
+resuelto —no restringen el rango superior, que admite versiones posteriores sin comprobar—:
 `pyiso8583` 4.0.1, `aiosqlite` 0.22.1, `fastapi` 0.141.1, `uvicorn` 0.52.3, `jinja2` 3.1.6,
 `pytest` 9.1.1, `pytest-asyncio` 1.4.0. FastAPI, uvicorn y jinja2 se declaran aunque todavía
 no se usen, porque son el backend ya aprobado.
@@ -335,6 +336,83 @@ no se cambió ninguna decisión de fondo.
 versión enmascarada, y `_serializar` verifica que ningún campo sensible llegue en claro: si un
 cambio futuro colara un PAN completo hacia la persistencia, falla en el acto en lugar de
 guardarlo.
+
+## 2026-08-19 · Interfaz web mínima
+
+Se añade la capa `web/` con FastAPI y plantillas Jinja sobre el núcleo ya aprobado, sin
+modificarlo. La suite pasa de 75 a 101 pruebas. **No** se implementaron motor de carga, perfiles
+de marca, CI, Docker, skill de `.claude/` ni autenticación.
+
+**Cómo se compusieron las dependencias.** Se creó una raíz de composición explícita,
+`composicion.py`, con dos piezas: una `Configuracion` inmutable —ruta de la base, host y puerto de
+destino, límite de tiempo— que puede leerse del entorno, y una clase `Composicion` que cablea
+perfil, catálogo, codec, framing, transporte y repositorios. Los endpoints **no construyen
+infraestructura**: reciben la composición por inyección de dependencias de FastAPI y le piden un
+orquestador. El orquestador se construye por petición porque el destino lo elige el usuario en el
+formulario; es cableado barato, ya que los repositorios abren su conexión por operación. Esa
+inyección es también lo que permite que las pruebas sustituyan la composición entera por un doble
+sin tocar la aplicación.
+
+**Cómo se evita que el navegador reciba el PAN completo.** No por disciplina en las plantillas,
+que sería frágil, sino por construcción: `ServicioConsultas.tarjetas()` devuelve un
+`TarjetaListada` que **no tiene** campo para el PAN completo. Aunque una plantilla quisiera
+mostrarlo, no lo tiene disponible. Para los mensajes, el orquestador ya devuelve la solicitud y la
+respuesta enmascaradas, y la capa web no vuelve a implementar la política: la recibe hecha.
+Comprobado sobre el HTML real: ninguna de las tres páginas contiene el número completo, y el
+isoscopio lo muestra enmascarado con la marca «enmascarado».
+
+**Precisión aplicada a la redacción de la política.** La primera versión de la pantalla decía que
+el número completo "nunca sale del servidor". Es falso para este simulador: el PAN completo viaja
+en el campo 2 del `0100` que el servidor transmite al host simulado o a un switch de QA
+autorizado; sin él no hay transacción que enviar. La política correcta distingue **tres ámbitos**:
+el navegador nunca recibe el PAN completo; los logs, el historial y las ejecuciones nunca lo
+guardan; y el procesamiento transaccional sí lo usa, tomado del catálogo local. La frase se
+sustituyó en la interfaz y la distinción quedó explícita en `CLAUDE.md` y `CONTEXTO.md`.
+
+**Cómo se manejan los errores de infraestructura.** La web traduce cada fallo a un aviso con
+título, explicación y tono visual propio, sin exponer trazas ni el texto de la excepción. Los seis
+desenlaces se distinguen a simple vista: aprobada, rechazada, inválida, sin respuesta, mensaje
+incompleto y fallo de conexión. Ese último merece énfasis: **no poder conectar no es un rechazo
+del autorizador**, y presentarlos igual induciría a error a quien prueba.
+
+**Decisión sobre los campos del formulario.** Se declararon con valor por defecto vacío en lugar
+de obligatorios. Con `Form(...)`, FastAPI responde su propio 422 en JSON ante un campo vacío, y el
+usuario vería un error crudo en vez del formulario con la explicación. Con valor por defecto, la
+validación propia produce un 400 que vuelve a renderizar la pantalla con el mensaje.
+
+**Isoscopio: solicitud y respuesta no son simétricos.** La respuesta trae representación cruda
+porque `MensajeInterpretado` la conserva desde el decode. La solicitud no la lleva: se conserva
+como valores del dominio, y reconstruir bytes para mostrarlos sería inventar un dato que nadie
+observó. Se muestra la columna solo donde el dato existe de verdad.
+
+**Dependencias no obvias.** El cliente de pruebas de esta versión de Starlette exige **`httpx2`**,
+no `httpx`: es un paquete distinto, la línea sucesora de `httpx`, instalado desde PyPI, y
+`starlette 1.6.0` lo declara como `httpx2>=2.0.0` en su extra `full`. Además,
+`python-multipart` es necesario para que FastAPI lea formularios.
+
+**Qué significa y qué no significa `httpx2>=2.12.0`.** La versión comprobada en este entorno es
+`httpx2` 2.12.0; 2.12.0 queda como **límite inferior provisional**. El rango permite versiones
+posteriores aún no comprobadas, y la reproducibilidad exacta del conjunto de dependencias se
+resolverá posteriormente con el mecanismo de congelado y CI del proyecto. Lo mismo vale para las
+demás dependencias: declarar el mínimo verificado no equivale a restringir el rango a lo
+verificado.
+
+**La prueba vertical usa cliente asíncrono.** El `TestClient` síncrono bloquearía el event loop en
+el que corre el host simulado, de modo que la conexión nunca se atendería. Se usa
+`httpx2.ASGITransport` con `AsyncClient`, que ejecuta la aplicación en el mismo loop.
+
+**Sin cambios en el núcleo.** No se tocó ninguna regla, contrato ni módulo del núcleo
+transaccional. Lo añadido fue `application/consultas.py`, que es solo lectura, y la raíz de
+composición. `ARQUITECTURA.md` se actualizó únicamente para incorporar la raíz de composición a la
+tabla de módulos, que había quedado incompleta.
+
+**Hueco identificado, no resuelto en esta iteración.** Un fallo de conexión no se persiste: la
+excepción sube y no queda rastro en `ejecuciones`. La web lo informa correctamente, pero el
+historial no registra el intento. Resolverlo exigiría un estado nuevo en el núcleo, y esta
+iteración tenía instrucción de no modificarlo. Queda anotado como decisión pendiente.
+
+**La guardia de PAN volvió a detectar una violación propia**, la tercera: un literal de doce
+dígitos como monto en las pruebas de la web. Sustituido por `monto_iso()`.
 
 ---
 

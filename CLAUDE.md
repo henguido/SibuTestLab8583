@@ -59,7 +59,21 @@ plausibles pero inventados: un archivo vacío es preferible a uno falso.
 ## Datos de tarjeta y datos sensibles
 
 Las tarjetas del contexto real son de ambiente de pruebas, nunca de producción, pero siguen
-siendo PAN reales:
+siendo PAN reales.
+
+**La política distingue tres ámbitos. No se confunden:**
+
+| Ámbito | Regla |
+|---|---|
+| **Navegador** | Nunca recibe el PAN completo. Solo la representación enmascarada |
+| **Logs, historial y ejecuciones** | Nunca guardan el PAN completo |
+| **Procesamiento transaccional** | **Sí** puede usar el PAN completo obtenido del catálogo local, para construir el `0100` y transmitirlo al host simulado o a un switch de QA autorizado |
+
+El tercer ámbito es el que hace falsa cualquier frase del tipo "el número completo nunca sale
+del servidor": sin el PAN no hay transacción que enviar. Lo que no debe salir es hacia el
+navegador, los logs y el historial.
+
+Reglas concretas: 
 
 - Nunca registrar el PAN completo en logs, en la bitácora ni en Git.
 - **El repositorio no contiene PAN completos, ni reales ni sintéticos.** Un literal con largo de

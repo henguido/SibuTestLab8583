@@ -8,8 +8,8 @@ No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza)
 
 ## Estado actual
 
-**Fase:** Sesión 5 del calendario de `PROYECTO.md` §9 — el recorrido de compra funciona de
-extremo a extremo contra el host simulado. Falta la interfaz web.
+**Fase:** Sesión 5 cerrada — el simulador se usa desde el navegador: formulario, isoscopio
+e historial sobre el recorrido real.
 
 | | |
 |---|---|
@@ -25,11 +25,11 @@ Para el estado exacto de Git —commits, `HEAD`, qué está publicado— consult
 simulado propio, con codec, framing, transporte y SQLite reales, terminando en una ejecución
 persistida y enmascarada. Las cuatro reglas de negocio están implementadas y probadas. El
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
-**75 pruebas en verde** sobre **Python 3.13.3**, la única versión instalada en la máquina.
+Y desde el navegador: formulario de compra, resultado con isoscopio enmascarado e historial.
+**101 pruebas en verde** sobre **Python 3.13.3**, la única versión instalada en la máquina.
 
-**Todavía NO existe:** la interfaz web (FastAPI, HTML/Jinja, isoscopio en pantalla), el motor
-de carga, los perfiles reales de Visa y Mastercard, `README.md`, integración continua, Docker ni
-skill propio en `.claude/`.
+**Todavía NO existe:** el motor de carga, los perfiles reales de Visa y Mastercard,
+`README.md`, integración continua, Docker, skill propio en `.claude/` ni autenticación.
 
 ## Decisiones vigentes
 
@@ -53,7 +53,11 @@ perfil define formato, codificación, campos y obligatorios por MTI; el catálog
 código del campo 39 cuenta como aprobado. Por eso contemplar perfiles de *formato* de Visa y
 Mastercard no contradice el alcance: lo excluido son los catálogos de *respuesta* por marca.
 
-**Gobernanza de PAN.** Tarjetas de ambiente de pruebas, nunca de producción, pero PAN reales:
+**Gobernanza de PAN.** Tarjetas de ambiente de pruebas, nunca de producción, pero PAN reales.
+Tres ámbitos que no se confunden: el **navegador** nunca recibe el PAN completo; **logs,
+historial y ejecuciones** nunca lo guardan; el **procesamiento transaccional sí lo usa**, tomado
+del catálogo local, para construir el `0100` y transmitirlo. Sin el PAN no hay transacción que
+enviar.
 
 - Nunca registrar el PAN completo en logs, en la bitácora ni en Git.
 - **El repositorio no contiene PAN completos, ni reales ni sintéticos**; los valores sintéticos
@@ -70,8 +74,11 @@ Documento completo en `docs/arquitectura/ARQUITECTURA.md`, con diagramas version
 
 Dirección de dependencia: `web → application service → dominio/puertos → adaptadores`.
 
-Módulos implementados: orquestador, perfiles, codec ISO 8583, validación, framing, transporte
-TCP, persistencia y host simulado. Pendientes: web y motor de carga.
+Módulos implementados: web, composición, orquestador, consultas, perfiles, codec ISO 8583,
+validación, framing, transporte TCP, persistencia y host simulado. Pendiente: motor de carga.
+
+La infraestructura se cablea en un solo lugar, `composicion.py`. La web recibe esa composición
+por inyección y no construye adaptadores en sus endpoints.
 
 RN-3 compara los campos **3, 4, 7, 11 y 41**, derivados del perfil (obligatorios de la respuesta
 menos el campo 39). RN-3 se evalúa **antes** que RN-1: una respuesta aprobada que no corresponde
@@ -97,7 +104,8 @@ reglas de negocio es pura y RN-4 se aplica antes de codificar.
 | 2026-08-13 | Primera iteración arquitectónica: se crean `CLAUDE.md`, `BITACORA.md`, `.gitignore`, `.gitattributes` y `docs/arquitectura/`. Se decide persistencia asíncrona con `aiosqlite` y framing como contrato independiente |
 | 2026-08-17 | Commit `5072c51` publica esa iteración arquitectónica |
 | 2026-08-17 | Fundación ejecutable: proyecto Python instalable, modelos de dominio, perfil genérico, catálogo, persistencia SQLite asíncrona con inicialización idempotente. Commit `93708f0` |
-| 2026-08-19 | Núcleo transaccional: codec, las cuatro reglas de negocio, framing de demostración, transporte TCP asíncrono, host simulado y orquestador. Recorrido `0100`/`0110` completo por TCP real, con 75 pruebas en verde |
+| 2026-08-19 | Núcleo transaccional: codec, las cuatro reglas de negocio, framing de demostración, transporte TCP asíncrono, host simulado y orquestador. Commit `de84818` |
+| 2026-08-19 | Interfaz web con FastAPI y Jinja: formulario, resultado, isoscopio enmascarado e historial sobre el núcleo real. 101 pruebas en verde |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -107,6 +115,7 @@ El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 2. Especificaciones reales de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca — bloqueadas por falta de documentos autorizados.
 3. Compatibilidad con Python 3.11 y 3.12. `requires-python` declara `>=3.13` porque es la única versión instalada en la máquina de desarrollo. **No significa que el código sea incompatible con 3.11 o 3.12** —no usa nada exclusivo de 3.13—: significa que ese soporte no se ha probado y por eso no se declara. En la Sesión 6, CI debe ejecutar una matriz de versiones y ampliar el rango si la evidencia lo permite.
 4. Si el motor de carga corre dentro del proceso web o aparte.
+5. Si un fallo de conexión debe persistirse como ejecución. Hoy la excepción sube, la web la informa, pero no queda rastro en el historial. Resolverlo exigiría un estado nuevo en el núcleo.
 5. Estrategia de datos de demostración reproducibles para un clon limpio, sin PAN reales.
 6. Herramienta y configuración de integración continua.
 7. Otros escenarios de falso positivo (`PROYECTO.md` §7.6). El primero ya está cubierto: una respuesta con código aprobado pero correlación incorrecta se registra `Invalida`. Faltan los demás casos.
@@ -125,9 +134,8 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Interfaz web mínima con FastAPI y plantillas Jinja sobre el núcleo ya funcionando: formulario de
-compra, isoscopio con los campos interpretados —enmascarados— e historial de ejecuciones. La web
-consume el orquestador y no conoce SQLite, sockets ni `pyiso8583`.
+Sesión 6 del calendario: las pruebas de las cuatro reglas ejecutándose en integración continua
+en cada push, y refactorización de lo acumulado. Las pruebas ya existen; falta el CI.
 
 ## Archivos importantes
 
@@ -141,11 +149,13 @@ consume el orquestador y no conoce SQLite, sockets ni `pyiso8583`.
 | `docs/arquitectura/ARQUITECTURA.md` | Módulos, contratos y decisiones de diseño |
 | `docs/arquitectura/*.mmd` | Diagramas Mermaid: componentes y flujo de compra |
 | `pyproject.toml` | Dependencias, empaquetado y configuración de `pytest` |
-| `src/sibutestlab8583/` | Código: `domain/`, `application/`, `profiles/`, `adapters/` |
+| `src/sibutestlab8583/` | Código: `domain/`, `application/`, `web/`, `profiles/`, `adapters/`, `composicion.py` |
 | `tests/` | Pruebas técnicas de la fundación |
 
 Para levantar el proyecto desde cero: crear un entorno virtual, `pip install -e ".[dev]"`,
-`sibu-init-db` y `pytest`.
+`sibu-init-db` y `pytest`. La demostración usa dos terminales: `sibu-host-demo` levanta el host
+simulado y `uvicorn sibutestlab8583.web.app:app` la interfaz web. La web **no** levanta el host
+simulado: la arquitectura lo mantiene como proceso aparte.
 
 ## Instrucciones para retomar en una sesión nueva
 

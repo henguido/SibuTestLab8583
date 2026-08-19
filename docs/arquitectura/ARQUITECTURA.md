@@ -39,6 +39,7 @@ Tres límites que no se cruzan:
 | Módulo | Capa | Responsabilidad |
 |---|---|---|
 | **Web** | Interfaz | Formulario de compra, isoscopio (campos ISO interpretados) e historial de ejecuciones. Delgada: sin lógica de negocio |
+| **Composición** | Raíz de composición | Único lugar donde se cablean perfil, catálogo, codec, framing, transporte y repositorios. La web depende de ella y no construye infraestructura en sus endpoints |
 | **Orquestador** (application service) | Aplicación | Secuencia el recorrido: armar → validar (RN-4) → codificar → enviar → interpretar → evaluar → persistir. Convierte el `Timeout` del transporte en resultado de ejecución (RN-2). Única pieza que conoce a todas las demás |
 | **Perfiles** | Dominio | Provee el `PerfilDeMarca` activo: especificación de formato y campos obligatorios por MTI |
 | **Codec ISO 8583** | Adaptador | Codifica y decodifica mensajes sobre `pyiso8583`. Recibe la especificación como parámetro; no conoce marcas. Traduce los errores de la librería a errores del dominio |
