@@ -12,10 +12,13 @@ from decimal import Decimal
 
 import pytest
 
-from conftest import DESTINO_INERTE, MOMENTO_FIJO, TransporteFalso, construir_orquestador
+from conftest import MOMENTO_FIJO, TransporteFalso, construir_orquestador
 from sibutestlab8583.adapters.iso8583.codec import CodecIso8583
 from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO
-from sibutestlab8583.adapters.persistence.sqlite_repos import RepositorioEjecucionesSQLite
+from sibutestlab8583.adapters.persistence.sqlite_repos import (
+    RepositorioEjecucionesSQLite,
+    RepositorioTarjetasSQLite,
+)
 from sibutestlab8583.domain.armado import armar_compra
 from sibutestlab8583.domain.catalogo import (
     CatalogoDeRespuestas,
@@ -225,8 +228,6 @@ async def test_rn4_un_mensaje_incompleto_nunca_llega_al_transporte(base, datos_c
     orquestador = construir_orquestador(base, transporte)
 
     # Una tarjeta sin fecha de vencimiento deja el 0100 sin el campo 14.
-    from sibutestlab8583.adapters.persistence.sqlite_repos import RepositorioTarjetasSQLite
-
     await RepositorioTarjetasSQLite(base).guardar(
         TarjetaPrueba(card_id="SIN-VENC", pan=pan_sintetico("1111"), expiracion="")
     )
@@ -239,8 +240,6 @@ async def test_rn4_un_mensaje_incompleto_nunca_llega_al_transporte(base, datos_c
 
 
 async def test_rn4_la_ejecucion_no_enviada_queda_persistida(base, datos_compra):
-    from sibutestlab8583.adapters.persistence.sqlite_repos import RepositorioTarjetasSQLite
-
     await RepositorioTarjetasSQLite(base).guardar(
         TarjetaPrueba(card_id="SIN-VENC-2", pan=pan_sintetico("2222"), expiracion="")
     )

@@ -8,8 +8,8 @@ No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza)
 
 ## Estado actual
 
-**Fase:** Sesión 5 cerrada — el simulador se usa desde el navegador: formulario, isoscopio
-e historial sobre el recorrido real.
+**Fase:** Sesión 6 — integración continua definida y refactorización aplicada. El simulador se
+usa desde el navegador sobre el recorrido real.
 
 | | |
 |---|---|
@@ -28,8 +28,9 @@ paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma
 Y desde el navegador: formulario de compra, resultado con isoscopio enmascarado e historial.
 **101 pruebas en verde** sobre **Python 3.13.3**, la única versión instalada en la máquina.
 
-**Todavía NO existe:** el motor de carga, los perfiles reales de Visa y Mastercard,
-`README.md`, integración continua, Docker, skill propio en `.claude/` ni autenticación.
+**Todavía NO existe:** el motor de carga, los perfiles reales de Visa y Mastercard, `README.md`,
+Docker, skill propio en `.claude/` ni autenticación. El workflow de CI ya está escrito, pero
+**todavía no se ha ejecutado**: no hay resultados de Python 3.11 ni 3.12.
 
 ## Decisiones vigentes
 
@@ -105,7 +106,8 @@ reglas de negocio es pura y RN-4 se aplica antes de codificar.
 | 2026-08-17 | Commit `5072c51` publica esa iteración arquitectónica |
 | 2026-08-17 | Fundación ejecutable: proyecto Python instalable, modelos de dominio, perfil genérico, catálogo, persistencia SQLite asíncrona con inicialización idempotente. Commit `93708f0` |
 | 2026-08-19 | Núcleo transaccional: codec, las cuatro reglas de negocio, framing de demostración, transporte TCP asíncrono, host simulado y orquestador. Commit `de84818` |
-| 2026-08-19 | Interfaz web con FastAPI y Jinja: formulario, resultado, isoscopio enmascarado e historial sobre el núcleo real. 101 pruebas en verde |
+| 2026-08-19 | Interfaz web con FastAPI y Jinja: formulario, resultado, isoscopio enmascarado e historial sobre el núcleo real. Commit `dc8cc8b` |
+| 2026-08-19 | Workflow de GitHub Actions con matriz 3.11/3.12/3.13 y refactorización de lo acumulado. Sin funcionalidad nueva; 101 pruebas en verde |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -113,11 +115,11 @@ El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
 1. Formato concreto del framing para un switch QA real. El de demostración existe (prefijo de 2 bytes); el del ambiente real dependerá de su especificación.
 2. Especificaciones reales de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca — bloqueadas por falta de documentos autorizados.
-3. Compatibilidad con Python 3.11 y 3.12. `requires-python` declara `>=3.13` porque es la única versión instalada en la máquina de desarrollo. **No significa que el código sea incompatible con 3.11 o 3.12** —no usa nada exclusivo de 3.13—: significa que ese soporte no se ha probado y por eso no se declara. En la Sesión 6, CI debe ejecutar una matriz de versiones y ampliar el rango si la evidencia lo permite.
+3. Compatibilidad con Python 3.11 y 3.12. `requires-python` sigue declarando `>=3.13` porque es la única versión comprobada. El CI ya prueba las tres versiones usando `pip install --ignore-requires-python`, que ejecuta el código sin alterar el metadata. **Ampliar el rango solo cuando el CI muestre las tres en verde.**
 4. Si el motor de carga corre dentro del proceso web o aparte.
 5. Si un fallo de conexión debe persistirse como ejecución. Hoy la excepción sube, la web la informa, pero no queda rastro en el historial. Resolverlo exigiría un estado nuevo en el núcleo.
 5. Estrategia de datos de demostración reproducibles para un clon limpio, sin PAN reales.
-6. Herramienta y configuración de integración continua.
+6. Si conviene añadir un trabajo de CI en Windows: hoy el workflow corre en Linux y todo lo verificado localmente fue en Windows.
 7. Otros escenarios de falso positivo (`PROYECTO.md` §7.6). El primero ya está cubierto: una respuesta con código aprobado pero correlación incorrecta se registra `Invalida`. Faltan los demás casos.
 8. Cifrado en reposo del catálogo de tarjetas de QA — fuera del alcance académico, necesario para una evolución comercial.
 
@@ -134,8 +136,10 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Sesión 6 del calendario: las pruebas de las cuatro reglas ejecutándose en integración continua
-en cada push, y refactorización de lo acumulado. Las pruebas ya existen; falta el CI.
+Observar el primer resultado del CI. Si las tres versiones de Python pasan, ampliar
+`requires-python` a `>=3.11` con esa evidencia. Después, `README.md` usando el procedimiento de
+instalación que el CI haya demostrado reproducible, y la Sesión 7: skill de arranque y motor de
+pruebas de carga.
 
 ## Archivos importantes
 
@@ -150,6 +154,7 @@ en cada push, y refactorización de lo acumulado. Las pruebas ya existen; falta 
 | `docs/arquitectura/*.mmd` | Diagramas Mermaid: componentes y flujo de compra |
 | `pyproject.toml` | Dependencias, empaquetado y configuración de `pytest` |
 | `src/sibutestlab8583/` | Código: `domain/`, `application/`, `web/`, `profiles/`, `adapters/`, `composicion.py` |
+| `.github/workflows/tests.yml` | CI: suite en Python 3.11/3.12/3.13 y verificación de clon limpio |
 | `tests/` | Pruebas técnicas de la fundación |
 
 Para levantar el proyecto desde cero: crear un entorno virtual, `pip install -e ".[dev]"`,

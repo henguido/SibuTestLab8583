@@ -13,9 +13,12 @@ import argparse
 import asyncio
 import contextlib
 
-from ...composicion import Composicion, Configuracion
-
-PUERTO_POR_DEFECTO = 8583
+from ...composicion import (
+    HOST_POR_DEFECTO,
+    PUERTO_POR_DEFECTO,
+    Composicion,
+    Configuracion,
+)
 
 
 def _argumentos() -> argparse.Namespace:
@@ -23,7 +26,9 @@ def _argumentos() -> argparse.Namespace:
         prog="sibu-host-demo",
         description="Host simulado que responde 0110 a una compra 0100.",
     )
-    analizador.add_argument("--host", default="127.0.0.1", help="interfaz de escucha")
+    analizador.add_argument(
+        "--host", default=HOST_POR_DEFECTO, help="interfaz de escucha"
+    )
     analizador.add_argument(
         "--puerto", type=int, default=PUERTO_POR_DEFECTO, help="puerto de escucha"
     )

@@ -166,6 +166,25 @@ def filas_de_solicitud(
     ]
 
 
+def contexto_de_resultado(
+    resultado: ResultadoCompra, destino, descripciones: Mapping[str, str]
+) -> dict:
+    """Arma lo que la plantilla de resultado necesita.
+
+    Vive aqui y no en el endpoint para que este ultimo se limite a orquestar la
+    peticion: validar la entrada, delegar el recorrido y elegir la plantilla.
+    """
+    return {
+        "resultado": resultado,
+        "aviso": aviso_de(resultado),
+        "destino": destino,
+        "filas_solicitud": filas_de_solicitud(resultado.solicitud, descripciones),
+        "filas_respuesta": (
+            filas_de_respuesta(resultado.respuesta) if resultado.respuesta else []
+        ),
+    }
+
+
 def filas_de_respuesta(mensaje: MensajeInterpretado) -> Sequence[FilaIsoscopio]:
     """Isoscopio de la respuesta, con los bytes tal como llegaron."""
     return [

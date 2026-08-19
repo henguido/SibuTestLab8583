@@ -16,7 +16,7 @@ import asyncio
 from typing import Mapping
 
 from ...domain.errores import ErrorDeFraming
-from ...domain.modelos import MTI_RESPUESTA_COMPRA
+from ...domain.modelos import MTI_RESPUESTA_COMPRA, MensajeIso
 from ...domain.validacion import CAMPO_CODIGO_RESPUESTA, campos_de_correlacion
 
 #: Campo que el autorizador agrega cuando aprueba.
@@ -109,8 +109,6 @@ class HostSimulado:
 
     def _construir_respuesta(self, solicitud):
         """Devuelve el 0110 con los campos de correlacion copiados de la solicitud."""
-        from ...domain.modelos import MensajeIso
-
         campos = {
             numero: solicitud.campos[numero]
             for numero in campos_de_correlacion(self._perfil, MTI_RESPUESTA_COMPRA)

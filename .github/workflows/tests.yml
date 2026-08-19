@@ -1,0 +1,153 @@
+name: Pruebas
+
+# Se ejecuta en cada push y en cada pull request. No despliega nada y no usa
+# secretos: solo instala el proyecto desde los archivos versionados y corre la
+# suite.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Compatibilidad experimental con 3.11, 3.12 y 3.13.
+  # ---------------------------------------------------------------------------
+  suite:
+    name: Suite en Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Sin fail-fast: si una version falla queremos ver tambien el resultado de
+      # las otras, porque el objetivo de esta matriz es justamente comparar.
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Extraer las dependencias declaradas en pyproject.toml
+        # Se leen del propio pyproject con tomllib para que esta lista no pueda
+        # desincronizarse de lo declarado: no hay una segunda copia que mantener.
+        run: |
+          python - "$RUNNER_TEMP/requisitos.txt" <<'PY'
+          import pathlib
+          import sys
+          import tomllib
+
+          destino = pathlib.Path(sys.argv[1])
+          proyecto = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]
+
+          requisitos = list(proyecto.get("dependencies", []))
+          requisitos += list(proyecto.get("optional-dependencies", {}).get("dev", []))
+
+          destino.write_text("\n".join(requisitos) + "\n", encoding="utf-8")
+          print("Dependencias que se instalaran normalmente:")
+          for requisito in requisitos:
+              print(f"  {requisito}")
+          PY
+
+      - name: Instalar las dependencias respetando su propia compatibilidad
+        # SIN --ignore-requires-python: si alguna dependencia declara no soportar
+        # esta version de Python, queremos que falle aqui. Eso seria una
+        # incompatibilidad real y no debe quedar enmascarada.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "$RUNNER_TEMP/requisitos.txt"
+
+      - name: Instalar solo nuestro paquete
+        # --ignore-requires-python se limita a ESTE paquete y a este paso.
+        # pyproject declara >=3.13 porque 3.13 es lo unico comprobado hasta hoy;
+        # este job existe justamente para conseguir la evidencia que falta, sin
+        # alterar el metadata declarado. --no-deps garantiza que no se reabra la
+        # resolucion de dependencias con la restriccion ignorada.
+        run: python -m pip install --no-deps --ignore-requires-python -e .
+
+      - name: Versiones realmente instaladas
+        run: python -m pip list
+
+      - name: Suite completa
+        run: python -m pytest -v
+
+  # ---------------------------------------------------------------------------
+  # Las cuatro reglas de negocio, visibles como trabajo propio.
+  # ---------------------------------------------------------------------------
+  reglas-negocio:
+    name: Reglas de negocio RN-1 a RN-4
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Instalar el proyecto
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: RN-1, RN-2, RN-3 y RN-4
+        # Un trabajo aparte para que la evidencia de PROYECTO.md seccion 4 se lea
+        # de un vistazo. No se repite dentro de la matriz: alli la suite completa
+        # ya las cubre una sola vez.
+        run: python -m pytest tests/test_reglas_negocio.py -v
+
+  # ---------------------------------------------------------------------------
+  # Instalacion tal como la haria quien reciba el repositorio.
+  # ---------------------------------------------------------------------------
+  clon-limpio:
+    name: Instalacion desde clon limpio
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: El repositorio no contiene artefactos locales
+        # Complementa la guardia de la suite, que revisa el CONTENIDO de los
+        # archivos. Esto revisa QUE archivos estan versionados: un .env sin
+        # digitos pasaria la otra guardia y no debe estar aqui.
+        run: |
+          set -euo pipefail
+          prohibidos=$(git ls-files '*.db' '*.sqlite' '*.sqlite3' '.env' '*.env' '.venv/*' '**/settings.local.json')
+          if [ -n "$prohibidos" ]; then
+            echo "Archivos que no deben estar versionados:"; echo "$prohibidos"; exit 1
+          fi
+          test ! -d .venv
+          test ! -f sibutestlab8583.db
+          echo "Clon limpio: sin bases de datos, sin entornos virtuales, sin configuracion local."
+
+      - name: Instalar respetando el metadata declarado
+        # Sin ignorar nada: aqui se comprueba que un clon limpio se instala con
+        # lo que pyproject.toml declara, tal como lo haria quien lo reciba.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Inicializar la base de datos desde cero
+        run: |
+          set -euo pipefail
+          sibu-init-db
+          test -f sibutestlab8583.db
+          sibu-init-db   # idempotente: la segunda vez no debe fallar
+
+      - name: Suite completa
+        run: python -m pytest -q

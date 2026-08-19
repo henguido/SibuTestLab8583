@@ -414,6 +414,117 @@ iteración tenía instrucción de no modificarlo. Queda anotado como decisión p
 **La guardia de PAN volvió a detectar una violación propia**, la tercera: un literal de doce
 dígitos como monto en las pruebas de la web. Sustituido por `monto_iso()`.
 
+## 2026-08-19 · Integración continua y refactorización
+
+Se añade `.github/workflows/tests.yml` y se corrigen problemas reales del código acumulado. **No
+se añadió funcionalidad**: ni motor de carga, ni perfiles de marca, ni cambios de alcance o de
+reglas. La suite sigue en 101 pruebas, en verde antes y después de refactorizar.
+
+### Diseño del CI
+
+Tres trabajos, sin despliegues y sin secretos, disparados por `push` y por `pull_request`.
+Cada uno demuestra una cosa distinta:
+
+- **`suite`** — compatibilidad experimental. Matriz de Python 3.11, 3.12 y 3.13 sobre
+  `ubuntu-latest`, con `fail-fast: false` para ver el resultado de las tres aunque una falle.
+  Corre la suite completa **una sola vez** por versión.
+- **`reglas-negocio`** — RN-1 a RN-4 visibles. Trabajo aparte sobre 3.13 que ejecuta solo
+  `tests/test_reglas_negocio.py -v`, para que la evidencia de `PROYECTO.md` §4 se lea de un
+  vistazo sin repetir esa ejecución dentro de cada miembro de la matriz.
+- **`clon-limpio`** — instalación normal. Comprueba que un clon recién hecho no trae artefactos
+  locales, instala **respetando el metadata declarado**, inicializa la base desde cero dos veces
+  y corre la suite.
+
+**Ejecuta en Linux, y todo lo verificado hasta ahora fue en Windows.** Eso es deliberado: aporta
+evidencia nueva sobre rutas y finales de línea. Queda pendiente decidir si conviene añadir un
+trabajo en Windows.
+
+### Cómo se prueban 3.11 y 3.12 sin falsear el metadata
+
+`pyproject.toml` declara `requires-python = ">=3.13"` porque 3.13 era lo único instalable en la
+máquina de desarrollo. Bajar ese valor *antes* de tener evidencia sería declarar un soporte que
+nadie comprobó —el error que ya se corrigió una vez—, y modificar el archivo dentro del CI sería
+falsear lo que el repositorio dice.
+
+**Primera propuesta, descartada por imprecisa.** Se planteó `pip install --ignore-requires-python`
+para todo el paso de instalación. El usuario señaló el defecto: esa opción se aplica a **toda la
+resolución**, de modo que una dependencia que genuinamente no soporte 3.11 se instalaría igual y
+la incompatibilidad quedaría enmascarada. El experimento habría dado un falso verde.
+
+**La forma correcta separa las dos cosas.** El trabajo de matriz:
+
+1. lee `pyproject.toml` con `tomllib` y extrae `project.dependencies` y
+   `project.optional-dependencies.dev` —así la lista no puede desincronizarse de lo declarado,
+   porque no hay una segunda copia que mantener—;
+2. las escribe a un archivo en `$RUNNER_TEMP`;
+3. las instala con `pip install -r`, **sin ignorar nada**: si alguna declara no soportar esa
+   versión de Python, falla ahí, que es exactamente lo que queremos saber;
+4. instala solo nuestro paquete con `--no-deps --ignore-requires-python -e .`.
+
+`--no-deps` es lo que garantiza que el paso 4 no reabra la resolución con la restricción ignorada.
+Así **lo único que se ignora provisionalmente es el `requires-python` de este proyecto**, que es
+justamente la afirmación que se está poniendo a prueba. Ningún archivo cambia: el metadata sigue
+diciendo la verdad y el CI produce la evidencia que falta. El trabajo `clon-limpio` instala con
+`pip install -e ".[dev]"` sin ignorar nada, de modo que también se comprueba que el metadata
+declarado funciona tal cual para quien reciba el repositorio.
+
+**Solo si las tres versiones pasan** tendrá sentido ampliar `requires-python` a `>=3.11`, y esa
+ampliación será entonces un hecho verificado y no una suposición. **Al momento de escribir esto el
+workflow todavía no se ha ejecutado**: no hay ningún resultado de 3.11 ni de 3.12.
+
+### Sobre los markers de pruebas
+
+Se evaluó añadir un marker `regla_negocio` y se decidió **no hacerlo**. Las pruebas ya viven en
+`tests/test_reglas_negocio.py` y se llaman `test_rn1_…`, `test_rn2_…`, `test_rn3_…` y `test_rn4_…`.
+Un marker sería metadata duplicada que puede desincronizarse del nombre y del archivo sin que nada
+falle. El trabajo `reglas-negocio`, que corre ese archivo con `-v`, da la misma visibilidad al
+docente sin nada que mantener.
+
+### Guardias de seguridad en CI
+
+La guardia de PAN ya corre como parte de la suite. Se añadió además un paso que revisa **qué
+archivos están versionados** —`.env`, `.db`, `.sqlite`, `.venv/`, `settings.local.json`—, que es
+una comprobación distinta y no duplicada: la guardia de la suite revisa el *contenido*, y un `.env`
+sin dígitos la pasaría sin problema. Son tres líneas de shell, no un script.
+
+### Refactorizaciones realizadas
+
+Cada una responde a un problema concreto, no a estética. Las 101 pruebas existentes pasan sin
+cambios funcionales en sus aserciones, lo que aporta evidencia de que las refactorizaciones
+conservaron **el comportamiento actualmente cubierto por la suite**. Una suite solo protege lo
+que cubre: no es una demostración de equivalencia total.
+
+1. **`web/app.py`: las rutas salen de la fábrica.** `crear_app` tenía 119 líneas porque las tres
+   rutas vivían anidadas dentro. La clausura no capturaba nada: la composición llega por `Depends`,
+   no por el ámbito. Pasaron a un `APIRouter` de módulo. Cada ruta se lee y se prueba por separado
+   y la fábrica queda en ocho líneas.
+2. **`web/app.py`: el endpoint de compra baja de 65 líneas.** Se extrajeron
+   `_interpretar_formulario` —validación de entrada— y `presentacion.contexto_de_resultado`
+   —armado del contexto de plantilla—. El endpoint queda con lo suyo: validar, delegar, elegir
+   plantilla.
+3. **`domain/validacion.py`: una función por regla.** `evaluar_respuesta` mezclaba RN-3 y RN-1 en
+   58 líneas. Se separó en `_discrepancias_de_correlacion` (RN-3) y `_interpretar_codigo` (RN-1).
+   El cuerpo principal queda en cuatro líneas donde **el orden entre ambas reglas es lo único
+   visible**, que es justamente la decisión que protege contra falsos positivos.
+4. **Configuración repetida.** `PUERTO_POR_DEFECTO` estaba definido con el mismo valor en
+   `composicion.py` y en `cli.py`. Cambiar uno y olvidar el otro habría dado un comando de
+   demostración apuntando a otro puerto que la web. `cli.py` ahora importa ambos valores.
+5. **Import local en `servidor.py`.** `MensajeIso` se importaba dentro de un método sin razón
+   —no hay ciclo—; subido al módulo.
+6. **Código muerto en pruebas.** `DESTINO_INERTE` se importaba y no se usaba;
+   `RepositorioTarjetasSQLite` se importaba dos veces dentro de funciones. Corregidos.
+
+**Lo que se decidió NO refactorizar.** `Orquestador.ejecutar_compra` tiene 71 líneas y se deja
+como está. Es la secuencia central del sistema y su valor está en que el orden se lea completo y
+seguido: armar, RN-4, codificar, enviar, RN-2, decodificar, RN-3 y RN-1, persistir. Partirla
+escondería exactamente lo que hay que poder auditar. El armado del registro ya está extraído en
+`_registrar`; lo que queda es el flujo, y el flujo es uno.
+
+Se revisó `pyproject.toml`: se actualizaron dos comentarios que habían quedado obsoletos
+—`fastapi` y `uvicorn` seguían marcados "todavía sin usar" cuando la iteración anterior ya los
+usa—. No se congelaron dependencias: la estrategia de reproducibilidad exacta se decidirá viendo
+lo que reporte el CI, como estaba previsto.
+
 ---
 
 ## Gobernanza

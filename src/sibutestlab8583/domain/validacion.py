@@ -74,36 +74,52 @@ def evaluar_respuesta(
 
     Nunca devuelve TIMEOUT: si no hubo respuesta, no se llama a esta funcion.
     """
-    motivos: list[str] = []
+    discrepancias = _discrepancias_de_correlacion(envio, respuesta, perfil)
+    if discrepancias:
+        return EstadoEjecucion.INVALIDA, discrepancias
+    return _interpretar_codigo(respuesta, catalogo)
 
-    # --- RN-3: la respuesta tiene que corresponder a esta solicitud ---
+
+def _discrepancias_de_correlacion(
+    envio: MensajeIso, respuesta: MensajeIso, perfil
+) -> tuple[str, ...]:
+    """RN-3: en que la respuesta no corresponde a la solicitud enviada.
+
+    Vacio significa que si corresponde. Comprueba tres cosas: que el MTI sea el
+    esperado, que la respuesta traiga sus obligatorios, y que los campos de
+    correlacion vuelvan identicos.
+    """
+    motivos: list[str] = []
     mti_esperado = _mti_de_respuesta(envio.mti)
+
     if respuesta.mti != mti_esperado:
         motivos.append(f"MTI inesperado: se esperaba {mti_esperado} y llego {respuesta.mti}")
 
-    obligatorios_respuesta = (
+    obligatorios = (
         perfil.obligatorios(respuesta.mti) if perfil.soporta(respuesta.mti) else frozenset()
     )
-    faltantes = sorted(obligatorios_respuesta - respuesta.numeros_presentes(), key=int)
+    faltantes = sorted(obligatorios - respuesta.numeros_presentes(), key=int)
     if faltantes:
         motivos.append(f"la respuesta no trae campos obligatorios: {', '.join(faltantes)}")
 
     if perfil.soporta(mti_esperado):
         for numero in sorted(campos_de_correlacion(perfil, mti_esperado), key=int):
             esperado = envio.campos.get(numero)
-            recibido = respuesta.campos.get(numero)
             if esperado is None:
                 continue  # no viajaba en la solicitud: nada que correlacionar
+            recibido = respuesta.campos.get(numero)
             if recibido != esperado:
                 motivos.append(
                     f"el campo {numero} no corresponde a la solicitud: "
                     f"se envio {esperado!r} y volvio {recibido!r}"
                 )
+    return tuple(motivos)
 
-    if motivos:
-        return EstadoEjecucion.INVALIDA, tuple(motivos)
 
-    # --- RN-1: aprobado es lo que el catalogo configurado diga ---
+def _interpretar_codigo(
+    respuesta: MensajeIso, catalogo: CatalogoDeRespuestas
+) -> tuple[EstadoEjecucion, tuple[str, ...]]:
+    """RN-1: aprobado es lo que el catalogo configurado diga, no un codigo fijo."""
     codigo = respuesta.campos.get(CAMPO_CODIGO_RESPUESTA)
     if codigo is None:
         return EstadoEjecucion.INVALIDA, ("la respuesta no trae el campo 39",)
