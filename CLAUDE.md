@@ -62,9 +62,14 @@ Las tarjetas del contexto real son de ambiente de pruebas, nunca de producción,
 siendo PAN reales:
 
 - Nunca registrar el PAN completo en logs, en la bitácora ni en Git.
-- El catálogo local de tarjetas de QA sí puede contener el PAN completo: es imprescindible para
-  construir la transacción, y es el único lugar donde vive. Ejecuciones, historial y logs no lo
-  duplican.
+- **El repositorio no contiene PAN completos, ni reales ni sintéticos.** Un literal con largo de
+  tarjeta es indistinguible de uno real para un escáner de secretos o una auditoría. Los valores
+  sintéticos que necesitan las pruebas y los datos de demostración **se generan en ejecución**
+  con `domain/datos_sinteticos.py`. Una prueba de la suite hace fallar el build si aparece en
+  cualquier archivo versionable una secuencia de 12 a 19 dígitos.
+- El catálogo local de tarjetas de QA sí puede contener el PAN completo **en la base de datos**:
+  es imprescindible para construir la transacción, y es el único lugar donde vive. Ejecuciones,
+  historial y logs no lo duplican.
 - Las ejecuciones referencian la tarjeta mediante `card_id`, no por PAN.
 - Fuera de su pantalla de mantenimiento, mostrar solo `************1234`. Esto incluye el
   isoscopio: enmascarar los campos que transportan datos de tarjeta.

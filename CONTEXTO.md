@@ -4,24 +4,33 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-08-13
+**Última actualización:** 2026-08-17
 
 ## Estado actual
 
-**Fase:** cierre de la Sesión 4 del calendario de `PROYECTO.md` §9 — arquitectura documentada,
-sin código.
+**Fase:** Sesión 5 del calendario de `PROYECTO.md` §9 — fundación ejecutable construida; el
+recorrido de compra todavía no funciona de extremo a extremo.
 
 | | |
 |---|---|
 | Remoto | `https://github.com/henguido/SibuTestLab8583.git` |
 | Rama | `main`, con seguimiento de `origin/main` |
-| Archivos existentes | `PROYECTO.md`, `FICHA-APROBACION.md`, `CONTEXTO.md`, `CLAUDE.md`, `BITACORA.md`, `.gitignore`, `.gitattributes`, `docs/arquitectura/` (documento y dos diagramas) |
+| Documentos | `PROYECTO.md`, `FICHA-APROBACION.md`, `CONTEXTO.md`, `CLAUDE.md`, `BITACORA.md`, `docs/arquitectura/` (documento y dos diagramas) |
+| Proyecto Python | `pyproject.toml` instalable, `src/sibutestlab8583/` y `tests/` |
 
 Para el estado exacto de Git —commits, `HEAD`, qué está publicado— consultar `git log` y
 `git status`, no este archivo.
 
-**Todavía no existe código funcional del simulador.** Tampoco `README.md`, `src/`, dependencias
-declaradas, base de datos, integración continua, ni skill propio en `.claude/`.
+**Qué funciona y está verificado:** el paquete se instala en modo editable; el perfil genérico
+codifica y decodifica un `0100` y un `0110` reales con `pyiso8583`; el catálogo genérico expone
+los seis códigos con solo `00` aprobado; la base SQLite se inicializa de forma idempotente
+(`sibu-init-db`) y los tres repositorios asíncronos guardan y recuperan. 28 pruebas en verde
+sobre **Python 3.13.3**, la única versión instalada en la máquina de desarrollo.
+
+**Todavía NO existe:** el recorrido `0100`/`0110` de extremo a extremo, el codec como adaptador,
+la validación de las cuatro reglas, el transporte TCP, el framing concreto, el host simulado, el
+orquestador, la interfaz web, el motor de carga, `README.md`, integración continua, Docker ni
+skill propio en `.claude/`.
 
 ## Decisiones vigentes
 
@@ -48,6 +57,9 @@ Mastercard no contradice el alcance: lo excluido son los catálogos de *respuest
 **Gobernanza de PAN.** Tarjetas de ambiente de pruebas, nunca de producción, pero PAN reales:
 
 - Nunca registrar el PAN completo en logs, en la bitácora ni en Git.
+- **El repositorio no contiene PAN completos, ni reales ni sintéticos**; los valores sintéticos
+  necesarios para pruebas y demostración se generan en ejecución. Una prueba de la suite lo
+  vigila automáticamente.
 - Las ejecuciones referencian la tarjeta mediante un identificador interno.
 - Fuera de su pantalla de mantenimiento, mostrar solo `************1234`.
 - El archivo SQLite que contenga tarjetas reales de QA no debe versionarse.
@@ -76,6 +88,8 @@ reglas de negocio es pura y RN-4 se aplica antes de codificar.
 | 2026-08-12 | Se inicializa Git en `main`, commit `d2b8e77` con los dos documentos aprobados, `origin` configurado y `main` publicado con push normal |
 | 2026-08-12 | Commit `4269e03` incorpora `CONTEXTO.md` como memoria operativa del proyecto |
 | 2026-08-13 | Primera iteración arquitectónica: se crean `CLAUDE.md`, `BITACORA.md`, `.gitignore`, `.gitattributes` y `docs/arquitectura/`. Se decide persistencia asíncrona con `aiosqlite` y framing como contrato independiente |
+| 2026-08-17 | Commit `5072c51` publica esa iteración arquitectónica |
+| 2026-08-17 | Fundación ejecutable: proyecto Python instalable, modelos de dominio, perfil genérico, catálogo, persistencia SQLite asíncrona con inicialización idempotente y 20 pruebas técnicas en verde |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -83,7 +97,7 @@ El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
 1. Formato concreto del framing TCP (el contrato existe; el formato no está asignado).
 2. Especificaciones reales de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca — bloqueadas por falta de documentos autorizados.
-3. Esquema y columnas de la base de datos.
+3. Compatibilidad con Python 3.11 y 3.12. `requires-python` declara `>=3.13` porque es la única versión instalada en la máquina de desarrollo. **No significa que el código sea incompatible con 3.11 o 3.12** —no usa nada exclusivo de 3.13—: significa que ese soporte no se ha probado y por eso no se declara. En la Sesión 6, CI debe ejecutar una matriz de versiones y ampliar el rango si la evidencia lo permite.
 4. Si el motor de carga corre dentro del proceso web o aparte.
 5. Estrategia de datos de demostración reproducibles para un clon limpio, sin PAN reales.
 6. Herramienta y configuración de integración continua.
@@ -103,8 +117,9 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Sesión 5 (18 de agosto): recorrido de compra `0100`/`0110` funcionando de extremo a extremo, con
-persistencia real, contra el host simulado. Es la primera iteración que produce código.
+Completar la Sesión 5: cerrar el recorrido `0100`/`0110` de extremo a extremo sobre la fundación
+ya construida. Falta el codec como adaptador, la validación de las cuatro reglas, el framing
+concreto, el transporte TCP asíncrono, el host simulado, el orquestador y la interfaz web mínima.
 
 ## Archivos importantes
 
@@ -117,6 +132,12 @@ persistencia real, contra el host simulado. Es la primera iteración que produce
 | `BITACORA.md` | Evidencia académica del proceso, decisiones y gobernanza |
 | `docs/arquitectura/ARQUITECTURA.md` | Módulos, contratos y decisiones de diseño |
 | `docs/arquitectura/*.mmd` | Diagramas Mermaid: componentes y flujo de compra |
+| `pyproject.toml` | Dependencias, empaquetado y configuración de `pytest` |
+| `src/sibutestlab8583/` | Código: `domain/`, `profiles/`, `adapters/persistence/` |
+| `tests/` | Pruebas técnicas de la fundación |
+
+Para levantar el proyecto desde cero: crear un entorno virtual, `pip install -e ".[dev]"`,
+`sibu-init-db` y `pytest`.
 
 ## Instrucciones para retomar en una sesión nueva
 

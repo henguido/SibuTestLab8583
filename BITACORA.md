@@ -172,6 +172,105 @@ un `diff`, frente a imágenes binarias que Git no puede comparar.
 
 No se escribió código del simulador en esta iteración.
 
+## 2026-08-17 · Fundación ejecutable · primera iteración con código
+
+Se construye la base sobre la que se montará el recorrido de compra: proyecto Python
+instalable, modelos de dominio, perfil genérico, catálogo, persistencia SQLite asíncrona y
+pruebas técnicas. 20 pruebas en verde. **No** se implementaron transporte TCP, host simulado,
+framing concreto, codec como adaptador, orquestador ni interfaz web.
+
+**Versiones de dependencias: verificadas, no inventadas.** Se creó un entorno virtual y se
+instalaron las dependencias sin fijar versión para observar qué resuelve realmente el entorno
+(Python 3.13.3). Los mínimos declarados en `pyproject.toml` son exactamente lo resuelto:
+`pyiso8583` 4.0.1, `aiosqlite` 0.22.1, `fastapi` 0.141.1, `uvicorn` 0.52.3, `jinja2` 3.1.6,
+`pytest` 9.1.1, `pytest-asyncio` 1.4.0. FastAPI, uvicorn y jinja2 se declaran aunque todavía
+no se usen, porque son el backend ya aprobado.
+
+**Modelo de datos.** Tres tablas: `tarjetas_prueba`, `codigos_respuesta` y `ejecuciones`.
+La política de PAN quedó incrustada en el esquema, no delegada a la disciplina de quien
+programe: `ejecuciones` **no tiene columna para el PAN**, referencia `card_id` mediante clave
+foránea, y guarda los mensajes en columnas `solicitud_enmascarada` y `respuesta_enmascarada`.
+
+**Decisión derivada — mensajes persistidos enmascarados.** `PROYECTO.md` §5 exige persistir los
+mensajes enviados y sus respuestas, pero un `0100` contiene el PAN en el campo 2. Guardar el
+mensaje crudo duplicaría el PAN y violaría la política. Se resuelve persistiendo el mensaje con
+los campos sensibles —2 y 35— ya enmascarados. Se cumplen ambos requisitos sin sacrificar
+ninguno. El enmascaramiento vive en un solo módulo, `domain/enmascarado.py`, para que la regla
+no se reimplemente en cada borde.
+
+**Campos del perfil genérico — decisión técnica de este proyecto.** `PROYECTO.md` fija el
+alcance y las reglas de negocio pero **no define campos ISO**. Ante esa ausencia se eligió el
+conjunto mínimo que hace que un `0100` describa una compra concreta: 2 (PAN), 3 (código de
+proceso), 4 (monto), 7 (fecha y hora de transmisión), 11 (STAN, para correlacionar solicitud y
+respuesta), 14 (vencimiento), 22 (modo de captura), 41 (terminal) y 49 (moneda). Para el `0110`:
+39 (código de respuesta, sin el cual RN-1 no puede aplicarse) más 3, 4, 7, 11 y 41, que deben
+volver iguales para poder comprobar la respuesta según RN-3. La especificación además soporta
+12, 13, 37 y 38 sin exigirlos.
+
+**Esto no es la especificación de ninguna marca**, y está advertido en el encabezado del propio
+módulo. Los perfiles de Visa y Mastercard siguen sin implementarse: requieren documentos
+autorizados dentro del proyecto.
+
+**Ajustes respecto de la arquitectura.** Ninguno de fondo; dos de alcance de esta iteración:
+
+- No se crearon `application/`, `adapters/iso8583/` ni `web/`. Habrían quedado vacíos, y la
+  instrucción vigente es no anticipar módulos. Se crearán cuando tengan contenido.
+- El codec todavía no existe como adaptador. Para no dar por buena una especificación que solo
+  *parece* correcta, las pruebas del perfil usan `pyiso8583` directamente para codificar y
+  volver a decodificar un `0100` y un `0110`. Es validación de la especificación, no el
+  adaptador.
+
+**Defecto encontrado y corregido en la misma iteración.** `pyproject.toml` declaraba
+`readme = "README.md"` apuntando a un archivo que no existe, lo que habría roto la construcción
+del paquete en un clon limpio. Se detectó al verificar y se eliminó la línea; `README.md` no
+corresponde a esta iteración.
+
+**Datos de demostración.** Se siembra una única tarjeta sintética, marcada como tal en el
+esquema. Su número se genera en ejecución y no se inserta ningún PAN real. Ver la entrada
+siguiente sobre el endurecimiento de esta política.
+
+## 2026-08-17 · Endurecimiento de la política de PAN y verificación de `requires-python`
+
+Tres correcciones pedidas tras revisar la fundación, antes de registrarla.
+
+**Ningún PAN completo en Git, ni siquiera sintético.** La versión anterior sembraba y probaba con
+literales de dieciséis dígitos. Eran inventados, pero un literal con largo de tarjeta es
+indistinguible de uno real para un escáner de secretos, para una auditoría y para quien lea el
+repositorio por primera vez: que sea falso lo sabe quien lo escribió, no quien lo encuentra.
+
+Se agregó `domain/datos_sinteticos.py`, que construye los números en ejecución a partir de un
+sufijo corto y un dígito de relleno. `pan_sintetico("6666")` produce un número de dieciséis
+dígitos terminado en `6666`. La tarjeta de demostración y las tres tarjetas de prueba pasaron a
+generarse así, y el monto del campo 4 se formatea con `monto_iso()` en lugar de escribirse como
+literal de doce dígitos. **Ninguna prueba se debilitó**: siguen comparando valores exactos, solo
+que calculados.
+
+La política se convirtió además en una comprobación automática:
+`test_ningun_archivo_versionable_contiene_un_pan_completo` recorre todo lo que Git versionaría y
+falla si encuentra una secuencia de 12 a 19 dígitos. Se verificó que la guardia **realmente
+falla** introduciendo temporalmente un archivo con un número de dieciséis dígitos: la prueba lo
+detectó y falló. Una prueba que nunca falla no protege nada.
+
+El escaneo tras la refactorización encontró una última ocurrencia, en el texto de esta misma
+bitácora, que también se eliminó.
+
+**`requires-python` corregido de `>=3.11` a `>=3.13`.** La declaración anterior afirmaba un
+soporte que nadie había comprobado. Se inventarió la máquina: el lanzador `py -0p` reporta una
+única versión, 3.13, y `AppData/Local/Programs/Python/` contiene solo `Python313`; la entrada de
+`WindowsApps` es el alias de la Microsoft Store, no un intérprete instalado. **No es posible
+probar 3.11 ni 3.12 aquí**, así que se declara únicamente el rango verificado.
+
+**Esto no afirma incompatibilidad.** El código no usa ninguna característica exclusiva de 3.13 y
+probablemente funcione en 3.11 y 3.12; simplemente no se declara un soporte que no se probó.
+Declarar `>=3.13` es más estrecho que la realidad esperada, y esa estrechez es deliberada: es
+preferible a prometer compatibilidad sin evidencia. En la Sesión 6, CI deberá ejecutar una matriz
+de versiones y ampliar `requires-python` si la evidencia lo permite. No se modificó código para
+"soportar" versiones que no se pueden ejecutar aquí.
+
+**Revalidación de la inicialización.** Sobre una base borrada y creada de nuevo, ejecutada dos
+veces: seis códigos de respuesta, una tarjeta sintética, cero duplicados, `ejecuciones` sin
+columna de PAN, y ninguna base SQLite visible para Git. La suite quedó en 28 pruebas.
+
 ---
 
 ## Gobernanza
@@ -201,10 +300,35 @@ entonces.
 
 ### Caso de afirmación falsa del agente
 
-*Sección preparada, sin entradas.* Se registrará aquí, con evidencia, el caso obligatorio de una
-afirmación incorrecta de Claude cuando efectivamente ocurra. No se anticipa ningún caso: la
-corrección del 2026-08-13 fue un problema de diseño del documento, no una afirmación falsa, y
-está registrada como tal más arriba.
+**2026-08-17 · Afirmación incorrecta sobre los rangos de identificador emisor.**
+
+**Qué afirmó Claude.** Al generar tarjetas sintéticas con relleno `9`, escribió en el código, en
+las pruebas y en esta bitácora que ese rango "no se asigna a marcas de pago" y que por lo tanto
+un número así generado "no puede coincidir con una tarjeta real".
+
+**Por qué es falso.** El identificador emisor `9` está reservado para asignación **nacional**
+según ISO/IEC 7812. No es un rango libre: distintos países lo usan para esquemas domésticos. Que
+no lo usen Visa o Mastercard no implica que no exista ninguna tarjeta real con ese prefijo.
+
+**Cómo se detectó.** Lo detectó el usuario al revisar la fundación antes del commit, no una
+prueba ni una verificación del agente. Es el modo de detección más caro: de haber pasado la
+revisión, el proyecto habría defendido su política de datos con un argumento incorrecto ante el
+docente.
+
+**Naturaleza del error.** Es una afirmación técnica presentada con seguridad sin haberse
+verificado contra la norma. No fue una alucinación sobre una API o un archivo inexistente —el
+código funcionaba— sino sobre una **justificación**, que es más difícil de detectar precisamente
+porque nada falla.
+
+**Corrección aplicada.** Se eliminó la afirmación de todo el repositorio y se sustituyó por una
+propiedad comprobable: los números generados **no superan la verificación de Luhn**, de modo que
+ningún sistema que valide el dígito verificador los aceptaría. La defensa del proyecto no
+descansa en el prefijo elegido sino en que ningún PAN completo esté versionado, y esa propiedad
+la vigila una prueba automática.
+
+**Control derivado.** Toda justificación que dependa de una norma externa —ISO 7812, ISO 8583,
+ISO 4217— debe citar la norma o declararse como decisión propia del proyecto. No se afirma lo
+que dice una norma sin haberlo verificado.
 
 ---
 
