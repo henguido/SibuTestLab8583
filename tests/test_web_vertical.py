@@ -125,5 +125,5 @@ async def test_un_destino_sin_host_no_rompe_la_interfaz(entorno):
             },
         )
     assert respuesta.status_code == 200
-    assert "No se pudo conectar con el destino" in respuesta.text
+    assert "No fue posible establecer conexion con el destino" in respuesta.text
     assert "Traceback" not in respuesta.text

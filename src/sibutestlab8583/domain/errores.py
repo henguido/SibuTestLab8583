@@ -3,9 +3,10 @@
 Los adaptadores traducen aqui los errores de sus librerias para que el
 orquestador y el dominio no tengan que conocer `pyiso8583` ni `asyncio`.
 
-Un tiempo de espera agotado **no** es un error: es un resultado esperado del
-transporte y se modela como `TiempoAgotado` en `modelos.py`, porque RN-2 exige
-contarlo aparte de un rechazo.
+Las condiciones de red **no** son errores aqui: el transporte las devuelve como
+resultado —`TiempoAgotado` y `FalloDeConexion` en `modelos.py`—, porque para una
+herramienta de pruebas son observaciones que hay que registrar. Por eso no existe
+ninguna excepcion de transporte en este modulo.
 """
 
 from __future__ import annotations
@@ -34,10 +35,3 @@ class ErrorDeFraming(ErrorDelSimulador):
     se corta antes de completar el mensaje anunciado.
     """
 
-
-class ErrorDeTransporte(ErrorDelSimulador):
-    """Fallo de red que no es un tiempo de espera agotado."""
-
-
-class ErrorDeConexion(ErrorDeTransporte):
-    """No se pudo establecer la conexion con el destino."""

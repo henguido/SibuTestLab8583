@@ -8,8 +8,25 @@ validacion y persistencia sin modificarlos.
 Orden del recorrido, que no se altera:
 
     DatosCompra -> armar 0100 -> RN-4 -> codificar -> transporte
-                -> TiempoAgotado?  -> RN-2: persistir timeout
-                -> bytes?          -> decodificar -> RN-3 y RN-1 -> persistir
+                -> FalloDeConexion?    -> ERROR_CONEXION
+                -> FalloDeTransmision? -> ERROR_TRANSMISION
+                -> TiempoAgotado?      -> TIMEOUT (RN-2)
+                -> bytes?              -> decodificar -> RN-3 y RN-1
+
+Todo intento queda persistido, incluidos los que no llegan a la red: un intento
+que desaparece del historial deja al usuario sin rastro de haberlo hecho.
+
+Los estados se eligen por lo que cada situacion permite **demostrar**:
+
+- NO_ENVIADA solo cuando es demostrable que no se llego a intentar transmision
+  por la red: falta un campo obligatorio (RN-4), el codec no pudo codificar, o
+  el framing de salida rechazo el payload antes de abrir la conexion. El framing
+  pertenece al transporte, asi que no se dice 'no llego al transporte'.
+- ERROR_CONEXION solo cuando no hubo sesion TCP.
+- ERROR_TRANSMISION cuando hubo sesion y el intercambio quedo indeterminado.
+  Aqui **no** se afirma que nada se envio, porque no se puede saber.
+- TIMEOUT solo con las cuatro premisas de RN-2 cumplidas. Que el drenaje local
+  termine no demuestra que el destino recibiera: eso no se afirma en ningun lado.
 """
 
 from __future__ import annotations
@@ -20,13 +37,15 @@ from typing import Callable
 
 from ..domain.armado import armar_compra
 from ..domain.catalogo import CatalogoDeRespuestas
-from ..domain.errores import ErrorDeCodec
+from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
     DatosCompra,
     DestinoTcp,
     Ejecucion,
     EstadoEjecucion,
+    FalloDeConexion,
+    FalloDeTransmision,
     MensajeInterpretado,
     MensajeIso,
     ResultadoCompra,
@@ -102,15 +121,54 @@ class Orquestador:
                 motivos=validacion.motivos,
             )
 
-        payload = self._codec.codificar(solicitud, self._perfil)
+        # Codificar puede fallar. Si falla, no se llega a intentar transmision
+        # por la red, y eso si es demostrable: es el mismo caso que RN-4.
+        try:
+            payload = self._codec.codificar(solicitud, self._perfil)
+        except ErrorDeCodec as error:
+            return await self._registrar(
+                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),)
+            )
 
         inicio = time.monotonic()
-        respuesta_cruda = await self._transporte.enviar(
-            payload, self._destino, self._tiempo_limite
-        )
+        try:
+            respuesta_cruda = await self._transporte.enviar(
+                payload, self._destino, self._tiempo_limite
+            )
+        except ErrorDeFraming as error:
+            # preparar() corre antes de abrir la conexion, asi que aqui tambien es
+            # demostrable que nada se intento transmitir. Un fallo de DESenmarcado
+            # despues de conectar no llega por aqui: el transporte lo convierte en
+            # FalloDeTransmision, porque entonces ya no se puede afirmar lo mismo.
+            return await self._registrar(
+                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),)
+            )
         latencia_ms = int((time.monotonic() - inicio) * 1000)
 
-        # --- RN-2: sin respuesta no hay nada que evaluar ---
+        # --- No hubo sesion TCP. Demostrable que nada se transmitio ---
+        if isinstance(respuesta_cruda, FalloDeConexion):
+            return await self._registrar(
+                solicitud,
+                stan,
+                datos,
+                EstadoEjecucion.ERROR_CONEXION,
+                motivos=(respuesta_cruda.detalle,),
+                latencia_ms=latencia_ms,
+            )
+
+        # --- Hubo sesion y el intercambio quedo indeterminado ---
+        if isinstance(respuesta_cruda, FalloDeTransmision):
+            return await self._registrar(
+                solicitud,
+                stan,
+                datos,
+                EstadoEjecucion.ERROR_TRANSMISION,
+                motivos=(respuesta_cruda.detalle,),
+                latencia_ms=latencia_ms,
+            )
+
+        # --- RN-2: se espero una respuesta y no llego dentro del limite.
+        # Sin respuesta no hay nada que evaluar ---
         if isinstance(respuesta_cruda, TiempoAgotado):
             return await self._registrar(
                 solicitud,
@@ -161,7 +219,10 @@ class Orquestador:
         latencia_ms: int | None = None,
     ) -> ResultadoCompra:
         """Construye la Ejecucion, la persiste enmascarada y devuelve el resultado."""
-        enviado = estado is not EstadoEjecucion.NO_ENVIADA
+        # Se registra el destino en todo intento que llego a tocar la red, y por
+        # eso tambien en ERROR_CONEXION: saber contra que se intento es la mitad
+        # del diagnostico. Solo NO_ENVIADA se queda sin destino, porque no hubo.
+        hubo_intento_de_red = estado is not EstadoEjecucion.NO_ENVIADA
         ejecucion = Ejecucion(
             card_id=datos.card_id,
             monto=datos.monto,
@@ -171,8 +232,8 @@ class Orquestador:
             mti_solicitud=solicitud.mti,
             mti_respuesta=respuesta.mti if respuesta else None,
             codigo_respuesta=respuesta.valor(CAMPO_CODIGO_RESPUESTA) if respuesta else None,
-            destino_host=self._destino.host if enviado else None,
-            destino_puerto=self._destino.puerto if enviado else None,
+            destino_host=self._destino.host if hubo_intento_de_red else None,
+            destino_puerto=self._destino.puerto if hubo_intento_de_red else None,
             solicitud_enmascarada=_serializar(solicitud.enmascarado()),
             respuesta_enmascarada=(
                 _serializar(respuesta.enmascarado().como_mensaje()) if respuesta else None

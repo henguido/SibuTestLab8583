@@ -26,11 +26,11 @@ simulado propio, con codec, framing, transporte y SQLite reales, terminando en u
 persistida y enmascarada. Las cuatro reglas de negocio están implementadas y probadas. El
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
 Y desde el navegador: formulario de compra, resultado con isoscopio enmascarado e historial.
-**101 pruebas en verde** sobre **Python 3.13.3**, la única versión instalada en la máquina.
+**141 pruebas en verde.** El CI las ejecuta en Python 3.11, 3.12 y 3.13, y comprueba además que
+un clon limpio se instale con el metadata declarado.
 
 **Todavía NO existe:** el motor de carga, los perfiles reales de Visa y Mastercard, `README.md`,
-Docker, skill propio en `.claude/` ni autenticación. El workflow de CI ya está escrito, pero
-**todavía no se ha ejecutado**: no hay resultados de Python 3.11 ni 3.12.
+Docker, skill propio en `.claude/` ni autenticación.
 
 ## Decisiones vigentes
 
@@ -98,6 +98,23 @@ Tres límites que no se cruzan: la web no conoce SQLite, sockets ni `pyiso8583`;
 conoce ISO 8583 —recibe bytes opacos y delega el enmarcado a `FramingStrategy`—; la validación de
 reglas de negocio es pura y RN-4 se aplica antes de codificar.
 
+**Siete estados de ejecución**, y todo intento queda persistido. Se distinguen por lo que cada
+situación permite **demostrar**, no por la excepción que la originó:
+
+- `APROBADA`, `RECHAZADA`, `INVALIDA` — llegó una respuesta que se pudo evaluar.
+- `TIMEOUT` — **exactamente** RN-2: la conexión se estableció, la escritura local terminó sin
+  error, se esperó y no llegó respuesta completa dentro del límite. **No** afirma que el destino
+  recibiera ni procesara el mensaje: eso no es observable desde este cliente.
+- `ERROR_CONEXION` — no hubo sesión TCP. Demostrable que nada se transmitió.
+- `ERROR_TRANSMISION` — hubo sesión TCP y el intercambio quedó **indeterminado**. **No** se
+  puede afirmar cuánto recibió el destino, así que está prohibido decir que no se envió.
+- `NO_ENVIADA` — **no se llegó a intentar transmisión por la red**: falta un obligatorio (RN-4),
+  el codec falló, o el framing de salida rechazó el payload antes de conectar. Ahí sí es
+  demostrable. No se dice «no llegó al transporte», porque el framing es parte del transporte.
+
+El transporte devuelve estos desenlaces como resultado: ninguna excepción de `asyncio` ni ningún
+`OSError` cruza su contrato.
+
 ## Historial de avances
 
 | Fecha | Hito |
@@ -113,7 +130,8 @@ reglas de negocio es pura y RN-4 se aplica antes de codificar.
 | 2026-08-19 | Núcleo transaccional: codec, las cuatro reglas de negocio, framing de demostración, transporte TCP asíncrono, host simulado y orquestador. Commit `de84818` |
 | 2026-08-19 | Interfaz web con FastAPI y Jinja: formulario, resultado, isoscopio enmascarado e historial sobre el núcleo real. Commit `dc8cc8b` |
 | 2026-08-19 | Workflow de GitHub Actions con matriz 3.11/3.12/3.13 y refactorización de lo acumulado. Commit `deb7f63`; CI en verde en las tres versiones |
-| 2026-08-19 | Auditoría del prototipo y corrección del primer defecto: el STAN se repetía en cada transacción. Puerto `GeneradorStan` con secuencia persistente y atómica en SQLite. 111 pruebas |
+| 2026-08-19 | Auditoría del prototipo y corrección del primer defecto: el STAN se repetía en cada transacción. Puerto `GeneradorStan` con secuencia persistente y atómica en SQLite. Commit `8557c4c` |
+| 2026-08-19 | Semántica de comunicación: se distingue no poder conectar, un intercambio interrumpido de resultado indeterminado, y no recibir respuesta. Estados `ERROR_CONEXION` y `ERROR_TRANSMISION`; todo intento persistido. 141 pruebas |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -123,7 +141,6 @@ El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 2. Especificaciones reales de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca — bloqueadas por falta de documentos autorizados.
 3. Compatibilidad con Python 3.11 y 3.12. `requires-python` sigue declarando `>=3.13` porque es la única versión comprobada. El CI ya prueba las tres versiones usando `pip install --ignore-requires-python`, que ejecuta el código sin alterar el metadata. **Ampliar el rango solo cuando el CI muestre las tres en verde.**
 4. Si el motor de carga corre dentro del proceso web o aparte.
-5. Si un fallo de conexión debe persistirse como ejecución. Hoy la excepción sube, la web la informa, pero no queda rastro en el historial. Resolverlo exigiría un estado nuevo en el núcleo.
 5. Estrategia de datos de demostración reproducibles para un clon limpio, sin PAN reales.
 6. Si conviene añadir un trabajo de CI en Windows: hoy el workflow corre en Linux y todo lo verificado localmente fue en Windows.
 7. Otros escenarios de falso positivo (`PROYECTO.md` §7.6). El primero ya está cubierto: una respuesta con código aprobado pero correlación incorrecta se registra `Invalida`. Faltan los demás casos.
@@ -142,10 +159,11 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Seguir con los hallazgos de la auditoría, uno por iteración: P0-2 (los fallos de conexión y de
-codificación no se persisten, así que el intento desaparece del historial) y P0-3 (un timeout de
-conexión se presenta como timeout de respuesta). Pendiente aparte: ampliar `requires-python` a
-`>=3.11`, para lo que el CI ya aportó evidencia.
+Seguir con los hallazgos de la auditoría. Cerrados P0-1, P0-2 y P0-3; quedan los P1: el
+isoscopio (dejar de descartar la representación transmitida, el MTI y el bitmap, y comparar
+solicitud contra respuesta), el detalle de historial, y provocar los seis códigos sin reiniciar el
+host. Pendiente aparte: ampliar `requires-python` a `>=3.11`, para lo que el CI ya aportó
+evidencia.
 
 ## Archivos importantes
 

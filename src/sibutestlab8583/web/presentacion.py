@@ -11,12 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence
 
-from ..domain.errores import (
-    ErrorDeCodec,
-    ErrorDeConexion,
-    ErrorDeFraming,
-    ErrorDeTransporte,
-)
+from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
     EstadoEjecucion,
@@ -46,8 +41,10 @@ class FilaIsoscopio:
     sensible: bool
 
 
-#: Un tono por estado. Los cinco desenlaces se distinguen a simple vista, y el
-#: fallo de infraestructura no se confunde con un rechazo del autorizador.
+#: Un tono por estado, uno por cada miembro de EstadoEjecucion. Los siete
+#: desenlaces se distinguen a simple vista, y en particular un fallo de
+#: infraestructura no se confunde con un rechazo del autorizador ni con una
+#: falta de respuesta. Una prueba comprueba que no falte ninguno.
 AVISOS: Mapping[EstadoEjecucion, Aviso] = {
     EstadoEjecucion.APROBADA: Aviso(
         "aprobada",
@@ -67,13 +64,32 @@ AVISOS: Mapping[EstadoEjecucion, Aviso] = {
     ),
     EstadoEjecucion.TIMEOUT: Aviso(
         "timeout",
-        "Sin respuesta",
-        "El destino no respondio dentro del limite de tiempo. Se registra aparte de un rechazo.",
+        "Sin respuesta del destino",
+        "Se establecio la conexion, la escritura local termino sin error y se espero una "
+        "respuesta completa hasta agotar el limite. No puede afirmarse desde aqui si el "
+        "destino recibio o proceso el mensaje. Se registra aparte de un rechazo, de un "
+        "fallo de conexion y de un intercambio interrumpido.",
+    ),
+    EstadoEjecucion.ERROR_CONEXION: Aviso(
+        "error",
+        "No fue posible establecer conexion con el destino",
+        "No llego a haber sesion TCP, asi que la solicitud no se transmitio. Revise que "
+        "el host simulado o el switch esten disponibles en el host y puerto indicados. "
+        "Esto no es un rechazo del autorizador ni una falta de respuesta.",
+    ),
+    EstadoEjecucion.ERROR_TRANSMISION: Aviso(
+        "indeterminado",
+        "El intercambio se interrumpio",
+        "La conexion se establecio, pero el intercambio se interrumpio. No puede "
+        "determinarse cuanto recibio el destino, asi que no debe asumirse que la "
+        "transaccion no se proceso. Revise el destino antes de reintentar.",
     ),
     EstadoEjecucion.NO_ENVIADA: Aviso(
         "no-enviada",
-        "Mensaje incompleto: no se envio",
-        "Faltaban campos obligatorios para el tipo de mensaje, asi que no se envio nada.",
+        "El mensaje no se envio",
+        "No se llego a intentar transmision por la red. Puede ser porque faltaban campos "
+        "obligatorios para su tipo, porque no se pudo codificar, o porque no se pudo "
+        "preparar para transmitirlo. El motivo concreto aparece mas abajo.",
     ),
 }
 
@@ -86,19 +102,16 @@ def aviso_de_error(error: Exception) -> Aviso:
     """Convierte una excepcion tecnica en algo que el usuario pueda entender.
 
     Nunca se muestra la traza ni el texto crudo de una excepcion inesperada.
+
+    Las condiciones de red **no** llegan por aqui: el transporte las devuelve como
+    resultado y terminan en `AVISOS`, con su propio estado persistido. Esta
+    funcion queda para lo que si es excepcional.
     """
-    if isinstance(error, ErrorDeConexion):
+    if isinstance(error, ErrorDeFraming):
         return Aviso(
             "error",
-            "No se pudo conectar con el destino",
-            "Revise que el host simulado o el switch esten disponibles en el host y puerto "
-            "indicados. La transaccion no llego a enviarse.",
-        )
-    if isinstance(error, (ErrorDeFraming, ErrorDeTransporte)):
-        return Aviso(
-            "error",
-            "Fallo la comunicacion con el destino",
-            "La conexion se establecio pero el intercambio no pudo completarse.",
+            "No se pudo preparar el mensaje para transmitirlo",
+            "El contenido no cumple el formato de enmarcado configurado.",
         )
     if isinstance(error, ErrorDeCodec):
         return Aviso(

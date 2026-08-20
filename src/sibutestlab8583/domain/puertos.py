@@ -11,7 +11,14 @@ from __future__ import annotations
 from typing import Protocol, Sequence, runtime_checkable
 
 from .catalogo import CatalogoDeRespuestas
-from .modelos import DestinoTcp, Ejecucion, TarjetaPrueba, TiempoAgotado
+from .modelos import (
+    DestinoTcp,
+    Ejecucion,
+    FalloDeConexion,
+    FalloDeTransmision,
+    TarjetaPrueba,
+    TiempoAgotado,
+)
 
 
 @runtime_checkable
@@ -46,8 +53,31 @@ class FramingStrategy(Protocol):
 class Transporte(Protocol):
     """Envia bytes opacos a un destino y espera una respuesta.
 
-    No conoce ISO 8583. Devuelve `TiempoAgotado` en lugar de lanzar cuando el
-    destino no responde: RN-2 lo trata como resultado, no como error.
+    No conoce ISO 8583. **Las condiciones de red no se propagan como excepciones**:
+    se devuelven como resultado, para que el orquestador las registre igual que
+    cualquier otro desenlace. Ninguna excepcion de `asyncio` ni ningun `OSError`
+    cruza este contrato.
+
+    CUATRO RESULTADOS
+    =================
+    Se distinguen por lo que cada uno permite **demostrar** sobre lo que llego al
+    destino, no por la excepcion que los origino:
+
+    - ``bytes``              llego una respuesta completa
+    - ``TiempoAgotado``      la conexion se establecio, el drenaje del envio
+                             termino, y no llego respuesta dentro del limite.
+                             Esto, y solo esto, es RN-2
+    - ``FalloDeConexion``    no se establecio la sesion TCP. Demostrable que nada
+                             se transmitio, porque no hubo canal
+    - ``FalloDeTransmision`` hubo sesion TCP y el intercambio quedo indeterminado.
+                             **No** es demostrable que nada se transmitiera
+
+    UNICA EXCEPCION QUE SI PUEDE SALIR
+    ==================================
+    `ErrorDeFraming` desde `FramingStrategy.preparar()`, que se ejecuta **antes**
+    de abrir la conexion. No es una condicion de red: es un payload que no se
+    puede enmarcar, y por eso ahi si es demostrable que nada se intento
+    transmitir. El orquestador lo registra como un mensaje que no se envio.
     """
 
     async def enviar(
@@ -55,7 +85,7 @@ class Transporte(Protocol):
         payload: bytes,
         destino: DestinoTcp,
         tiempo_limite: float | None = None,
-    ) -> bytes | TiempoAgotado: ...
+    ) -> bytes | TiempoAgotado | FalloDeConexion | FalloDeTransmision: ...
 
 
 @runtime_checkable

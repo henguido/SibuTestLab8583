@@ -179,13 +179,74 @@ class MensajeInterpretado:
 
 @dataclass(frozen=True)
 class TiempoAgotado:
-    """El destino no respondio dentro del limite.
+    """Se agoto el limite esperando una respuesta completa.
+
+    Es **exactamente** RN-2, y nada mas. Solo se devuelve cuando se cumplen las
+    cuatro premisas, todas observables **desde este cliente**:
+
+    1. la conexion TCP se establecio;
+    2. la escritura y el drenaje locales terminaron sin error;
+    3. se empezo a esperar una respuesta;
+    4. no llego una respuesta completa dentro del limite.
+
+    LO QUE ESTO NO AFIRMA
+    =====================
+    Que el drenaje local terminara sin error **no demuestra** que la aplicacion
+    remota recibiera ni proceso el mensaje: `drain()` habla del buffer local, no
+    del par. Por eso esta prohibido describir este estado como "la solicitud fue
+    transmitida", "si se envio" o "el destino recibio".
+
+    Si alguna de las tres primeras no se cumple, el resultado es otro:
+    `FalloDeConexion` o `FalloDeTransmision`.
 
     No es una excepcion: es un resultado esperado del transporte, y RN-2 exige
     contarlo aparte de un rechazo explicito del switch.
     """
 
     limite_segundos: float
+
+
+@dataclass(frozen=True)
+class FalloDeConexion:
+    """No se pudo establecer la sesion TCP.
+
+    **Solo** para eso: rechazo, ruta inexistente, nombre irresoluble o tiempo
+    agotado mientras se conectaba. Si la conexion llego a establecerse, cualquier
+    fallo posterior es `FalloDeTransmision`, no esto.
+
+    Aqui si es demostrable que nada se transmitio, porque no hubo sesion por la
+    cual transmitir.
+
+    Es un resultado y no una excepcion, igual que `TiempoAgotado`: para una
+    herramienta de pruebas, que el destino no este disponible es una observacion
+    que hay que registrar, no una anomalia que haya que propagar.
+    """
+
+    detalle: str
+
+
+@dataclass(frozen=True)
+class FalloDeTransmision:
+    """Hubo sesion TCP y el intercambio termino de forma **indeterminada**.
+
+    Cubre que falle o se agote el drenaje del envio, que el canal se rompa
+    mientras se esperaba la respuesta, y que el desenmarcado no pueda completar un
+    mensaje despues de haberse establecido la comunicacion.
+
+    LO QUE NO SE PUEDE AFIRMAR
+    ==========================
+    **No se puede afirmar cuantos bytes recibio o proceso el destino.**
+    `StreamWriter.write()` solo encola en el buffer local y `drain()` habla de ese
+    buffer, no de la aplicacion remota; TCP no le dice al programa cuanto proceso
+    el par. Asi que ante este resultado pudieron llegar cero bytes, algunos o
+    todos, y no hay forma de distinguirlo.
+
+    Por eso esta prohibido describirlo como "nunca salio", "no se envio" o "cero
+    bytes llegaron": para una herramienta de pruebas de pagos, afirmar que no se
+    envio algo que pudo haberse enviado es el error mas caro posible.
+    """
+
+    detalle: str
 
 
 @dataclass(frozen=True)
@@ -205,16 +266,39 @@ class ResultadoValidacion:
 
 
 class EstadoEjecucion(str, Enum):
-    """Desenlace de una ejecucion.
+    """Desenlace de una ejecucion. Seis estados, cada uno con una causa distinta.
 
-    TIMEOUT existe aparte de RECHAZADA porque RN-2 exige contarlos por separado.
-    NO_ENVIADA corresponde a RN-4: el mensaje nunca salio.
+    Llego una respuesta del autorizador:
+      APROBADA   el codigo del campo 39 esta aprobado en el catalogo (RN-1)
+      RECHAZADA  llego respuesta y su codigo no es una aprobacion
+      INVALIDA   llego respuesta pero no corresponde a la solicitud (RN-3), o no
+                 se pudo interpretar
+
+    No llego una respuesta utilizable, y los cuatro casos se distinguen por lo
+    que cada uno permite **demostrar**:
+
+      NO_ENVIADA         no se llego a intentar transmision por la red.
+                         Demostrable: RN-4, el codec no pudo codificar, o el
+                         framing de salida rechazo el payload antes de conectar
+      ERROR_CONEXION     no se establecio la sesion TCP. Demostrable: no hubo
+                         canal por el cual transmitir
+      ERROR_TRANSMISION  hubo sesion TCP y el intercambio quedo **indeterminado**.
+                         NO es demostrable que nada se transmitiera
+      TIMEOUT            se envio, el drenaje completo, y no llego respuesta
+                         dentro del limite. Es RN-2, y solo esto es RN-2
+
+    Estan separados porque presentarlos juntos daria un diagnostico equivocado:
+    "no llegue a conectar", "conecte y no se sabe que recibio" y "el switch no
+    contesta" se investigan de forma distinta, y la del medio es la unica que
+    obliga a sospechar que la transaccion pudo haberse procesado.
     """
 
     APROBADA = "aprobada"
     RECHAZADA = "rechazada"
     INVALIDA = "invalida"
     TIMEOUT = "timeout"
+    ERROR_CONEXION = "error_conexion"
+    ERROR_TRANSMISION = "error_transmision"
     NO_ENVIADA = "no_enviada"
 
 

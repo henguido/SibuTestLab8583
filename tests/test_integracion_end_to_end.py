@@ -104,23 +104,24 @@ async def test_falso_positivo_codigo_aprobado_con_correlacion_incorrecta(base, d
     assert guardadas[0].estado is EstadoEjecucion.INVALIDA
 
 
-async def test_un_fallo_de_conexion_es_un_error_y_no_un_timeout(base, datos_compra):
+async def test_un_fallo_de_conexion_no_es_un_timeout(base, datos_compra):
     """El transporte distingue no poder conectar de conectar y no recibir.
 
     Se fuerza el fallo con un host irresoluble porque es portable: no depende de
-    como cada sistema operativo trate una conexion a un puerto cerrado. Ver la
-    entrada correspondiente en BITACORA.md.
+    como cada sistema operativo trate una conexion a un puerto cerrado. El
+    dominio `.invalid` esta reservado por RFC 2606 justamente para esto.
     """
-    from sibutestlab8583.domain.errores import ErrorDeConexion
-
     transporte = TransporteTcp(FramingDemostracion(), tiempo_limite=5.0)
     orquestador = construir_orquestador(
         base,
         transporte,
         destino=DestinoTcp(host="host-que-no-existe.sibutestlab.invalid", puerto=9),
     )
-    with pytest.raises(ErrorDeConexion):
-        await orquestador.ejecutar_compra(datos_compra)
+    resultado = await orquestador.ejecutar_compra(datos_compra)
+
+    assert resultado.estado is EstadoEjecucion.ERROR_CONEXION
+    assert resultado.estado is not EstadoEjecucion.TIMEOUT
+    assert resultado.respuesta is None
 
 
 async def test_lo_persistido_no_contiene_el_pan_completo(base, datos_compra):

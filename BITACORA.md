@@ -585,6 +585,201 @@ defecto. Al corregirlo, RN-3 detectó correctamente que la respuesta no correspo
 falló. Se corrigió el doble de transporte para que construya la respuesta a partir de la solicitud
 que recibe, como hace el host real, de modo que no pueda volver a esconder este problema.
 
+## 2026-08-19 · Semántica de comunicación: conectar no es lo mismo que esperar respuesta
+
+Iteración dedicada a dos defectos de la auditoría, tratados juntos porque son la misma materia:
+qué ocurrió con el intento y cómo queda registrado. No se tocó isoscopio, historial navegable,
+UX ni escenarios de demostración.
+
+### Los defectos
+
+**Intentos que desaparecían del historial.** Un fallo al conectar hacía que el transporte lanzara
+`ErrorDeConexion`; la excepción subía, la web la informaba en pantalla, y en `ejecuciones` no
+quedaba rastro de haberlo intentado. Lo mismo con un fallo del codec al codificar. Para una
+herramienta cuyo valor es la trazabilidad, eso es grave: quien prueba contra un switch caído no
+tenía evidencia de haberlo probado.
+
+**Un timeout al conectar se contaba como RN-2.** El mismo `wait_for` envolvía `open_connection` y
+la espera de la respuesta, así que agotar el tiempo *conectando* devolvía `TiempoAgotado` y el
+orquestador lo registraba como RN-2. Pero RN-2 dice «se envió y no respondieron», y ahí nunca
+hubo solicitud en vuelo. Además, en el entorno Windows probado un puerto cerrado agota el tiempo
+en lugar de rechazar, de modo que el caso más común —«el host simulado no está levantado»— caía
+justamente en esa clasificación equivocada.
+
+### Excepción o resultado: se eligió resultado
+
+El transporte **ya no lanza excepciones por condiciones de red**. Devuelve `bytes`,
+`TiempoAgotado` o `FalloDeConexion`.
+
+**Por qué.** Para una herramienta de pruebas, que el destino no esté disponible es una
+observación que hay que registrar, no una anomalía que haya que propagar — el mismo razonamiento
+que ya había hecho de `TiempoAgotado` un resultado. Mezclar las dos formas obligaba al orquestador
+a tener dos caminos para la misma categoría de cosa, y era la causa de que el intento se perdiera.
+Como consecuencia, `ErrorDeConexion` y `ErrorDeTransporte` quedaron sin uso y se eliminaron: no
+tiene sentido conservar excepciones que nadie lanza.
+
+**Tres fases, tres desenlaces.** El transporte clasifica por fase: si falla al **conectar** o al
+**enviar**, `FalloDeConexion`; solo si se agota el tiempo **esperando la respuesta**,
+`TiempoAgotado`. Así RN-2 conserva exactamente su significado sin haber cambiado la regla.
+
+### Error de codec: sigue siendo `NO_ENVIADA`
+
+Se evaluó un estado propio y se decidió que no. Lo que define `NO_ENVIADA` es que el mensaje
+nunca llegó al transporte, y eso es literalmente cierto para las tres causas que ahora agrupa:
+falta un campo obligatorio (RN-4), el codec no pudo codificar, el framing rechazó el payload.
+La pregunta operativa que se hace quien prueba es una sola —«salió o no salió»—, y la causa
+concreta ya viaja en los motivos de la ejecución. Partirla en un estado por causa multiplicaría
+estados sin dar una distinción útil.
+
+### Estados finales: seis
+
+`APROBADA`, `RECHAZADA` e `INVALIDA` presuponen que llegó una respuesta. `TIMEOUT` es RN-2 y solo
+RN-2. `ERROR_CONEXION` es que el canal no se pudo usar. `NO_ENVIADA` es que nada salió de la
+máquina.
+
+### Cómo se conserva el intento
+
+Todo desenlace pasa por el mismo registro, y por eso todos quedan persistidos con `card_id`,
+monto, moneda, STAN, MTI de solicitud, estado, solicitud enmascarada y latencia. El destino se
+registra en todo intento que llegó a tocar la red —incluido `ERROR_CONEXION`, porque saber contra
+qué se intentó es la mitad del diagnóstico—; solo `NO_ENVIADA` queda sin destino, porque no lo
+hubo. Ni `ERROR_CONEXION` ni `TIMEOUT` tienen MTI de respuesta ni campo 39: no se recibió nada
+que registrar.
+
+### Una guardia nueva contra un fallo silencioso
+
+`historial.html` busca el estado en el mapa `AVISOS`. Añadir un miembro a `EstadoEjecucion` sin
+su entrada correspondiente habría producido un `KeyError` en tiempo de ejecución, al abrir el
+historial, y no un fallo en la suite. Ahora una prueba recorre el enum y exige que todos los
+estados tengan presentación, y otra que ninguno comparta título con otro.
+
+### Verificación
+
+Los seis recorridos, ejecutados de extremo a extremo contra el host simulado real y persistidos
+en la misma base, quedan así:
+
+| estado | c39 | MTI resp. | destino | latencia |
+|---|---|---|---|---|
+| `no_enviada` | — | — | ninguno | — |
+| `error_conexion` | — | — | registrado | sí |
+| `timeout` | — | — | registrado | sí |
+| `invalida` | `00` | `0110` | registrado | sí |
+| `rechazada` | `51` | `0110` | registrado | sí |
+| `aprobada` | `00` | `0110` | registrado | sí |
+
+La fila `invalida` con código `00` es la defensa contra falsos positivos siguiendo en pie.
+
+El fallo de conexión se fuerza en las pruebas con un nombre irresoluble bajo `.invalid`,
+reservado por RFC 2606: es portable y no depende de cómo cada sistema operativo trate un puerto
+cerrado. El timeout usa el host simulado real configurado para aceptar la conexión y callar, y la
+prueba comprueba que el host **recibió** el `0100`, que es la premisa de RN-2.
+
+123 pruebas, 12 nuevas.
+
+## 2026-08-19 · Corrección semántica antes del commit: `ERROR_TRANSMISION`
+
+**Esta corrección surgió de una revisión semántica pedida antes de versionar, no de una falla
+posterior.** La implementación anterior de P0-2/P0-3 pasaba sus 123 pruebas y aun así clasificaba
+mal tres situaciones. El usuario pidió leer el código antes de aprobar el commit, y ahí apareció.
+
+### Lo que estaba mal
+
+`FalloDeConexion` se devolvía en tres momentos distintos, y `ERROR_CONEXION` solo era correcto en
+el primero:
+
+- `open_connection` falla o agota tiempo — correcto;
+- `write()`/`drain()` falla o agota tiempo — **la sesión TCP ya existía**;
+- el canal se rompe *esperando la respuesta* — la sesión existía **y el envío se había completado**.
+
+Y peor que la clasificación: la documentación afirmaba cosas indemostrables. `modelos.py` decía
+«no hubo una solicitud en vuelo» y el orquestador decía «nunca salió» para casos donde eso no se
+puede saber.
+
+**Por qué no se puede saber.** `StreamWriter.write()` solo encola en el buffer local; `drain()`
+habla de ese buffer, no de la aplicación remota; y TCP no le dice al programa cuánto procesó el
+par. Si `drain()` falla, pudieron salir cero bytes, algunos o todos, sin forma de distinguirlo.
+En pagos eso no es un matiz de redacción: decirle a quien prueba «no se envió» cuando pudo haberse
+enviado es el error más caro posible, porque es exactamente el caso que obliga a sospechar un
+posible procesamiento y que motiva los reversos —que están fuera de alcance—.
+
+### Lo que se hizo
+
+Un cuarto resultado del transporte, `FalloDeTransmision`, y un séptimo estado,
+`ERROR_TRANSMISION`. La clasificación pasó a depender de **la fase**, no de la excepción:
+
+| Fase | Falla | Resultado | Estado |
+|---|---|---|---|
+| 0. Enmarcar | `preparar()` rechaza | lanza `ErrorDeFraming` | `NO_ENVIADA` |
+| 1. Conectar | rechazo, ruta, DNS, tiempo | `FalloDeConexion` | `ERROR_CONEXION` |
+| 2. Enviar | `drain()` falla o se agota | `FalloDeTransmision` | `ERROR_TRANSMISION` |
+| 3. Esperar | se agota el tiempo | `TiempoAgotado` | `TIMEOUT` (RN-2) |
+| 3. Esperar | canal roto o desenmarcado incompleto | `FalloDeTransmision` | `ERROR_TRANSMISION` |
+
+RN-2 quedó reservado para las cuatro premisas observables: se conectó, el drenaje terminó, se
+empezó a esperar, no llegó respuesta. **La regla no cambió**; lo que cambió es que dejaron de
+entrarle casos que no la cumplen.
+
+### Framing: antes y después de conectar
+
+`preparar()` corre en la fase 0, así que su fallo sí permite afirmar que nada se transmitió →
+`NO_ENVIADA`. `leer_mensaje_completo()` corre en la fase 3, así que su fallo es del **mecanismo de
+transporte** → `ERROR_TRANSMISION`. Distinto de una **respuesta ISO completa que llega y no se
+puede decodificar**, que sigue siendo `INVALIDA` porque sí hubo algo que evaluar. La frontera es
+si llegó un mensaje completo, no si el contenido gustó.
+
+### Afirmaciones falsas corregidas
+
+- «no hubo una solicitud en vuelo» en `modelos.py` y `puertos.py` — ahora `FalloDeConexion` se
+  restringe a la fase de conexión, donde sí es cierto.
+- «nunca salió» en el orquestador después de `write`/`drain` — eliminada.
+- «el transporte no lanza excepciones» en el contrato — era falso: `preparar()` puede lanzar
+  `ErrorDeFraming`. Ahora el contrato lo declara explícitamente y explica por qué esa sí puede
+  salir: no es una condición de red y ocurre antes de tocarla.
+
+Se añadieron dos pruebas que vigilan la prohibición sobre el propio texto: ni el detalle del
+resultado ni el aviso que ve el usuario pueden contener «nunca salió», «no se envió», «cero bytes»
+ni «nada salió».
+
+### Verificación
+
+18 pruebas nuevas, 141 en total. Los fallos posteriores a conectar se provocan con dobles del
+lector y del escritor sustituyendo `asyncio.open_connection`: determinista y portable, sin
+depender de que un sistema operativo rechace o descarte una conexión a un puerto cerrado. RN-2
+conserva pruebas con TCP real contra el host simulado, que además comprueban que el host
+**recibió** el `0100` —la premisa de la regla—.
+
+
+### Segunda precisión semántica, también antes del commit
+
+Dos afirmaciones más que no resistían el escrutinio, corregidas en la misma revisión previa:
+
+**`TIMEOUT` afirmaba que la solicitud fue transmitida.** El aviso decía «La solicitud fue
+transmitida y no se recibió respuesta», y `TiempoAgotado` se documentaba como «se logró enviar la
+solicitud». Ninguna de las dos se sostiene: que `drain()` termine sin error dice que el buffer
+local se vació, no que la aplicación remota recibiera ni procesara nada. `drain()` habla del
+buffer, no del par. La redacción pasó a enunciar solo lo observable **desde este cliente**: se
+estableció la conexión, la escritura local terminó sin error, se esperó una respuesta completa
+hasta agotar el límite, y no puede afirmarse si el destino recibió o procesó el mensaje.
+**RN-2 sigue siendo `TIMEOUT`; no cambió su comportamiento**, solo dejó de prometer más de lo que
+observa.
+
+**`NO_ENVIADA` se definía como «no llegó al transporte».** Es incorrecto:
+`FramingStrategy.preparar()` se ejecuta *dentro* de `TransporteTcp.enviar()`, así que el mensaje
+sí llega al transporte y es el transporte quien lo rechaza. La definición correcta es **«no se
+llegó a intentar transmisión por la red»**, que sigue cubriendo los tres casos —RN-4, fallo del
+codec y rechazo del framing de salida antes de conectar— sin decir algo falso sobre la frontera
+del módulo.
+
+También se corrigió el detalle de `FalloDeTransmision` en la fase 3, que decía «la solicitud se
+transmitió»: tampoco eso es demostrable, y ahora dice que el intercambio se interrumpió y no puede
+determinarse cuánto recibió o procesó el destino.
+
+**Dónde sí se conservan estas expresiones, y por qué.** «No se envió» sigue apareciendo al
+describir `NO_ENVIADA`, y «nada se transmitió» al describir `ERROR_CONEXION`: en esos dos estados
+la afirmación **es** demostrable. Y aparecen además citadas dentro de las propias prohibiciones y
+en las listas que las pruebas usan para vigilarlas. Ninguna ocurrencia restante es una afirmación
+sobre `TIMEOUT` ni sobre `ERROR_TRANSMISION`.
+
 ---
 
 ## Gobernanza

@@ -17,7 +17,6 @@ from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, PAN_DEMO
 from sibutestlab8583.application.consultas import TarjetaListada
 from sibutestlab8583.domain.datos_sinteticos import monto_iso
 from sibutestlab8583.application.orquestador import TarjetaDesconocida
-from sibutestlab8583.domain.errores import ErrorDeConexion
 from sibutestlab8583.domain.modelos import (
     MTI_RESPUESTA_COMPRA,
     CampoInterpretado,
@@ -188,11 +187,15 @@ def test_un_mensaje_incompleto_se_distingue():
 
 
 def test_un_fallo_de_conexion_no_se_presenta_como_rechazo():
-    texto = _cliente(error=ErrorDeConexion("no se pudo conectar")).post(
-        "/compra", data=FORMULARIO
-    ).text
-    assert "No se pudo conectar con el destino" in texto
+    """Ahora llega como resultado persistido, no como excepcion."""
+    texto = _cliente(
+        resultado=_resultado(EstadoEjecucion.ERROR_CONEXION, con_respuesta=False)
+    ).post("/compra", data=FORMULARIO).text
+    assert "No fue posible establecer conexion con el destino" in texto
     assert "Transaccion rechazada" not in texto
+    assert "Transaccion aprobada" not in texto
+    assert "Sin respuesta del destino" not in texto, "no debe confundirse con un timeout"
+    assert "El intercambio se interrumpio" not in texto, "tampoco con una transmision"
 
 
 # --------------------------------------------------------- entradas invalidas --
