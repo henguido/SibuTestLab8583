@@ -10,6 +10,9 @@ aparte y la demostracion usa dos terminales: `sibu-host-demo` y `uvicorn`.
 Las rutas viven en un `APIRouter` de modulo, no dentro de la fabrica: no
 necesitan capturar nada del ambito de `crear_app`, y asi cada una se lee y se
 prueba por separado.
+
+La unica pieza estatica es la hoja de estilos propia, montada en `/estatico`.
+No hay framework CSS, ni JavaScript, ni paso de compilacion.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..application.orquestador import TarjetaDesconocida
@@ -26,7 +30,15 @@ from ..domain.errores import ErrorDelSimulador
 from ..domain.modelos import DatosCompra, DestinoTcp
 from . import presentacion
 
-PLANTILLAS = Jinja2Templates(directory=str(Path(__file__).parent / "plantillas"))
+RAIZ_WEB = Path(__file__).parent
+PLANTILLAS = Jinja2Templates(directory=str(RAIZ_WEB / "plantillas"))
+DIRECTORIO_ESTATICO = RAIZ_WEB / "estatico"
+RUTA_ESTATICA = "/estatico"
+
+# La navegacion es la misma en todas las pantallas: se declara una vez como
+# global de Jinja en lugar de repetirla en el contexto de cada endpoint. La
+# pantalla activa si es propia de cada ruta y viaja en su contexto (`seccion`).
+PLANTILLAS.env.globals["secciones"] = presentacion.SECCIONES
 
 enrutador = APIRouter()
 
@@ -77,7 +89,7 @@ async def ejecutar_compra(
         return await _formulario(
             request,
             composicion,
-            error=f"No existe la tarjeta {card_id!r} en el catalogo.",
+            error=f"No existe la tarjeta {card_id!r} en el catálogo.",
             enviado=enviado,
             estado_http=400,
         )
@@ -105,6 +117,7 @@ async def historial(
         request=request,
         name="historial.html",
         context={
+            "seccion": "historial",
             "ejecuciones": await composicion.consultas.ejecuciones_recientes(),
             "avisos": presentacion.AVISOS,
         },
@@ -140,6 +153,7 @@ async def _formulario(
         request=request,
         name="compra.html",
         context={
+            "seccion": "compra",
             "tarjetas": await composicion.consultas.tarjetas(),
             "host": enviado.get("host") or configuracion.host_destino,
             "puerto": enviado.get("puerto") or configuracion.puerto_destino,
@@ -161,6 +175,13 @@ def crear_app(composicion: Composicion | None = None) -> FastAPI:
     )
     if composicion is not None:
         app.dependency_overrides[obtener_composicion] = lambda: composicion
+    # La hoja de estilos se sirve como archivo, no embebida en la plantilla:
+    # el navegador la cachea y las plantillas quedan solo con estructura.
+    app.mount(
+        RUTA_ESTATICA,
+        StaticFiles(directory=str(DIRECTORIO_ESTATICO)),
+        name="estatico",
+    )
     app.include_router(enrutador)
     return app
 

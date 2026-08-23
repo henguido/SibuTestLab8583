@@ -40,7 +40,7 @@ class ConsultasFalsas:
             TarjetaListada(
                 card_id=CARD_ID_DEMO,
                 pan_enmascarado="************6666",
-                descripcion="Tarjeta sintetica de demostracion",
+                descripcion="Tarjeta de demostración",
                 sintetica=True,
             )
         ]
@@ -68,7 +68,7 @@ class ComposicionFalsa:
             ruta_base_datos="no-se-usa.db", host_destino="127.0.0.1", puerto_destino=8583
         )
         self.consultas = ConsultasFalsas(ejecuciones)
-        self.descripciones_de_campos = {"2": "Numero de tarjeta (PAN)", "4": "Monto"}
+        self.descripciones_de_campos = {"2": "Número de tarjeta (PAN)", "4": "Monto"}
         self._orquestador = OrquestadorFalso(resultado, error)
 
     def orquestador(self, destino):
@@ -93,7 +93,7 @@ def _resultado(estado, *, codigo=None, con_respuesta=True, motivos=()):
     if con_respuesta:
         respuesta = MensajeInterpretado(
             MTI_RESPUESTA_COMPRA,
-            {"39": CampoInterpretado("39", codigo or "00", codigo or "00", "Codigo de respuesta")},
+            {"39": CampoInterpretado("39", codigo or "00", codigo or "00", "Código de respuesta")},
         )
     return ResultadoCompra(
         ejecucion=ejecucion,
@@ -116,7 +116,9 @@ FORMULARIO = {"card_id": CARD_ID_DEMO, "monto": "150.00", "host": "127.0.0.1", "
 def test_la_pantalla_de_compra_responde():
     respuesta = _cliente().get("/")
     assert respuesta.status_code == 200
-    assert "Nueva compra" in respuesta.text
+    # El rotulo paso a "Nueva transaccion" (con tilde en la interfaz) en el
+    # rediseno: la pantalla ya no habla de "compra" sino del recorrido completo.
+    assert "Nueva transacción" in respuesta.text
     assert "SibuTestLab8583" in respuesta.text
 
 
@@ -142,7 +144,7 @@ def test_una_compra_aprobada_muestra_el_resultado():
         "/compra", data=FORMULARIO
     )
     assert respuesta.status_code == 200
-    assert "Transaccion aprobada" in respuesta.text
+    assert "Transacción aprobada" in respuesta.text
     assert "000042" in respuesta.text
     assert "7 ms" in respuesta.text
 
@@ -151,8 +153,8 @@ def test_un_rechazo_no_aparece_como_aprobacion():
     texto = _cliente(resultado=_resultado(EstadoEjecucion.RECHAZADA, codigo="05")).post(
         "/compra", data=FORMULARIO
     ).text
-    assert "Transaccion rechazada" in texto
-    assert "Transaccion aprobada" not in texto
+    assert "Transacción rechazada" in texto
+    assert "Transacción aprobada" not in texto
 
 
 def test_un_timeout_se_representa_distinto_de_un_rechazo():
@@ -160,8 +162,8 @@ def test_un_timeout_se_representa_distinto_de_un_rechazo():
         resultado=_resultado(EstadoEjecucion.TIMEOUT, con_respuesta=False)
     ).post("/compra", data=FORMULARIO).text
     assert "Sin respuesta" in texto
-    assert "Transaccion rechazada" not in texto
-    assert "Transaccion aprobada" not in texto
+    assert "Transacción rechazada" not in texto
+    assert "Transacción aprobada" not in texto
     assert 'class="aviso timeout"' in texto
 
 
@@ -171,8 +173,8 @@ def test_una_respuesta_invalida_no_aparece_como_exito():
             EstadoEjecucion.INVALIDA, codigo="00", motivos=("el campo 11 no corresponde",)
         )
     ).post("/compra", data=FORMULARIO).text
-    assert "Respuesta invalida" in texto
-    assert "Transaccion aprobada" not in texto
+    assert "Respuesta inválida" in texto
+    assert "Transacción aprobada" not in texto
     assert "el campo 11 no corresponde" in texto
 
 
@@ -182,7 +184,7 @@ def test_un_mensaje_incompleto_se_distingue():
             EstadoEjecucion.NO_ENVIADA, con_respuesta=False, motivos=("faltan campos: 14",)
         )
     ).post("/compra", data=FORMULARIO).text
-    assert "no se envio" in texto
+    assert "no se envió" in texto
     assert 'class="aviso no-enviada"' in texto
 
 
@@ -191,11 +193,11 @@ def test_un_fallo_de_conexion_no_se_presenta_como_rechazo():
     texto = _cliente(
         resultado=_resultado(EstadoEjecucion.ERROR_CONEXION, con_respuesta=False)
     ).post("/compra", data=FORMULARIO).text
-    assert "No fue posible establecer conexion con el destino" in texto
-    assert "Transaccion rechazada" not in texto
-    assert "Transaccion aprobada" not in texto
+    assert "No fue posible establecer conexión con el destino" in texto
+    assert "Transacción rechazada" not in texto
+    assert "Transacción aprobada" not in texto
     assert "Sin respuesta del destino" not in texto, "no debe confundirse con un timeout"
-    assert "El intercambio se interrumpio" not in texto, "tampoco con una transmision"
+    assert "El intercambio se interrumpió" not in texto, "tampoco con una transmision"
 
 
 # --------------------------------------------------------- entradas invalidas --
@@ -230,7 +232,7 @@ def test_un_error_inesperado_no_expone_detalles_internos():
         "/compra", data=FORMULARIO
     )
     assert "detalle interno confidencial" not in respuesta.text
-    assert "Ocurrio un error inesperado" in respuesta.text
+    assert "Ocurrió un error inesperado" in respuesta.text
 
 
 # ------------------------------------------------------------------ isoscopio --
@@ -242,7 +244,7 @@ def test_el_isoscopio_muestra_campos_con_descripcion_y_nunca_el_pan():
     ).text
     assert "Isoscopio · solicitud 0100" in texto
     assert "Isoscopio · respuesta 0110" in texto
-    assert "Numero de tarjeta (PAN)" in texto
+    assert "Número de tarjeta (PAN)" in texto
     assert "************6666" in texto
     assert PAN_DEMO not in texto
     assert "enmascarado" in texto
@@ -264,4 +266,4 @@ def test_el_historial_lista_las_ejecuciones():
 def test_el_historial_vacio_no_falla():
     respuesta = _cliente().get("/historial")
     assert respuesta.status_code == 200
-    assert "Todavia no hay ejecuciones" in respuesta.text
+    assert "Todavía no hay ejecuciones" in respuesta.text

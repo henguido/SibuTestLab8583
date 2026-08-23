@@ -38,7 +38,7 @@ sibu-host-demo = "sibutestlab8583.adapters.host_simulado.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sibutestlab8583 = ["web/plantillas/*.html"]
+sibutestlab8583 = ["web/plantillas/*.html", "web/estatico/*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

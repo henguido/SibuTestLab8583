@@ -95,7 +95,7 @@ CARD_ID_DEMO = "DEMO-0001"
 SUFIJO_DEMO = "6666"
 PAN_DEMO = pan_sintetico(SUFIJO_DEMO)
 EXPIRACION_DEMO = "3012"
-DESCRIPCION_DEMO = "Tarjeta sintetica de demostracion. No es una tarjeta real."
+DESCRIPCION_DEMO = "Tarjeta de demostración"
 
 
 def ruta_base_datos() -> Path:

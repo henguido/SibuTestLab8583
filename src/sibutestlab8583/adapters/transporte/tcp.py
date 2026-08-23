@@ -92,11 +92,11 @@ class TransporteTcp:
             )
         except asyncio.TimeoutError:
             return FalloDeConexion(
-                f"no se pudo establecer la conexion con {destino}:"
-                f" se agoto el tiempo tras {limite:g} s"
+                f"no se pudo establecer la conexión con {destino}:"
+                f" se agotó el tiempo tras {limite:g} s"
             )
         except OSError as error:
-            return FalloDeConexion(f"no se pudo establecer la conexion con {destino}: {error}")
+            return FalloDeConexion(f"no se pudo establecer la conexión con {destino}: {error}")
 
         # Desde aqui la sesion TCP existio: ningun fallo posterior puede
         # describirse como "no se envio".
@@ -107,14 +107,14 @@ class TransporteTcp:
                 await asyncio.wait_for(escritor.drain(), timeout=limite)
             except asyncio.TimeoutError:
                 return FalloDeTransmision(
-                    f"la conexion con {destino} se establecio, pero el envio no pudo"
-                    f" completarse en {limite:g} s: no puede determinarse cuanto"
-                    " recibio el destino"
+                    f"la conexión con {destino} se estableció, pero el envío no pudo"
+                    f" completarse en {limite:g} s: no puede determinarse cuánto"
+                    " recibió el destino"
                 )
             except OSError as error:
                 return FalloDeTransmision(
-                    f"la conexion con {destino} se establecio y el envio se"
-                    f" interrumpio ({error}): no puede determinarse cuanto recibio"
+                    f"la conexión con {destino} se estableció y el envío se"
+                    f" interrumpió ({error}): no puede determinarse cuánto recibió"
                     " el destino"
                 )
 
@@ -132,9 +132,9 @@ class TransporteTcp:
                 # intercambio quedo sin cerrar: no es RN-2 y no es un error de
                 # conexion. Tampoco se puede afirmar que el destino recibiera.
                 return FalloDeTransmision(
-                    f"el intercambio con {destino} se interrumpio antes de recibir"
+                    f"el intercambio con {destino} se interrumpió antes de recibir"
                     f" una respuesta completa ({error}): no puede determinarse"
-                    " cuanto recibio o proceso el destino"
+                    " cuánto recibió o procesó el destino"
                 )
         finally:
             await _cerrar(escritor)

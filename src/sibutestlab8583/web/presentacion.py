@@ -25,11 +25,43 @@ MONTO_MAXIMO = Decimal("9999999999.99")
 
 @dataclass(frozen=True)
 class Aviso:
-    """Como se comunica un desenlace: titulo, explicacion y tono visual."""
+    """Como se comunica un desenlace.
+
+    Lleva cuatro pistas y el color es solo una de ellas: `senal` elige un dibujo,
+    `etiqueta` da el rotulo corto para las tablas, `titulo` y `detalle` lo
+    explican. Asi un desenlace sigue siendo reconocible sin distinguir colores.
+
+    `senal` no se deriva de `tono` porque no son biyectivos: el tono `error` lo
+    comparten el fallo de conexion y los errores tecnicos, y cada uno merece su
+    propio dibujo.
+    """
 
     tono: str
     titulo: str
     detalle: str
+    etiqueta: str = ""
+    senal: str = "neutro"
+
+
+@dataclass(frozen=True)
+class Seccion:
+    """Una entrada de la navegacion principal."""
+
+    clave: str
+    ruta: str
+    texto: str
+
+
+#: Navegacion de la aplicacion, en un solo lugar. La plantilla base la recorre;
+#: no hay ninguna lista de enlaces duplicada en el HTML.
+#:
+#: Solo se listan secciones con ruta servida: un enlace que no funciona es peor
+#: que un enlace ausente. Cuando exista `/tarjetas`, se agrega aqui esta linea:
+#:     Seccion("tarjetas", "/tarjetas", "Tarjetas de prueba"),
+SECCIONES: tuple[Seccion, ...] = (
+    Seccion("compra", "/", "Nueva transacción"),
+    Seccion("historial", "/historial", "Historial"),
+)
 
 
 @dataclass(frozen=True)
@@ -41,55 +73,71 @@ class FilaIsoscopio:
     sensible: bool
 
 
-#: Un tono por estado, uno por cada miembro de EstadoEjecucion. Los siete
+#: Un aviso por estado, uno por cada miembro de EstadoEjecucion. Los siete
 #: desenlaces se distinguen a simple vista, y en particular un fallo de
 #: infraestructura no se confunde con un rechazo del autorizador ni con una
 #: falta de respuesta. Una prueba comprueba que no falte ninguno.
 AVISOS: Mapping[EstadoEjecucion, Aviso] = {
     EstadoEjecucion.APROBADA: Aviso(
         "aprobada",
-        "Transaccion aprobada",
-        "El autorizador respondio con un codigo que el catalogo configurado marca como aprobado.",
+        "Transacción aprobada",
+        "El autorizador respondió con un código que el catálogo configurado marca como aprobado.",
+        etiqueta="Aprobada",
+        senal="aprobada",
     ),
     EstadoEjecucion.RECHAZADA: Aviso(
         "rechazada",
-        "Transaccion rechazada",
-        "El autorizador respondio, y su codigo no corresponde a una aprobacion.",
+        "Transacción rechazada",
+        "El autorizador respondió, y su código no corresponde a una aprobación.",
+        etiqueta="Rechazada",
+        senal="rechazada",
     ),
     EstadoEjecucion.INVALIDA: Aviso(
         "invalida",
-        "Respuesta invalida",
-        "Llego una respuesta, pero no corresponde a la solicitud enviada. "
-        "No se cuenta como aprobada aunque su codigo lo diga.",
+        "Respuesta inválida",
+        "Llegó una respuesta, pero no corresponde a la solicitud enviada. "
+        "No se cuenta como aprobada aunque su código lo diga.",
+        etiqueta="Inválida",
+        senal="invalida",
     ),
     EstadoEjecucion.TIMEOUT: Aviso(
         "timeout",
         "Sin respuesta del destino",
-        "Se establecio la conexion, la escritura local termino sin error y se espero una "
-        "respuesta completa hasta agotar el limite. No puede afirmarse desde aqui si el "
-        "destino recibio o proceso el mensaje. Se registra aparte de un rechazo, de un "
-        "fallo de conexion y de un intercambio interrumpido.",
+        "Se estableció la conexión, la escritura local terminó sin error y se esperó una "
+        "respuesta completa hasta agotar el límite. No puede afirmarse desde aquí si el "
+        "destino recibió o procesó el mensaje. Se registra aparte de un rechazo, de un "
+        "fallo de conexión y de un intercambio interrumpido.",
+        etiqueta="Sin respuesta",
+        senal="timeout",
     ),
     EstadoEjecucion.ERROR_CONEXION: Aviso(
         "error",
-        "No fue posible establecer conexion con el destino",
-        "No llego a haber sesion TCP, asi que la solicitud no se transmitio. Revise que "
-        "el host simulado o el switch esten disponibles en el host y puerto indicados. "
+        "No fue posible establecer conexión con el destino",
+        "No llegó a haber sesión TCP, así que la solicitud no se transmitió. Revise que "
+        "el host simulado o el switch estén disponibles en el host y puerto indicados. "
         "Esto no es un rechazo del autorizador ni una falta de respuesta.",
+        etiqueta="Error de conexión",
+        senal="conexion",
     ),
     EstadoEjecucion.ERROR_TRANSMISION: Aviso(
         "indeterminado",
-        "El intercambio se interrumpio",
-        "La conexion se establecio, pero el intercambio se interrumpio. No puede "
-        "determinarse cuanto recibio el destino, asi que no debe asumirse que la "
-        "transaccion no se proceso. Revise el destino antes de reintentar.",
+        "El intercambio se interrumpió",
+        "La conexión se estableció, pero el intercambio se interrumpió. No puede "
+        "determinarse cuánto recibió el destino, así que no debe asumirse que la "
+        "transacción no se procesó. Revise el destino antes de reintentar.",
+        # El rotulo corto dice lo que se sabe, no lo que se supone: en una tabla
+        # sin explicacion al lado, "interrumpida" se leeria como "no paso nada".
+        etiqueta="Indeterminada",
+        senal="transmision",
     ),
     EstadoEjecucion.NO_ENVIADA: Aviso(
         "no-enviada",
-        "El mensaje no se envio",
-        "No se llego a intentar transmision por la red. Puede ser porque faltaban campos "
+        "El mensaje no se envió",
+        "No se llegó a intentar transmisión por la red. Puede ser porque faltaban campos "
         "obligatorios para su tipo, porque no se pudo codificar, o porque no se pudo "
-        "preparar para transmitirlo. El motivo concreto aparece mas abajo.",
+        "preparar para transmitirlo. El motivo concreto aparece más abajo.",
+        etiqueta="No enviada",
+        senal="no-enviada",
     ),
 }
 
@@ -112,17 +160,23 @@ def aviso_de_error(error: Exception) -> Aviso:
             "error",
             "No se pudo preparar el mensaje para transmitirlo",
             "El contenido no cumple el formato de enmarcado configurado.",
+            etiqueta="Error",
+            senal="no-enviada",
         )
     if isinstance(error, ErrorDeCodec):
         return Aviso(
             "error",
             "No se pudo interpretar el mensaje",
             "El contenido recibido no corresponde al perfil configurado.",
+            etiqueta="Error",
+            senal="invalida",
         )
     return Aviso(
         "error",
-        "Ocurrio un error inesperado",
-        "La operacion no pudo completarse. Revise el registro del servidor.",
+        "Ocurrió un error inesperado",
+        "La operación no pudo completarse. Revise el registro del servidor.",
+        etiqueta="Error",
+        senal="invalida",
     )
 
 
@@ -134,7 +188,7 @@ def validar_monto(texto: str) -> Decimal:
     try:
         monto = Decimal(limpio)
     except InvalidOperation as error:
-        raise ValueError("El monto debe ser un numero, por ejemplo 150.00") from error
+        raise ValueError("El monto debe ser un número, por ejemplo 150.00") from error
     if monto <= 0:
         raise ValueError("El monto debe ser mayor que cero.")
     if monto > MONTO_MAXIMO:
@@ -146,7 +200,7 @@ def validar_puerto(texto: str) -> int:
     try:
         puerto = int((texto or "").strip())
     except ValueError as error:
-        raise ValueError("El puerto debe ser un numero entero.") from error
+        raise ValueError("El puerto debe ser un número entero.") from error
     if not 1 <= puerto <= 65535:
         raise ValueError("El puerto debe estar entre 1 y 65535.")
     return puerto
@@ -188,6 +242,9 @@ def contexto_de_resultado(
     peticion: validar la entrada, delegar el recorrido y elegir la plantilla.
     """
     return {
+        # El resultado es el desenlace de la pantalla de transaccion: la
+        # navegacion sigue marcando esa seccion, no ninguna otra.
+        "seccion": "compra",
         "resultado": resultado,
         "aviso": aviso_de(resultado),
         "destino": destino,

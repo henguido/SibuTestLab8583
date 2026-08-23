@@ -40,6 +40,19 @@ from sibutestlab8583.web.presentacion import AVISOS
 
 #: Nombre que ninguna resolucion DNS puede satisfacer (RFC 2606).
 DESTINO_IRRESOLUBLE = DestinoTcp(host="no-existe.sibutestlab.invalid", puerto=9)
+#: Frases que NO pueden aparecer describiendo un desenlace indeterminado: cubren
+#: la ortografia con tilde y sin ella, porque el texto visible lleva tildes y el
+#: tecnico no, y ninguna de las dos formas es aceptable aqui.
+FRASES_PROHIBIDAS = (
+    "nunca salio",
+    "nunca salió",
+    "no se envio",
+    "no se envió",
+    "cero bytes",
+    "nada salio",
+    "nada salió",
+)
+
 
 
 async def _compra(base, transporte, *, destino=DESTINO_IRRESOLUBLE, tiempo_limite=2.0):
@@ -415,6 +428,6 @@ def test_ningun_aviso_afirma_que_no_se_envio_en_error_de_transmision():
     """La prohibicion, comprobada sobre el texto que ve el usuario."""
     aviso = AVISOS[EstadoEjecucion.ERROR_TRANSMISION]
     texto = (aviso.titulo + " " + aviso.detalle).lower()
-    for prohibido in ("nunca salio", "no se envio", "cero bytes", "nada salio"):
+    for prohibido in FRASES_PROHIBIDAS:
         assert prohibido not in texto, f"el aviso afirma lo indemostrable: {prohibido!r}"
     assert "no puede determinarse" in texto

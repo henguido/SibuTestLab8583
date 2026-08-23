@@ -27,6 +27,19 @@ from sibutestlab8583.domain.modelos import (
 )
 
 DESTINO = DestinoTcp(host="127.0.0.1", puerto=9999)
+#: Frases que NO pueden aparecer describiendo un desenlace indeterminado: cubren
+#: la ortografia con tilde y sin ella, porque el texto visible lleva tildes y el
+#: tecnico no, y ninguna de las dos formas es aceptable aqui.
+FRASES_PROHIBIDAS = (
+    "nunca salio",
+    "nunca salió",
+    "no se envio",
+    "no se envió",
+    "cero bytes",
+    "nada salio",
+    "nada salió",
+)
+
 PAYLOAD = b"0100 carga de prueba"
 LIMITE = 0.2
 
@@ -116,7 +129,7 @@ async def test_conexion_rechazada_da_fallo_de_conexion(monkeypatch):
     resultado = await _transporte().enviar(PAYLOAD, DESTINO)
 
     assert isinstance(resultado, FalloDeConexion)
-    assert "establecer la conexion" in resultado.detalle
+    assert "establecer la conexión" in resultado.detalle
 
 
 async def test_conexion_que_se_agota_da_fallo_de_conexion(monkeypatch):
@@ -163,7 +176,7 @@ async def test_el_detalle_no_afirma_que_no_se_envio(monkeypatch):
     resultado = await _transporte().enviar(PAYLOAD, DESTINO)
 
     texto = resultado.detalle.lower()
-    for prohibido in ("nunca salio", "no se envio", "cero bytes", "nada salio"):
+    for prohibido in FRASES_PROHIBIDAS:
         assert prohibido not in texto, f"el detalle afirma lo indemostrable: {prohibido!r}"
 
 

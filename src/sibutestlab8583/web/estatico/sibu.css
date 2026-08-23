@@ -1,0 +1,936 @@
+/* SibuTestLab8583 - hoja de estilos unica.
+ *
+ * CSS propio, sin framework ni paso de compilacion. Se sirve como archivo
+ * estatico en lugar de vivir embebido en la plantilla base: asi se edita, se
+ * cachea y se lee como lo que es, y las plantillas quedan solo con estructura.
+ *
+ * Todo el color, el espaciado, los radios, las sombras y la tipografia salen de
+ * los tokens de la seccion 1. Ningun bloque posterior escribe un color literal.
+ *
+ * Convencion de texto: el texto visible al usuario lleva ortografia espanola
+ * completa; los identificadores, clases, tokens y comentarios de este archivo
+ * se mantienen en ASCII.
+ */
+
+/* ========================================================== 1. TOKENS === */
+
+:root {
+  /* --- tipografia --- */
+  --tipo-texto: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --tipo-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  --texto-xs: 0.75rem;
+  --texto-sm: 0.8125rem;
+  --texto-md: 0.9375rem;
+  --texto-lg: 1.0625rem;
+  --texto-2xl: 1.6875rem;
+  --peso-medio: 500;
+  --peso-fuerte: 600;
+  --peso-alto: 700;
+  --interlinea: 1.55;
+  --traqueo-rotulo: 0.08em;
+
+  /* --- espacio (escala de 4 px) --- */
+  --e1: 0.25rem;
+  --e2: 0.5rem;
+  --e3: 0.75rem;
+  --e4: 1rem;
+  --e5: 1.5rem;
+  --e6: 2rem;
+  --e7: 2.75rem;
+
+  /* --- radios --- */
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pastilla: 999px;
+
+  /* --- sombras --- */
+  --s-1: 0 1px 2px rgba(11, 27, 41, 0.05);
+  --s-3: 0 2px 6px rgba(11, 27, 41, 0.08), 0 18px 40px -24px rgba(11, 27, 41, 0.4);
+
+  /* --- superficies y texto --- */
+  --tinta: #12222f;
+  --tinta-media: #3a4f61;
+  --tenue: #56697b;
+  --linea: #d8e1e9;
+  --linea-suave: #e9eff4;
+  --lienzo: #f1f5f8;
+  --panel: #ffffff;
+  --panel-alterno: #f8fafc;
+
+  /* --- cinta superior --- */
+  --cinta: #0c1b26;
+  --cinta-linea: #22394a;
+  --cinta-sello-alto: #143646;
+  --cinta-sello-bajo: #0d2431;
+  --cinta-velo: rgba(255, 255, 255, 0.07);
+  --cinta-tinta: #f3f7fa;
+  --cinta-tenue: #9db2c2;
+
+  /* --- acento --- */
+  --acento: #0b6579;
+  --acento-alto: #084c5b;
+  --acento-claro: #e3f0f4;
+  --acento-cinta: #4cc0da;
+  --foco: #1c8fb0;
+
+  /* --- estados: una tinta, un fondo y un borde por desenlace ---
+     Los siete tonos son los mismos que declara presentacion.AVISOS. El color
+     nunca va solo: cada estado lleva ademas senal grafica, rotulo y titulo. */
+  --est-aprobada: #0a6737;
+  --est-aprobada-f: #e7f5ed;
+  --est-aprobada-b: #b4dec5;
+
+  --est-rechazada: #a33019;
+  --est-rechazada-f: #fdece7;
+  --est-rechazada-b: #f2c5b7;
+
+  --est-invalida: #855400;
+  --est-invalida-f: #fdf4e3;
+  --est-invalida-b: #eedcae;
+
+  --est-timeout: #37469a;
+  --est-timeout-f: #eceffb;
+  --est-timeout-b: #c5cdee;
+
+  --est-error: #8c2340;
+  --est-error-f: #fbeaef;
+  --est-error-b: #eec3d1;
+
+  --est-indeterminado: #5a4489;
+  --est-indeterminado-f: #f2eefa;
+  --est-indeterminado-b: #d3c8ea;
+
+  --est-no-enviada: #455a6b;
+  --est-no-enviada-f: #edf1f5;
+  --est-no-enviada-b: #ccd8e1;
+}
+
+/* ================================================== 2. BASE Y TIPOGRAFIA === */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--lienzo);
+  color: var(--tinta);
+  font-family: var(--tipo-texto);
+  font-size: var(--texto-md);
+  line-height: var(--interlinea);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  letter-spacing: -0.011em;
+  line-height: 1.25;
+}
+
+h1 {
+  font-size: var(--texto-2xl);
+  font-weight: var(--peso-alto);
+}
+
+h2 {
+  font-size: var(--texto-lg);
+  font-weight: var(--peso-fuerte);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--acento);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--acento-alto);
+}
+
+code,
+.mono {
+  font-family: var(--tipo-mono);
+  font-size: 0.9em;
+  font-variant-ligatures: none;
+}
+
+/* Un unico anillo de foco para todo, siempre visible. */
+:focus-visible {
+  outline: 3px solid var(--foco);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.salto {
+  position: absolute;
+  left: var(--e3);
+  top: calc(var(--e3) * -6);
+  z-index: 30;
+  padding: var(--e2) var(--e4);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  box-shadow: var(--s-3);
+  font-weight: var(--peso-fuerte);
+  transition: top 0.12s ease-out;
+}
+
+.salto:focus {
+  top: var(--e3);
+}
+
+/* ========================================================= 3. ESTRUCTURA === */
+
+.cinta {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--cinta);
+  border-bottom: 1px solid var(--cinta-linea);
+  color: var(--cinta-tinta);
+}
+
+.cinta__interior {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e3) var(--e5);
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--e3) var(--e5);
+}
+
+.marca {
+  display: flex;
+  align-items: center;
+  gap: var(--e3);
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.marca__sello {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--cinta-linea);
+  border-radius: var(--r-md);
+  background: linear-gradient(160deg, var(--cinta-sello-alto), var(--cinta-sello-bajo));
+  color: var(--acento-cinta);
+}
+
+.marca__nombre {
+  display: block;
+  font-size: var(--texto-lg);
+  font-weight: var(--peso-alto);
+  letter-spacing: -0.015em;
+}
+
+.marca__sufijo {
+  color: var(--acento-cinta);
+}
+
+.marca__rol {
+  display: block;
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-medio);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+  color: var(--cinta-tenue);
+}
+
+/* Navegacion: el estado activo se marca con barra inferior y aria-current,
+   no unicamente con color. */
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--e1);
+  margin-left: auto;
+}
+
+.nav__enlace {
+  position: relative;
+  padding: var(--e2) var(--e3);
+  border-radius: var(--r-sm);
+  color: var(--cinta-tenue);
+  font-size: var(--texto-md);
+  font-weight: var(--peso-medio);
+  text-decoration: none;
+}
+
+.nav__enlace:hover {
+  background: var(--cinta-velo);
+  color: var(--cinta-tinta);
+}
+
+.nav__enlace[aria-current="page"] {
+  color: var(--cinta-tinta);
+  font-weight: var(--peso-fuerte);
+}
+
+.nav__enlace[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: var(--e3);
+  right: var(--e3);
+  bottom: -1px;
+  height: 2px;
+  border-radius: var(--r-pastilla);
+  background: var(--acento-cinta);
+}
+
+.lienzo {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--e6) var(--e5) var(--e7);
+}
+
+.encabezado {
+  margin-bottom: var(--e5);
+}
+
+.encabezado__sub {
+  max-width: 68ch;
+  margin-top: var(--e2);
+  color: var(--tinta-media);
+}
+
+.pie {
+  max-width: 68ch;
+  margin-top: var(--e6);
+  padding-top: var(--e4);
+  border-top: 1px solid var(--linea);
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+.volver {
+  display: inline-block;
+  margin-top: var(--e5);
+  font-weight: var(--peso-medio);
+}
+
+/* ============================================================= 4. PANEL === */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-lg);
+  box-shadow: var(--s-1);
+  margin-bottom: var(--e4);
+  overflow: hidden;
+}
+
+.panel__cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--e2) var(--e4);
+  padding: var(--e3) var(--e5);
+  background: var(--panel-alterno);
+  border-bottom: 1px solid var(--linea);
+}
+
+.panel__titulo {
+  font-size: var(--texto-sm);
+  font-weight: var(--peso-alto);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+  color: var(--tinta-media);
+}
+
+.panel__nota {
+  margin-left: auto;
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+.panel__cuerpo {
+  padding: var(--e5);
+}
+
+.panel__cuerpo > * + * {
+  margin-top: var(--e4);
+}
+
+/* ====================================================== 5. FORMULARIO === */
+
+.grupo {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.grupo + .grupo {
+  margin-top: var(--e5);
+  padding-top: var(--e5);
+  border-top: 1px solid var(--linea-suave);
+}
+
+.grupo__titulo {
+  display: block;
+  padding: 0 0 var(--e1);
+  font-size: var(--texto-sm);
+  font-weight: var(--peso-alto);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+  color: var(--acento);
+}
+
+.grupo__sub {
+  margin-bottom: var(--e4);
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+.rejilla {
+  display: grid;
+  gap: var(--e4);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.rejilla--estrecha {
+  /* Importe y moneda no ganan nada al ocupar media pantalla: pistas cortas
+     con campos de 500 px se leen peor, no mejor. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 220px));
+  justify-content: start;
+}
+
+.campo__rotulo {
+  display: block;
+  margin-bottom: var(--e1);
+  font-size: var(--texto-sm);
+  font-weight: var(--peso-fuerte);
+}
+
+.campo__pista {
+  margin-top: var(--e1);
+  color: var(--tenue);
+  font-size: var(--texto-xs);
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-sm);
+  box-shadow: var(--s-1);
+}
+
+input[type="text"]:hover,
+select:hover {
+  border-color: var(--tenue);
+}
+
+.campo--mono input {
+  font-family: var(--tipo-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Valor fijo que solo se informa; no es un control. */
+.informativo {
+  display: flex;
+  align-items: baseline;
+  gap: var(--e2);
+  padding: 0.55rem 0.65rem;
+  border: 1px dashed var(--linea);
+  border-radius: var(--r-sm);
+  background: var(--panel-alterno);
+  color: var(--tinta-media);
+}
+
+.informativo__valor {
+  font-family: var(--tipo-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--peso-fuerte);
+  color: var(--tinta);
+}
+
+.acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e3) var(--e4);
+  padding: var(--e4) var(--e5);
+  background: var(--panel-alterno);
+  border-top: 1px solid var(--linea);
+}
+
+.acciones__nota {
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+.boton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--e2);
+  padding: 0.6rem 1.25rem;
+  font: inherit;
+  font-weight: var(--peso-fuerte);
+  color: var(--panel);
+  background: var(--acento);
+  border: 1px solid var(--acento-alto);
+  border-radius: var(--r-sm);
+  box-shadow: var(--s-1);
+  cursor: pointer;
+}
+
+.boton:hover {
+  background: var(--acento-alto);
+}
+
+.boton:active {
+  transform: translateY(1px);
+}
+
+/* ============================================ 6. SELECTOR DE TARJETAS === */
+
+.tarjetas {
+  display: grid;
+  gap: var(--e3);
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.tarjeta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: var(--e1) var(--e3);
+  padding: var(--e3) var(--e4);
+  background: var(--panel);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-md);
+  box-shadow: var(--s-1);
+  cursor: pointer;
+}
+
+.tarjeta:hover {
+  border-color: var(--acento);
+}
+
+/* El radio nativo queda visible a proposito: la seleccion no depende del
+   fondo ni de :has(), que aqui solo refuerza. */
+.tarjeta input {
+  grid-row: 1 / span 4;
+  margin: 0.2rem 0 0;
+  accent-color: var(--acento);
+  width: 1rem;
+  height: 1rem;
+}
+
+.tarjeta:has(input:checked) {
+  border-color: var(--acento);
+  box-shadow: 0 0 0 2px var(--acento-claro), var(--s-1);
+  background: var(--acento-claro);
+}
+
+.tarjeta__id {
+  font-family: var(--tipo-mono);
+  font-size: var(--texto-sm);
+  font-weight: var(--peso-alto);
+  letter-spacing: 0.02em;
+}
+
+.tarjeta__pan {
+  font-family: var(--tipo-mono);
+  font-size: var(--texto-md);
+  font-variant-numeric: tabular-nums;
+  color: var(--tinta);
+}
+
+.tarjeta__tipo {
+  font-size: var(--texto-sm);
+  font-weight: var(--peso-fuerte);
+  color: var(--tinta-media);
+}
+
+.tarjeta__desc {
+  color: var(--tenue);
+  font-size: var(--texto-xs);
+}
+
+/* ==================================================== 7. ESTADO / AVISO === */
+
+/* `.aviso` + el tono que declara presentacion.AVISOS. Tres senales
+   simultaneas: grafica, titulo y explicacion. El color es la cuarta. */
+.aviso {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--e2) var(--e4);
+  padding: var(--e4) var(--e5);
+  margin-bottom: var(--e4);
+  border: 1px solid;
+  border-left-width: 4px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--s-1);
+}
+
+.aviso__senal {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-pastilla);
+}
+
+.aviso__titulo {
+  font-size: var(--texto-lg);
+  font-weight: var(--peso-alto);
+  color: inherit;
+}
+
+.aviso__detalle {
+  max-width: 76ch;
+  color: var(--tinta-media);
+}
+
+.aprobada {
+  color: var(--est-aprobada);
+  background: var(--est-aprobada-f);
+  border-color: var(--est-aprobada-b);
+}
+.rechazada {
+  color: var(--est-rechazada);
+  background: var(--est-rechazada-f);
+  border-color: var(--est-rechazada-b);
+}
+.invalida {
+  color: var(--est-invalida);
+  background: var(--est-invalida-f);
+  border-color: var(--est-invalida-b);
+}
+.timeout {
+  color: var(--est-timeout);
+  background: var(--est-timeout-f);
+  border-color: var(--est-timeout-b);
+}
+.error {
+  color: var(--est-error);
+  background: var(--est-error-f);
+  border-color: var(--est-error-b);
+}
+.indeterminado {
+  color: var(--est-indeterminado);
+  background: var(--est-indeterminado-f);
+  border-color: var(--est-indeterminado-b);
+}
+.no-enviada {
+  color: var(--est-no-enviada);
+  background: var(--est-no-enviada-f);
+  border-color: var(--est-no-enviada-b);
+}
+
+/* Version compacta para tablas: senal + rotulo, nunca color a solas. */
+.pastilla {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--e1);
+  padding: 0.1rem 0.5rem 0.1rem 0.35rem;
+  border: 1px solid;
+  border-radius: var(--r-pastilla);
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-fuerte);
+  white-space: nowrap;
+}
+
+.pastilla svg {
+  flex: 0 0 auto;
+}
+
+/* ========================================================= 8. METRICAS === */
+
+.metricas {
+  display: grid;
+  gap: var(--e4);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.metrica {
+  min-width: 0;
+}
+
+.metrica__rotulo {
+  display: block;
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-fuerte);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+  color: var(--tenue);
+}
+
+.metrica__valor {
+  display: block;
+  margin-top: var(--e1);
+  font-size: var(--texto-lg);
+  font-weight: var(--peso-fuerte);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: break-word;
+}
+
+.metrica__valor--mono {
+  font-family: var(--tipo-mono);
+  font-size: var(--texto-md);
+}
+
+.metrica__valor--vacio {
+  color: var(--tenue);
+  font-weight: var(--peso-medio);
+}
+
+.metrica__nota {
+  display: block;
+  color: var(--tenue);
+  font-size: var(--texto-xs);
+}
+
+.motivos {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--tinta-media);
+}
+
+.motivos li + li {
+  margin-top: var(--e1);
+}
+
+/* =========================================================== 9. TABLAS === */
+
+/* Contenedor con desplazamiento horizontal propio: el cuerpo de la pagina
+   nunca se desplaza en horizontal. Es focalizable para poder recorrerlo con
+   el teclado. */
+.desplazable {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.desplazable:focus-visible {
+  outline-offset: -3px;
+}
+
+.tabla {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: var(--texto-sm);
+}
+
+.tabla th,
+.tabla td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--linea-suave);
+  vertical-align: top;
+}
+
+.tabla thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-alterno);
+  border-bottom: 1px solid var(--linea);
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-alto);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+  color: var(--tinta-media);
+  white-space: nowrap;
+}
+
+.tabla tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tabla tbody tr:hover {
+  background: var(--panel-alterno);
+}
+
+.tabla .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tabla .mono {
+  font-family: var(--tipo-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Numero de campo ISO: destacado y de ancho fijo. */
+.campo-iso {
+  display: inline-block;
+  min-width: 2.5rem;
+  padding: 0.05rem 0.4rem;
+  background: var(--acento-claro);
+  border: 1px solid var(--acento-claro);
+  border-radius: var(--r-sm);
+  color: var(--acento-alto);
+  font-family: var(--tipo-mono);
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-alto);
+  text-align: center;
+}
+
+.valor-iso {
+  font-family: var(--tipo-mono);
+  font-size: var(--texto-sm);
+  word-break: break-all;
+}
+
+.enmascarado {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: var(--e2);
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--linea);
+  border-radius: var(--r-pastilla);
+  background: var(--panel-alterno);
+  color: var(--tenue);
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-medio);
+  white-space: nowrap;
+}
+
+.vacio {
+  color: var(--tenue);
+  font-style: italic;
+}
+
+/* ==================================================== 10. RESPONSIVE === */
+
+/* Tableta: la cinta deja de competir por el ancho y la navegacion baja. */
+@media (max-width: 860px) {
+  .cinta__interior {
+    padding: var(--e3) var(--e4);
+  }
+
+  .nav {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  /* Desde aqui la navegacion ocupa su propia fila y el dispositivo suele ser
+     tactil: 44 px de alto, no los 39 del relleno de escritorio. */
+  .nav__enlace {
+    padding: var(--e3);
+  }
+
+  .lienzo {
+    padding: var(--e5) var(--e4) var(--e6);
+  }
+}
+
+/* Movil. */
+@media (max-width: 560px) {
+  :root {
+    --texto-2xl: 1.4375rem;
+  }
+
+  .cinta {
+    position: static;
+  }
+
+  .nav {
+    gap: 0;
+    border-top: 1px solid var(--cinta-linea);
+    padding-top: var(--e2);
+  }
+
+  .nav__enlace {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+
+  .panel__cabecera,
+  .panel__cuerpo,
+  .acciones {
+    padding-left: var(--e4);
+    padding-right: var(--e4);
+  }
+
+  .aviso {
+    padding: var(--e4);
+    gap: var(--e2) var(--e3);
+  }
+
+  .rejilla,
+  .tarjetas {
+    grid-template-columns: 1fr;
+  }
+
+  .metricas {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  .acciones .boton {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Mismo objetivo tactil que el boton principal. */
+  input[type="text"] {
+    padding: 0.65rem;
+  }
+
+  /* En pantalla estrecha la cabecera fija de la tabla estorba mas de lo que
+     ayuda: el alto disponible es minimo. */
+  .tabla thead th {
+    position: static;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+
+  .boton:active {
+    transform: none;
+  }
+}
+
+/* Impresion: una ejecucion es evidencia de una prueba y se archiva en papel
+   o en PDF con cierta frecuencia. */
+@media print {
+  .cinta,
+  .nav,
+  .acciones,
+  .volver,
+  .salto {
+    display: none !important;
+  }
+
+  body {
+    background: var(--panel);
+  }
+
+  .panel,
+  .aviso {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  .tabla {
+    min-width: 0;
+  }
+}

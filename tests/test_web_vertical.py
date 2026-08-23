@@ -59,7 +59,7 @@ async def test_post_http_recorre_el_nucleo_real_y_persiste(entorno):
     assert host.solicitudes_recibidas == 1
 
     # 3. El HTML refleja la aprobacion.
-    assert "Transaccion aprobada" in html
+    assert "Transacción aprobada" in html
     assert "Isoscopio · respuesta 0110" in html
 
     # 4. La ejecucion quedo persistida en SQLite.
@@ -90,8 +90,8 @@ async def test_un_rechazo_real_llega_al_html_como_rechazo(entorno):
     ruta, composicion = entorno
     html, estado, _ = await _ejecutar(composicion, ruta, codigo="05")
     assert estado == 200
-    assert "Transaccion rechazada" in html
-    assert "Transaccion aprobada" not in html
+    assert "Transacción rechazada" in html
+    assert "Transacción aprobada" not in html
 
 
 async def test_el_historial_muestra_lo_que_el_recorrido_persistio(entorno):
@@ -125,5 +125,5 @@ async def test_un_destino_sin_host_no_rompe_la_interfaz(entorno):
             },
         )
     assert respuesta.status_code == 200
-    assert "No fue posible establecer conexion con el destino" in respuesta.text
+    assert "No fue posible establecer conexión con el destino" in respuesta.text
     assert "Traceback" not in respuesta.text

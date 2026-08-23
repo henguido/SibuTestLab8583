@@ -46,7 +46,7 @@ class CatalogoDeRespuestas:
 
     def descripcion(self, codigo: str) -> str:
         entrada = self.codigos.get(codigo)
-        return entrada.descripcion if entrada else "codigo desconocido"
+        return entrada.descripcion if entrada else "código desconocido"
 
 
 # Catalogo generico aprobado para la demostracion academica (PROYECTO.md seccion 4).
@@ -57,9 +57,9 @@ CATALOGO_GENERICO = CatalogoDeRespuestas.desde(
     [
         CodigoRespuesta("00", "Aprobada", aprobado=True),
         CodigoRespuesta("05", "No autorizada", aprobado=False),
-        CodigoRespuesta("14", "Tarjeta invalida", aprobado=False),
+        CodigoRespuesta("14", "Tarjeta inválida", aprobado=False),
         CodigoRespuesta("51", "Fondos insuficientes", aprobado=False),
         CodigoRespuesta("54", "Tarjeta vencida", aprobado=False),
-        CodigoRespuesta("94", "Transaccion duplicada", aprobado=False),
+        CodigoRespuesta("94", "Transacción duplicada", aprobado=False),
     ],
 )

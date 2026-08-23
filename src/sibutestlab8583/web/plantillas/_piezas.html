@@ -1,0 +1,73 @@
+{# Piezas reutilizables de la interfaz.
+
+   Las senales son SVG en linea y no glifos tipograficos: asi el dibujo no
+   depende de que la fuente del sistema tenga el caracter, y hereda el color
+   del estado con `currentColor`. Van marcadas `aria-hidden` porque el
+   significado ya lo dice el rotulo que las acompana; nunca son la unica pista.
+#}
+
+{% macro senal(nombre, tamano=18) -%}
+<svg class="senal" width="{{ tamano }}" height="{{ tamano }}" viewBox="0 0 16 16"
+     fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true" focusable="false">
+  {%- if nombre == 'aprobada' -%}
+  {# Visto: el autorizador aprobo. #}
+  <path d="M3 8.6 6.3 12 13 4.5"/>
+  {%- elif nombre == 'rechazada' -%}
+  {# Cruz: el autorizador contesto y no aprobo. #}
+  <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/>
+  {%- elif nombre == 'invalida' -%}
+  {# Admiracion: llego respuesta, pero no sirve. #}
+  <path d="M8 3.4v5.1"/>
+  <circle cx="8" cy="11.9" r=".9" fill="currentColor" stroke="none"/>
+  {%- elif nombre == 'timeout' -%}
+  {# Reloj: se espero hasta agotar el limite. #}
+  <circle cx="8" cy="8" r="5.4"/>
+  <path d="M8 5.2V8l2.2 1.4"/>
+  {%- elif nombre == 'conexion' -%}
+  {# Circulo tachado: no hubo canal por el cual transmitir. #}
+  <circle cx="8" cy="8" r="5.4"/>
+  <path d="M4.2 11.8 11.8 4.2"/>
+  {%- elif nombre == 'transmision' -%}
+  {# Flecha discontinua: hubo canal y el intercambio quedo a medias. #}
+  <path d="M2 8h2.4M6.4 8h2.4M10.8 8h1.6"/>
+  <path d="M10.6 5.8 13.2 8l-2.6 2.2"/>
+  {%- elif nombre == 'no-enviada' -%}
+  {# Flecha contra un tope: se detuvo antes de intentar la red. #}
+  <path d="M2.4 8h6"/>
+  <path d="M6.4 5.4 9 8l-2.6 2.6"/>
+  <path d="M12.6 3.8v8.4"/>
+  {%- elif nombre == 'enmascarado' -%}
+  {# Candado: el valor viaja completo, pero aqui se muestra enmascarado. #}
+  <rect x="3.6" y="7" width="8.8" height="6.4" rx="1.4"/>
+  <path d="M5.8 7V5.4a2.2 2.2 0 0 1 4.4 0V7"/>
+  {%- else -%}
+  {# Informativo. #}
+  <circle cx="8" cy="8" r="5.4"/>
+  <path d="M8 7.6v3.2"/>
+  <circle cx="8" cy="5.1" r=".9" fill="currentColor" stroke="none"/>
+  {%- endif -%}
+</svg>
+{%- endmacro %}
+
+
+{% macro pastilla(aviso) -%}
+<span class="pastilla {{ aviso.tono }}" title="{{ aviso.titulo }}">
+  {{- senal(aviso.senal, 13) }}{{ aviso.etiqueta -}}
+</span>
+{%- endmacro %}
+
+
+{% macro metrica(rotulo, valor, mono=false, nota='') -%}
+<div class="metrica">
+  <span class="metrica__rotulo">{{ rotulo }}</span>
+  {%- if valor is none or valor == '' %}
+  <span class="metrica__valor metrica__valor--vacio" aria-label="sin dato">&mdash;</span>
+  {%- else %}
+  <span class="metrica__valor{% if mono %} metrica__valor--mono{% endif %}">{{ valor }}</span>
+  {%- endif %}
+  {%- if nota %}
+  <span class="metrica__nota">{{ nota }}</span>
+  {%- endif %}
+</div>
+{%- endmacro %}

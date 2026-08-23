@@ -1,96 +1,136 @@
 {% extends "base.html" %}
-{% block titulo %}Nueva compra · SibuTestLab8583{% endblock %}
+{% from "_piezas.html" import senal %}
+{% block titulo %}Nueva transacción · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
-<h1>Nueva compra</h1>
-<p class="sub">
-  Arma un mensaje <code>0100</code>, lo envia por TCP al destino indicado e interpreta
-  la respuesta <code>0110</code>.
-</p>
+<div class="encabezado">
+  <h1>Nueva transacción</h1>
+  <p class="encabezado__sub">
+    Arma un mensaje <code>0100</code>, lo transmite por TCP al destino indicado e interpreta
+    la respuesta <code>0110</code>. Cada intento queda registrado en el historial, incluidos
+    los que no obtienen respuesta.
+  </p>
+</div>
 
 {% if aviso %}
 <div class="aviso {{ aviso.tono }}">
-  <h2>{{ aviso.titulo }}</h2>
-  <p>{{ aviso.detalle }}</p>
+  <span class="aviso__senal">{{ senal(aviso.senal, 19) }}</span>
+  <h2 class="aviso__titulo">{{ aviso.titulo }}</h2>
+  <p class="aviso__detalle">{{ aviso.detalle }}</p>
 </div>
 {% endif %}
 
 {% if error %}
 <div class="aviso error">
-  <h2>Revise los datos</h2>
-  <p>{{ error }}</p>
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise los datos</h2>
+  <p class="aviso__detalle">{{ error }}</p>
 </div>
 {% endif %}
 
-<form class="panel" method="post" action="/compra">
-  <fieldset>
-    <legend>Tarjeta</legend>
-    <div class="campos">
-      <div>
-        <label for="card_id">Tarjeta de prueba</label>
-        <select id="card_id" name="card_id" required>
-          {% for tarjeta in tarjetas %}
-          <option value="{{ tarjeta.card_id }}"
-                  {% if tarjeta.card_id == card_id %}selected{% endif %}>
-            {{ tarjeta.card_id }} — {{ tarjeta.pan_enmascarado }}
-          </option>
-          {% else %}
-          <option value="" disabled selected>No hay tarjetas cargadas</option>
-          {% endfor %}
-        </select>
-        <p class="pista">
-          Se elige por identificador. La interfaz solo recibe el PAN enmascarado; el PAN
+<form method="post" action="/compra">
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Transacción</h2>
+      <span class="panel__nota">Compra <code>0100</code></span>
+    </div>
+    <div class="panel__cuerpo">
+      <fieldset class="grupo">
+        <legend class="grupo__titulo">Tarjeta</legend>
+        <p class="grupo__sub">
+          Se elige por identificador. La interfaz solo recibe el número enmascarado; el número
           completo permanece restringido al procesamiento transaccional del servidor.
         </p>
-      </div>
-      <div>
-        <label for="monto">Monto</label>
-        <input id="monto" name="monto" inputmode="decimal" placeholder="150.00"
-               value="{{ monto }}" required>
-        <p class="pista">En la moneda del terminal. Use punto decimal.</p>
+        <div class="tarjetas">
+          {% for tarjeta in tarjetas %}
+          <label class="tarjeta">
+            <input type="radio" name="card_id" value="{{ tarjeta.card_id }}"
+                   {% if tarjeta.card_id == card_id or (not card_id and loop.first) %}checked{% endif %}>
+            <span class="tarjeta__id">{{ tarjeta.card_id }}</span>
+            <span class="tarjeta__pan">{{ tarjeta.pan_enmascarado }}</span>
+            <span class="tarjeta__tipo">{{ tarjeta.descripcion or 'Sin descripción' }}</span>
+            <span class="tarjeta__desc">
+              {%- if tarjeta.sintetica -%}
+              Datos sintéticos para uso exclusivo con el entorno de demostración.
+              {%- else -%}
+              Tarjeta de un entorno de pruebas.
+              {%- endif -%}
+            </span>
+          </label>
+          {% else %}
+          <p class="vacio">
+            No hay tarjetas en el catálogo. Inicialice la base con <code>sibu-init-db</code>.
+          </p>
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <fieldset class="grupo">
+        <legend class="grupo__titulo">Monto</legend>
+        <div class="rejilla rejilla--estrecha">
+          <div class="campo campo--mono">
+            <label class="campo__rotulo" for="monto">Importe</label>
+            <input type="text" id="monto" name="monto" inputmode="decimal" autocomplete="off"
+                   placeholder="150.00" value="{{ monto }}" required>
+            <p class="campo__pista">Use punto decimal. Va al campo 4 del mensaje.</p>
+          </div>
+          <div class="campo">
+            <span class="campo__rotulo">Moneda</span>
+            <div class="informativo">
+              <span class="informativo__valor">188</span>
+              <span>campo 49</span>
+            </div>
+            <p class="campo__pista">Código numérico ISO 4217. Fijo en esta versión.</p>
+          </div>
+        </div>
+      </fieldset>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Destino</h2>
+      <span class="panel__nota">TCP</span>
+    </div>
+    <div class="panel__cuerpo">
+      <div class="rejilla">
+        <div class="campo campo--mono">
+          <label class="campo__rotulo" for="host">Host</label>
+          <input type="text" id="host" name="host" autocomplete="off"
+                 value="{{ host }}" required>
+          <p class="campo__pista">Host simulado propio o switch de QA accesible.</p>
+        </div>
+        <div class="campo campo--mono">
+          <label class="campo__rotulo" for="puerto">Puerto</label>
+          <input type="text" id="puerto" name="puerto" inputmode="numeric" autocomplete="off"
+                 value="{{ puerto }}" required>
+          <p class="campo__pista">Entre 1 y 65535.</p>
+        </div>
+        <div class="campo">
+          <span class="campo__rotulo">Tiempo límite</span>
+          <div class="informativo">
+            <span class="informativo__valor">{{ '%g'|format(tiempo_limite) }} s</span>
+            <span>RN-2</span>
+          </div>
+          <p class="campo__pista">
+            Informativo. Se configura en el servidor con <code>SIBU_TIEMPO_LIMITE</code>.
+          </p>
+        </div>
       </div>
     </div>
-  </fieldset>
+  </section>
 
-  <fieldset>
-    <legend>Destino</legend>
-    <div class="campos">
-      <div>
-        <label for="host">Host</label>
-        <input id="host" name="host" value="{{ host }}" required>
-        <p class="pista">Host simulado propio o switch de QA accesible.</p>
-      </div>
-      <div>
-        <label for="puerto">Puerto</label>
-        <input id="puerto" name="puerto" inputmode="numeric" value="{{ puerto }}" required>
-        <p class="pista">Limite de espera: {{ '%g'|format(tiempo_limite) }} s.</p>
-      </div>
+  <section class="panel">
+    <div class="acciones">
+      <button class="boton" type="submit">
+        {{ senal('transmision', 16) }}
+        Ejecutar transacción
+      </button>
+      <span class="acciones__nota">
+        Requiere un receptor escuchando en el destino. Para la demostración:
+        <code>sibu-host-demo</code>.
+      </span>
     </div>
-  </fieldset>
-
-  <button type="submit">Ejecutar compra</button>
+  </section>
 </form>
-
-{% if tarjetas %}
-<div class="panel">
-  <h2>Tarjetas disponibles</h2>
-  <div class="scroll">
-    <table>
-      <thead>
-        <tr><th>Identificador</th><th>Numero</th><th>Descripcion</th><th>Origen</th></tr>
-      </thead>
-      <tbody>
-        {% for tarjeta in tarjetas %}
-        <tr>
-          <td><code>{{ tarjeta.card_id }}</code></td>
-          <td><code>{{ tarjeta.pan_enmascarado }}</code></td>
-          <td>{{ tarjeta.descripcion or '—' }}</td>
-          <td>{{ 'Sintetica' if tarjeta.sintetica else 'Ambiente de pruebas' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
 {% endblock %}

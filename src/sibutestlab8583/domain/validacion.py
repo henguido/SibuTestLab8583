@@ -93,7 +93,7 @@ def _discrepancias_de_correlacion(
     mti_esperado = _mti_de_respuesta(envio.mti)
 
     if respuesta.mti != mti_esperado:
-        motivos.append(f"MTI inesperado: se esperaba {mti_esperado} y llego {respuesta.mti}")
+        motivos.append(f"MTI inesperado: se esperaba {mti_esperado} y llegó {respuesta.mti}")
 
     obligatorios = (
         perfil.obligatorios(respuesta.mti) if perfil.soporta(respuesta.mti) else frozenset()
@@ -111,7 +111,7 @@ def _discrepancias_de_correlacion(
             if recibido != esperado:
                 motivos.append(
                     f"el campo {numero} no corresponde a la solicitud: "
-                    f"se envio {esperado!r} y volvio {recibido!r}"
+                    f"se envió {esperado!r} y volvió {recibido!r}"
                 )
     return tuple(motivos)
 
@@ -130,7 +130,7 @@ def _interpretar_codigo(
     if not catalogo.conoce(codigo):
         return (
             EstadoEjecucion.RECHAZADA,
-            (f"codigo {codigo} desconocido para el catalogo {catalogo.nombre!r}",),
+            (f"código {codigo} desconocido para el catálogo {catalogo.nombre!r}",),
         )
     return EstadoEjecucion.RECHAZADA, (f"{codigo}: {catalogo.descripcion(codigo)}",)
 

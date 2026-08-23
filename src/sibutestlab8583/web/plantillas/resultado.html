@@ -1,84 +1,108 @@
 {% extends "base.html" %}
+{% from "_piezas.html" import senal, pastilla, metrica %}
 {% block titulo %}Resultado · SibuTestLab8583{% endblock %}
 
+{# Isoscopio. En esta iteracion solo cambia la presentacion: mismas filas que
+   antes, sin campos derivados nuevos. #}
 {% macro isoscopio(titulo, filas, con_crudo, vacio) %}
-<div class="panel">
-  <h2>{{ titulo }}</h2>
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">{{ titulo }}</h2>
+    <span class="panel__nota">
+      {% if filas %}{{ filas|length }} campo{{ 's' if filas|length != 1 }}{% else %}sin campos{% endif %}
+    </span>
+  </div>
   {% if filas %}
-  <div class="scroll">
-    <table>
+  <div class="desplazable" tabindex="0" role="region" aria-label="{{ titulo }}">
+    <table class="tabla">
       <thead>
         <tr>
-          <th class="num">Campo</th>
-          <th>Descripcion</th>
-          <th>Valor interpretado</th>
-          {% if con_crudo %}<th>Tal como viajo</th>{% endif %}
+          <th>Campo</th>
+          <th>Nombre</th>
+          <th>Valor</th>
+          {% if con_crudo %}<th>Tal como viajó</th>{% endif %}
         </tr>
       </thead>
       <tbody>
         {% for fila in filas %}
         <tr>
-          <td class="num"><code>{{ fila.numero }}</code></td>
+          <td><span class="campo-iso">{{ fila.numero }}</span></td>
           <td>{{ fila.descripcion }}</td>
           <td>
-            <code>{{ fila.valor }}</code>
-            {% if fila.sensible %}<span class="marca-sensible">· enmascarado</span>{% endif %}
+            <span class="valor-iso">{{ fila.valor }}</span>
+            {%- if fila.sensible %}
+            <span class="enmascarado">{{ senal('enmascarado', 11) }} enmascarado</span>
+            {%- endif %}
           </td>
-          {% if con_crudo %}<td><code>{{ fila.crudo }}</code></td>{% endif %}
+          {% if con_crudo %}<td><span class="valor-iso">{{ fila.crudo }}</span></td>{% endif %}
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% else %}
-  <p class="vacio">{{ vacio }}</p>
+  <div class="panel__cuerpo"><p class="vacio">{{ vacio }}</p></div>
   {% endif %}
-</div>
+</section>
 {% endmacro %}
 
 {% block contenido %}
-<h1>Resultado de la compra</h1>
-<p class="sub">Ejecucion registrada. Los campos de tarjeta se muestran enmascarados.</p>
-
-<div class="aviso {{ aviso.tono }}">
-  <h2>{{ aviso.titulo }}</h2>
-  <p>{{ aviso.detalle }}</p>
+{% set ejecucion = resultado.ejecucion %}
+<div class="encabezado">
+  <h1>Resultado de la transacción</h1>
+  <p class="encabezado__sub">
+    Ejecución registrada en el historial. Los campos que transportan datos de tarjeta se
+    muestran enmascarados.
+  </p>
 </div>
 
-<div class="panel">
-  <div class="datos">
-    <div class="dato"><span class="k">Estado</span>
-      <span class="v">{{ resultado.estado.value }}</span></div>
-    <div class="dato"><span class="k">Codigo (campo 39)</span>
-      <span class="v">{{ resultado.ejecucion.codigo_respuesta or '—' }}</span></div>
-    <div class="dato"><span class="k">STAN</span>
-      <span class="v">{{ resultado.ejecucion.stan }}</span></div>
-    <div class="dato"><span class="k">Latencia</span>
-      <span class="v">{% if resultado.ejecucion.latencia_ms is not none %}{{ resultado.ejecucion.latencia_ms }} ms{% else %}—{% endif %}</span></div>
-    <div class="dato"><span class="k">Monto</span>
-      <span class="v">{{ resultado.ejecucion.monto }}</span></div>
-    <div class="dato"><span class="k">Tarjeta</span>
-      <span class="v">{{ resultado.ejecucion.card_id }}</span></div>
-    <div class="dato"><span class="k">Destino</span>
-      <span class="v">{{ destino }}</span></div>
-    <div class="dato"><span class="k">MTI</span>
-      <span class="v">{{ resultado.ejecucion.mti_solicitud }}{% if resultado.ejecucion.mti_respuesta %} → {{ resultado.ejecucion.mti_respuesta }}{% endif %}</span></div>
+<div class="aviso {{ aviso.tono }}" data-estado="{{ resultado.estado.value }}">
+  <span class="aviso__senal">{{ senal(aviso.senal, 19) }}</span>
+  <h2 class="aviso__titulo">{{ aviso.titulo }}</h2>
+  <p class="aviso__detalle">{{ aviso.detalle }}</p>
+</div>
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Resumen</h2>
+    <span class="panel__nota">{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
   </div>
-</div>
+  <div class="panel__cuerpo">
+    <div class="metricas">
+      <div class="metrica">
+        <span class="metrica__rotulo">Estado</span>
+        <span class="metrica__valor">{{ pastilla(aviso) }}</span>
+      </div>
+      {{ metrica('STAN', ejecucion.stan, mono=true, nota='campo 11') }}
+      {{ metrica('Monto', ejecucion.monto, mono=true, nota='moneda ' ~ ejecucion.moneda) }}
+      {{ metrica('Código de respuesta', ejecucion.codigo_respuesta, mono=true, nota='campo 39') }}
+      {{ metrica('Latencia', (ejecucion.latencia_ms ~ ' ms') if ejecucion.latencia_ms is not none else none) }}
+      {{ metrica('MTI', ejecucion.mti_solicitud ~ (' → ' ~ ejecucion.mti_respuesta if ejecucion.mti_respuesta else ''),
+                 mono=true, nota='' if ejecucion.mti_respuesta else 'sin respuesta') }}
+      {{ metrica('Tarjeta', ejecucion.card_id, mono=true) }}
+      {{ metrica('Destino', destino, mono=true,
+                 nota='' if ejecucion.destino_host else 'no se intentó transmisión por la red') }}
+    </div>
+  </div>
+</section>
 
 {% if resultado.motivos %}
-<div class="panel">
-  <h2>Por que</h2>
-  <ul>
-    {% for motivo in resultado.motivos %}<li>{{ motivo }}</li>{% endfor %}
-  </ul>
-</div>
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Por qué</h2>
+  </div>
+  <div class="panel__cuerpo">
+    <ul class="motivos">
+      {% for motivo in resultado.motivos %}<li>{{ motivo }}</li>{% endfor %}
+    </ul>
+  </div>
+</section>
 {% endif %}
 
 {{ isoscopio('Isoscopio · solicitud 0100', filas_solicitud, false,
-             'No se armo ningun mensaje.') }}
+             'No se armó ningún mensaje.') }}
 {{ isoscopio('Isoscopio · respuesta 0110', filas_respuesta, true,
-             'No se recibio respuesta que interpretar.') }}
+             'No se recibió respuesta que interpretar.') }}
 
-<p><a href="/">← Ejecutar otra compra</a></p>
+<a class="volver" href="/">&larr; Ejecutar otra transacción</a>
 {% endblock %}

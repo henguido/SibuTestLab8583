@@ -1,48 +1,74 @@
 {% extends "base.html" %}
+{% from "_piezas.html" import pastilla %}
 {% block titulo %}Historial · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
-<h1>Ejecuciones recientes</h1>
-<p class="sub">Las tarjetas se identifican por <code>card_id</code>, nunca por su numero.</p>
+<div class="encabezado">
+  <h1>Historial de ejecuciones</h1>
+  <p class="encabezado__sub">
+    Todo intento queda registrado, también los que no llegaron a transmitirse y los que no
+    obtuvieron respuesta. Las tarjetas se identifican por <code>card_id</code>, nunca por su
+    número.
+  </p>
+</div>
 
-<div class="panel">
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Ejecuciones recientes</h2>
+    <span class="panel__nota">
+      {{ ejecuciones|length }} registro{{ 's' if ejecuciones|length != 1 }}
+    </span>
+  </div>
   {% if ejecuciones %}
-  <div class="scroll">
-    <table>
+  <div class="desplazable" tabindex="0" role="region" aria-label="Ejecuciones recientes">
+    <table class="tabla">
       <thead>
         <tr>
-          <th>Fecha y hora</th>
+          <th>Fecha y hora (UTC)</th>
+          <th>STAN</th>
           <th>Tarjeta</th>
           <th class="num">Monto</th>
           <th>Estado</th>
-          <th>Codigo</th>
+          <th>Código</th>
           <th class="num">Latencia</th>
           <th>Destino</th>
         </tr>
       </thead>
       <tbody>
+        {# `data-estado` lleva el valor exacto del estado, para poder leer la
+           tabla con una herramienta sin depender del rotulo visible ni de una
+           clase de estilo. Nunca transporta datos de tarjeta. #}
         {% for ejecucion in ejecuciones %}
-        <tr>
-          <td>{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-          <td><code>{{ ejecucion.card_id }}</code></td>
-          <td class="num">{{ ejecucion.monto }}</td>
-          <td>
-            <span class="etiqueta {{ avisos[ejecucion.estado].tono }}">
-              {{ ejecucion.estado.value }}
-            </span>
+        <tr data-estado="{{ ejecucion.estado.value }}">
+          <td class="mono">{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td class="mono">{{ ejecucion.stan }}</td>
+          <td class="mono">{{ ejecucion.card_id }}</td>
+          <td class="num">{{ ejecucion.monto }} <span class="vacio">{{ ejecucion.moneda }}</span></td>
+          <td>{{ pastilla(avisos[ejecucion.estado]) }}</td>
+          <td class="mono">{{ ejecucion.codigo_respuesta or '—' }}</td>
+          <td class="num">
+            {%- if ejecucion.latencia_ms is not none %}{{ ejecucion.latencia_ms }} ms{% else %}—{% endif -%}
           </td>
-          <td><code>{{ ejecucion.codigo_respuesta or '—' }}</code></td>
-          <td class="num">{% if ejecucion.latencia_ms is not none %}{{ ejecucion.latencia_ms }} ms{% else %}—{% endif %}</td>
-          <td>{% if ejecucion.destino_host %}{{ ejecucion.destino_host }}:{{ ejecucion.destino_puerto }}{% else %}<span class="vacio">no se envio</span>{% endif %}</td>
+          <td class="mono">
+            {%- if ejecucion.destino_host -%}
+            {{ ejecucion.destino_host }}:{{ ejecucion.destino_puerto }}
+            {%- else -%}
+            <span class="vacio">no se intentó</span>
+            {%- endif -%}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% else %}
-  <p class="vacio">Todavia no hay ejecuciones registradas.</p>
+  <div class="panel__cuerpo">
+    <p class="vacio">
+      Todavía no hay ejecuciones registradas. Ejecute una transacción para ver el registro.
+    </p>
+  </div>
   {% endif %}
-</div>
+</section>
 
-<p><a href="/">← Nueva compra</a></p>
+<a class="volver" href="/">&larr; Nueva transacción</a>
 {% endblock %}

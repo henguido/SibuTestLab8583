@@ -55,10 +55,10 @@ class FramingDemostracion:
     def preparar(self, payload: bytes) -> bytes:
         """Antepone la longitud al payload opaco."""
         if not payload:
-            raise ErrorDeFraming("no se enmarca un payload vacio")
+            raise ErrorDeFraming("no se enmarca un payload vacío")
         if len(payload) > MAXIMO_PAYLOAD:
             raise ErrorDeFraming(
-                f"payload de {len(payload)} bytes: excede el maximo de {MAXIMO_PAYLOAD}"
+                f"payload de {len(payload)} bytes: excede el máximo de {MAXIMO_PAYLOAD}"
             )
         return len(payload).to_bytes(LARGO_PREFIJO, ORDEN_BYTES) + payload
 
@@ -78,7 +78,7 @@ class FramingDemostracion:
         except Exception as error:  # IncompleteReadError, conexion cerrada, etc.
             leidos = len(getattr(error, "partial", b"") or b"")
             raise ErrorDeFraming(
-                f"el stream se corto antes de completar {que}: "
+                f"el stream se cortó antes de completar {que}: "
                 f"se leyeron {leidos} de {cantidad} bytes"
             ) from error
         if len(datos) != cantidad:
