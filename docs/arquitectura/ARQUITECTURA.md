@@ -3,8 +3,11 @@
 Borrador inicial. Deliberadamente conciso: el entregable final tiene límite de dos páginas
 aparte de los diagramas.
 
-**Nada de lo aquí descrito está implementado.** Este documento fija la forma acordada antes de
-escribir código, según `PROYECTO.md` §7.2.
+**Este documento se escribió antes del código**, para fijar la forma acordada según
+`PROYECTO.md` §7.2. Desde entonces se implementó: hoy existen la web, la composición, el
+orquestador, las consultas, los perfiles, el codec, la validación, el framing, el transporte TCP,
+la persistencia, el generador de STAN y el host simulado. Sigue **sin implementar** el motor de
+carga. El estado exacto lo dan `git log` y la suite de pruebas, no este documento.
 
 Diagramas: [`componentes.mmd`](componentes.mmd) y [`flujo-compra.mmd`](flujo-compra.mmd).
 
@@ -38,7 +41,7 @@ Tres límites que no se cruzan:
 
 | Módulo | Capa | Responsabilidad |
 |---|---|---|
-| **Web** | Interfaz | Formulario de compra, isoscopio (campos ISO interpretados) e historial de ejecuciones. Delgada: sin lógica de negocio |
+| **Web** | Interfaz | Pantalla de nueva transacción, resultado con resumen e isoscopio (campos ISO interpretados) e historial de ejecuciones. Delgada: sin lógica de negocio. Se divide en rutas (`web/app.py`), presentación (`web/presentacion.py`), plantillas Jinja y una hoja de estilos propia servida en `/estatico` |
 | **Composición** | Raíz de composición | Único lugar donde se cablean perfil, catálogo, codec, framing, transporte y repositorios. La web depende de ella y no construye infraestructura en sus endpoints |
 | **Orquestador** (application service) | Aplicación | Secuencia el recorrido: armar → validar (RN-4) → codificar → enviar → interpretar → evaluar → persistir. Convierte los resultados del transporte en estados de ejecución: `TiempoAgotado` en `TIMEOUT` (RN-2), `FalloDeConexion` en `ERROR_CONEXION` y `FalloDeTransmision` en `ERROR_TRANSMISION`. **Persiste todo intento**, incluidos los que no llegan a la red. Única pieza que conoce a todas las demás |
 | **Perfiles** | Dominio | Provee el `PerfilDeMarca` activo: especificación de formato y campos obligatorios por MTI |
@@ -62,7 +65,7 @@ Contratos conceptuales entre módulos. No son firmas definitivas ni implementaci
 | `Transporte` | `enviar(bytes, destino, tiempo_limite) → bytes \| TiempoAgotado \| FalloDeConexion \| FalloDeTransmision` *(asíncrono)* | **Ninguna excepción de `asyncio` ni ningún `OSError` cruza este contrato.** Los cuatro resultados se distinguen por lo que cada uno permite *demostrar*: `FalloDeConexion` = no hubo sesión TCP, así que nada se transmitió; `FalloDeTransmision` = hubo sesión y el intercambio quedó **indeterminado**, no se puede afirmar cuánto recibió el destino; `TiempoAgotado` = se conectó, el drenaje terminó, se esperó y no llegó respuesta — esto y solo esto es RN-2. Única excepción que sí sale: `ErrorDeFraming` desde `preparar()`, que corre antes de conectar |
 | `FramingStrategy` | `preparar(bytes) → bytes`<br>`leer_mensaje_completo(stream) → bytes` *(asíncrono)* | Lo invoca el transporte, nunca el orquestador ni la web. Ver más abajo |
 | `GeneradorStan` | `siguiente() → str` *(asíncrono)* | Entrega el campo 11. Es un puerto y no una función porque la unicidad exige estado compartido y duradero: entre peticiones, entre peticiones concurrentes y entre reinicios |
-| `RepositorioEjecuciones` | `guardar(ejecucion)` *(asíncrono)* | El dominio no conoce el motor de base de datos |
+| `RepositorioEjecuciones` | `guardar(ejecucion) → id`<br>`obtener(id) → Ejecucion \| None`<br>`listar(limite) → Ejecucion[]` *(asíncronos)* | El dominio no conoce el motor de base de datos. `guardar` devuelve el identificador asignado, que es lo que permitirá enlazar el detalle de una ejecución |
 | `RepositorioCatalogos` | `catalogo_respuestas()`, `tarjetas_prueba()` *(asíncronos)* | Las tarjetas se referencian por identificador interno, nunca por PAN |
 
 El orquestador depende de estos contratos, no de sus implementaciones. Esto permite probarlo con
@@ -197,6 +200,105 @@ Contemplar perfiles de *formato* por marca no contradice la exclusión de alcanc
 `FICHA-APROBACION.md`, porque lo excluido son los catálogos de *códigos de respuesta* por marca.
 Son conceptos distintos.
 
+## Decisión: la presentación es una capa, no una decoración de la plantilla
+
+Cómo se rotula un desenlace es una decisión, y las decisiones no viven repartidas en el HTML.
+`web/presentacion.py` concentra dos tablas y las plantillas no duplican ninguna:
+
+- `AVISOS` asocia cada `EstadoEjecucion` con **cuatro** pistas: `senal` (dibujo), `etiqueta`
+  (rótulo corto para tablas), `titulo` y `detalle`. El color es una quinta pista, definida en el
+  CSS a partir de `tono`. Una prueba comprueba que no falte ningún estado y que ninguna de las
+  tres primeras se repita entre estados.
+- `SECCIONES` define la navegación. La plantilla base la recorre; añadir una sección es una línea
+  en un solo lugar. **Solo se declaran secciones cuya ruta existe:** una prueba recorre
+  `SECCIONES` y comprueba que cada ruta responda `200`.
+
+Por qué `senal` no se deriva de `tono`: no son biyectivos. El tono `error` lo comparten
+`ERROR_CONEXION` y los errores técnicos de `aviso_de_error`, y cada caso merece su propio dibujo.
+
+### Por qué el color nunca va solo
+
+Un fallo de infraestructura y un rechazo del autorizador se investigan de forma distinta, y quien
+no distingue rojos no debe quedarse sin saber cuál de los dos ocurrió. Cada desenlace se
+reconoce por señal, rótulo y texto antes de llegar al color. Contraste medido sobre los tokens:
+el peor de los siete estados es 5.89:1 y el peor par de texto 5.42:1, ambos sobre el mínimo AA
+de 4.5:1.
+
+### Por qué la hoja de estilos es un archivo y no un bloque en la plantilla
+
+Creció lo suficiente para merecer su propio archivo: el navegador la cachea, se edita como CSS y
+las plantillas quedan solo con estructura. Es la única pieza estática que se monta. Todo color,
+espacio, radio, sombra y tamaño sale de un token declarado en `:root`; ningún bloque posterior
+escribe un literal de color. No hay framework, ni JavaScript, ni paso de compilación.
+
+## Decisión: la representación persistida es estructurada, no un texto delimitado
+
+Una ejecución guarda el mensaje que se armó y el que llegó. La primera implementación usaba un
+solo formato de texto, `MTI=0100 | 2=**** | 3=000000`, unido por `` | `` y **sin escape**. Se lee
+deduciendo dónde termina cada valor a partir de la forma del texto, y por eso es frágil: se
+comprobó que un valor que contenga el separador queda partido y el lector **inventa un campo que
+nunca existió**. Para una herramienta de pruebas de pagos, un registro que muestra un campo
+inexistente es peor que no tener registro.
+
+La corrección **no fue escapar el separador** sino añadir una representación donde la frontera de
+cada valor la declara el formato:
+
+| Columna | Para qué |
+|---|---|
+| `solicitud_enmascarada`, `respuesta_enmascarada` | Texto de siempre. Se conservan por compatibilidad con lo ya escrito y porque son legibles de un vistazo |
+| `solicitud_json`, `respuesta_json` | Representación fiel. Es la que se lee cuando existe |
+
+```json
+{"version": 1, "mti": "0100", "perfil": "generico",
+ "campos": {"2": {"valor": "************6666"}, "3": {"valor": "000000"}}}
+```
+
+`version` describe la **estructura del JSON**, no el mensaje ISO: permite que un lector futuro
+distinga formatos leyendo una declaración en vez de deducirlos por su forma, que es exactamente el
+defecto que se está corrigiendo. `perfil` es otro eje: dice con qué especificación se armó el
+mensaje. La descripción de cada campo **no** se persiste: se re-deriva del perfil al leer.
+
+### Dónde vive, y por qué ahí
+
+`application/serializacion.py`, con funciones puras. En `adapters` obligaría a la capa de lectura
+a depender de un adaptador; en `domain` obligaría al dominio a conocer un formato de
+almacenamiento. Lo necesitan dos piezas de aplicación: el orquestador al escribir y las consultas
+al leer.
+
+### Lectura tolerante, y qué significa «fiel»
+
+`interpretar()` prioriza el JSON; si no hay o no se pudo leer, cae al texto anterior; si tampoco,
+devuelve un resultado indisponible. **Nunca lanza**: una fila antigua o corrupta no debe producir
+un error del servidor.
+
+El resultado trae una bandera `fiel` que distingue dos cosas que no deben confundirse:
+
+- **`True`** solo cuando se leyó un JSON de una versión conocida.
+- **`False`** siempre que provenga del texto anterior, *incluso si parece haberse leído bien*. La
+  razón es demostrativa: `41=A` es indistinguible de un `41=A | B` truncado. No se puede
+  **demostrar** fidelidad, y este proyecto no afirma lo que no puede demostrar.
+
+Un JSON que declare una versión desconocida **no se interpreta**: leer una estructura que el
+programa no conoce sería inventar significado. Se declara y se deja indisponible.
+
+### Migración sin recrear la base
+
+El proyecto no usa Alembic. `CREATE TABLE IF NOT EXISTS` no altera una tabla existente, así que
+`inicializar()` comprueba `PRAGMA table_info` y ejecuta `ALTER TABLE ... ADD COLUMN` solo para lo
+que falte. Es idempotente y **no modifica ninguna fila**. Las filas anteriores conservan `NULL`
+en las columnas nuevas: no se reconstruye su JSON, porque reconstruirlo sería inventarlo.
+
+### Límite conocido: no hay `crudo` de la solicitud
+
+El JSON de la **respuesta** lleva `crudo` por campo, porque `MensajeInterpretado` lo trae del
+codec y `enmascarado()` también lo enmascara. El de la **solicitud** no: `Codec.codificar`
+devuelve bytes y descarta el documento codificado de `pyiso8583`, así que ese dato **no existe** en
+el flujo actual y no se inventa. Recuperarlo exige cambiar el contrato del codec y pertenece al
+isoscopio 2.0.
+
+**Nunca se persisten los bytes crudos completos de un `0100`**, ni en hexadecimal: contienen el
+PAN completo, y eso pondría una segunda copia del número fuera de `tarjetas_prueba`.
+
 ## Datos sensibles en el diseño
 
 El enmascaramiento del PAN es una restricción de diseño, no una limpieza posterior: el logging y
@@ -222,10 +324,13 @@ académico basta con no versionar el archivo, pero una evolución comercial tend
 
 | Qué no se decidió | Cuándo se decide |
 |---|---|
-| Formato concreto del framing | Al construir el host simulado; el del switch real depende del ambiente |
+| Formato concreto del framing para un switch real | Depende de la especificación del ambiente. El de demostración ya existe |
 | Especificaciones de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca | Bloqueado: requiere documentos autorizados dentro del proyecto |
-| Esquema y columnas de la base de datos | Al construir el recorrido de extremo a extremo |
 | Si el motor de carga corre dentro del proceso web o aparte | Al construir el motor de carga |
 | Estrategia de datos de demostración reproducibles para un clon limpio | Antes de la entrega |
 | Cifrado en reposo del catálogo de tarjetas de QA | Fuera del alcance académico; necesario para una evolución comercial |
-| Herramienta y configuración de integración continua | Sesión 6 |
+| Si el campo 14 debe sumarse a los campos enmascarados | Es dato de tarjeta aunque no sea PAN; hoy se persiste en claro |
+
+**Ya decididas, antes abiertas.** El esquema y las columnas de la base se fijaron al construir el
+recorrido de extremo a extremo y se documentan más abajo. La integración continua se resolvió en
+la Sesión 6 con GitHub Actions y matriz 3.11/3.12/3.13.

@@ -65,6 +65,13 @@ CREATE TABLE IF NOT EXISTS ejecuciones (
     codigo_respuesta        TEXT,
     solicitud_enmascarada   TEXT,
     respuesta_enmascarada   TEXT,
+    -- Representacion estructurada de los mismos mensajes, ya enmascarados. Las
+    -- dos columnas de texto se conservan por compatibilidad; estas permiten
+    -- recuperar campo por campo sin depender de un separador sin escape.
+    -- Nullable a proposito: las filas anteriores no se rellenan con datos
+    -- reconstruidos, porque reconstruirlos seria inventarlos.
+    solicitud_json          TEXT,
+    respuesta_json          TEXT,
     latencia_ms             INTEGER
 );
 
@@ -142,8 +149,49 @@ async def _sembrar_tarjeta_demo(conexion: aiosqlite.Connection) -> None:
     )
 
 
+#: Columnas agregadas despues de que la tabla `ejecuciones` ya existiera en
+#: bases locales. El DDL de arriba las crea en una base nueva; en una existente
+#: las agrega `_migrar_ejecuciones`.
+COLUMNAS_AGREGADAS: tuple[tuple[str, str], ...] = (
+    ("solicitud_json", "TEXT"),
+    ("respuesta_json", "TEXT"),
+)
+
+
+async def _columnas_de(conexion: aiosqlite.Connection, tabla: str) -> set[str]:
+    async with conexion.execute(f"PRAGMA table_info({tabla})") as cursor:
+        return {fila[1] for fila in await cursor.fetchall()}
+
+
+async def _migrar_ejecuciones(conexion: aiosqlite.Connection) -> tuple[str, ...]:
+    """Agrega a `ejecuciones` las columnas que una base anterior no tenga.
+
+    El proyecto no usa Alembic: para este alcance, comprobar y agregar es mas
+    simple de leer y de auditar que una herramienta de migraciones.
+
+    `CREATE TABLE IF NOT EXISTS` no altera una tabla que ya existe, asi que sin
+    esto una base creada antes de estas columnas se quedaria sin ellas y las
+    consultas fallarian. Es idempotente: si la columna esta, no se toca nada, y
+    **ninguna fila existente se modifica**.
+
+    Los nombres de columna se interpolan porque `ALTER TABLE` no admite
+    parametros; provienen de la constante de arriba, nunca de entrada externa.
+
+    Corre despues del DDL, asi que la tabla siempre existe: en una base nueva ya
+    trae las columnas y este bucle no hace nada; en una anterior las agrega.
+    Devuelve los nombres que agrego, para que una prueba pueda comprobarlo.
+    """
+    existentes = await _columnas_de(conexion, "ejecuciones")
+    agregadas: list[str] = []
+    for columna, tipo in COLUMNAS_AGREGADAS:
+        if columna not in existentes:
+            await conexion.execute(f"ALTER TABLE ejecuciones ADD COLUMN {columna} {tipo}")
+            agregadas.append(columna)
+    return tuple(agregadas)
+
+
 async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = True) -> Path:
-    """Crea el esquema y siembra los datos base. Idempotente.
+    """Crea el esquema, migra lo que falte y siembra los datos base. Idempotente.
 
     Devuelve la ruta del archivo creado o ya existente.
     """
@@ -154,6 +202,7 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
     async with aiosqlite.connect(destino) as conexion:
         await conexion.execute("PRAGMA foreign_keys = ON")
         await conexion.executescript(DDL)
+        await _migrar_ejecuciones(conexion)
         await _sembrar_secuencias(conexion)
         await _sembrar_catalogo(conexion, CATALOGO_GENERICO)
         if con_datos_demo:

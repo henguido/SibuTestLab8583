@@ -780,6 +780,336 @@ la afirmación **es** demostrable. Y aparecen además citadas dentro de las prop
 en las listas que las pruebas usan para vigilarlas. Ninguna ocurrencia restante es una afirmación
 sobre `TIMEOUT` ni sobre `ERROR_TRANSMISION`.
 
+## 2026-08-20 · Rediseño de la interfaz
+
+**Cambio de orden deliberado.** El usuario detuvo las iteraciones funcionales pendientes —los P1
+de la auditoría— para mejorar primero el producto ya construido. Queda registrado porque no es
+una desviación del plan sino una decisión de prioridad: la herramienta funcionaba y no se veía
+como una herramienta.
+
+**Alcance.** Solo la interfaz existente. No se tocó el núcleo transaccional, ni las cuatro
+reglas, ni el transporte, ni la persistencia. Sigue siendo la misma aplicación: `0100` → TCP →
+`0110`.
+
+### Diagnóstico de partida
+
+La interfaz anterior funcionaba y comunicaba bien los desenlaces, pero tenía cinco defectos de
+producto:
+
+1. Ochenta líneas de CSS embebidas en `base.html`, con nombres de una sola letra y sin escala.
+2. La navegación era dos enlaces sueltos, sin señal de dónde está el usuario.
+3. El estado se mostraba con el valor crudo del enum: `error_conexion`, no «Error de conexión».
+4. El desenlace se distinguía **solo por color**. Quien no distingue rojos no podía separar un
+   rechazo del autorizador de un fallo de infraestructura, que se investigan de forma distinta.
+5. El resumen del resultado no traía moneda ni STAN visible en el historial, dos datos que un
+   analista de QA busca primero.
+
+### Concepto visual
+
+Identidad propia, inspirada en el registro de una empresa de tecnología y no copiada de ningún
+sitio: cinta oscura con la marca `SibuTestLab8583` y el subtítulo `Laboratorio de pruebas ISO
+8583`, lienzo claro, un solo acento —teal corporativo— y numeración tabular monoespaciada para
+todo lo que es dato ISO. Sobrio, no un tablero cargado.
+
+**Lo que no se afirma.** No se consultó ningún activo de marca de SibuLabs, así que la paleta es
+original y este documento **no** afirma que reproduzca sus colores. Si en algún momento se
+quiere alinear con los valores corporativos reales, hacen falta los tokens de marca.
+
+### Decisiones
+
+**La presentación es una capa.** `web/presentacion.py` concentra las dos tablas que gobiernan la
+interfaz y las plantillas no duplican ninguna: `AVISOS` (tono, señal, etiqueta, título,
+explicación por estado) y `SECCIONES` (navegación). `senal` no se deriva de `tono` porque no son
+biyectivos: el tono `error` lo comparten `ERROR_CONEXION` y los errores técnicos.
+
+**Cuatro pistas por desenlace, y el color es la quinta.** Señal gráfica en SVG, rótulo corto,
+título y explicación. Las señales son SVG en línea y no glifos tipográficos: así el dibujo no
+depende de que la fuente del sistema tenga el carácter. Contraste medido sobre los tokens: el
+peor de los siete estados es 5.89:1 y el peor par de texto 5.42:1; el mínimo AA es 4.5:1.
+
+**«Indeterminada», no «Interrumpida».** El rótulo corto de `ERROR_TRANSMISION` dice lo que se
+sabe, no lo que se supone. En una tabla, sin la explicación al lado, «interrumpida» se leería
+como «no pasó nada», que es justo la lectura prohibida por la iteración anterior.
+
+**Hoja de estilos en un archivo, no en la plantilla.** Creció lo suficiente para merecerlo. Se
+sirve en `/estatico`, el navegador la cachea y las plantillas quedan solo con estructura. Todo
+color, espacio, radio, sombra y tamaño sale de un token en `:root`.
+
+**Selector de tarjeta como lista de tarjetas, no como `select`.** Un `<select>` solo muestra
+texto en una línea; la especificación pedía ver `card_id`, número enmascarado y descripción a la
+vez. Se usan radios con el control nativo visible: la selección no depende del fondo ni de
+`:has()`, que aquí solo refuerza.
+
+**`data-estado` en cada fila y en el aviso.** El estado exacto queda legible para una herramienta
+sin depender del rótulo visible ni de una clase de estilo. Nunca transporta datos de tarjeta, y
+una prueba lo comprueba recorriendo todos los atributos `data-*` de las tres pantallas.
+
+### Corrección de una afirmación falsa propia, antes del commit
+
+La cabecera del CSS decía «ningún bloque posterior escribe un color literal». **Era falso:**
+quedaban tres —el degradado del sello, el velo del `hover` de navegación y un `#fff` en los
+estilos de impresión—. En lugar de suavizar la frase se convirtieron los tres en tokens, y ahora
+la afirmación es verdadera y verificable: un barrido de literales de color fuera de `:root`
+devuelve ninguno. Mismo criterio que en las dos iteraciones anteriores: primero el hecho, después
+la redacción.
+
+### Lo que se corrigió gracias a medir en un navegador real
+
+No se dieron por buenas las medidas de diseño. Con la aplicación levantada contra el host
+simulado se midieron los tres anchos, y aparecieron cuatro problemas que la lectura del CSS no
+habría revelado:
+
+| Medición | Problema | Corrección |
+|---|---|---|
+| `.campo__pista` a 4.51:1 | Pasaba AA por dos centésimas | `--tenue` oscurecido a `#56697b` → 5.67:1 |
+| Monto de 503 px de ancho | Un campo de importe ocupando media pantalla | Rejilla estrecha acotada a `minmax(150px, 220px)` |
+| Navegación de 39 px en móvil | Bajo el objetivo táctil de 44 px | Relleno propio desde el corte de 860 px → 47 px |
+| Tres tokens declarados sin uso | Código muerto en un archivo nuevo | Eliminados; 66 tokens, ninguno sin usar |
+
+Evidencia end-to-end desde el navegador: una compra real por HTTP contra `sibu-host-demo`
+devolvió `aprobada`, con resumen completo, isoscopio de once campos en la solicitud y siete en la
+respuesta, el campo 2 marcado como enmascarado, y desbordamiento horizontal del cuerpo en cero a
+375, 768 y 1280 px, con las tablas desplazándose dentro de su contenedor.
+
+### Aserción existente que cambió, y por qué
+
+`test_web.py::test_la_pantalla_de_compra_responde` comprobaba la cadena `"Nueva compra"`. La
+pantalla pasó a llamarse `Nueva transaccion` por pedido explícito, así que la aserción se
+actualizó. **Es la única de las 141 que se tocó.** Dos pruebas más habrían fallado —comprobaban
+el valor crudo del estado en el historial, que ahora muestra el rótulo humano— y en lugar de
+reescribirlas se añadió `data-estado`, que da un asidero estable y sirve además al producto.
+
+### Convención de texto: ortografía plena en lo visible, ASCII en el código
+
+Se presentó la interfaz sin tildes, siguiendo la convención previa del proyecto, y se dejó la
+ortografía como decisión abierta. **El usuario la resolvió: ortografía española completa en todo
+el texto visible.** Aplicada en la misma iteración, antes del commit.
+
+**Dónde se aplicó, y por qué el alcance fue mayor que las plantillas.** El usuario pidió revisar
+«todas las plantillas y los textos de `presentacion.py`», pero dos de sus ejemplos —`Número de
+tarjeta` y `Código de respuesta`— no viven ahí: son descripciones de campo del perfil genérico. Y
+el panel «Por qué» muestra los `motivos`, que nacen en la validación, en el catálogo y en el
+transporte. Dejar esas capas en ASCII habría producido una pantalla mitad en español y mitad sin
+tildes, peor que cualquiera de los dos extremos. Se siguió el texto hasta su origen:
+
+| Origen | Qué se ve |
+|---|---|
+| `web/presentacion.py` | Títulos, explicaciones y rótulos de los siete desenlaces; errores de formulario |
+| `web/plantillas/*.html` | Todo el texto de las tres pantallas |
+| `profiles/generico.py` | Columna «Nombre» del isoscopio |
+| `domain/catalogo.py` | Motivo de un rechazo: `14: Tarjeta inválida` |
+| `domain/validacion.py` | Motivos de RN-1 y RN-3 |
+| `adapters/transporte/tcp.py` | Motivo de un fallo de conexión o de transmisión |
+| `adapters/transporte/framing_demo.py` | Motivo de un rechazo de enmarcado |
+| `web/app.py` | Errores de entrada del formulario |
+| `adapters/persistence/esquema.py` | Descripción de la tarjeta de demostración |
+
+**Lo que NO se tocó, por instrucción expresa:** identificadores, enums, nombres de variables,
+clases de estilo, tokens CSS, rutas y valores de `data-estado`. Siguen en ASCII, y una prueba lo
+comprueba: recorre `EstadoEjecucion`, los tonos, las señales y todos los atributos `data-*` de las
+tres pantallas exigiendo `isascii()`. Los docstrings y comentarios del código también se quedaron
+en ASCII: no son texto visible al usuario.
+
+**Tarjeta de demostración.** Su rótulo principal pasó de `Tarjeta sintética de demostración. No es
+una tarjeta real.` a `Tarjeta de demostración`, y la aclaración de que los datos son sintéticos
+bajó a una segunda línea: `Datos sintéticos para uso exclusivo con el entorno de demostración.`
+No se introdujo ningún tipo `QA`: sigue existiendo únicamente la bandera `sintetica` que ya había.
+
+**Efecto secundario que hay que conocer.** Ese rótulo vive en la base de datos y el sembrado usa
+`INSERT OR IGNORE`, así que **una base creada antes de este cambio conserva el texto anterior**.
+No se convirtió el sembrado en un `UPSERT` porque eso cambia la semántica de la inicialización y
+está fuera de esta iteración. Para ver el rótulo nuevo hay que inicializar una base nueva.
+
+**Cómo se ajustaron las pruebas sin debilitarlas.** A cada aserción de texto visible se le añadió
+la tilde y nada más: misma cadena, misma especificidad. Las dos listas de frases prohibidas
+—las que vigilan que un desenlace indeterminado no se describa como «no se envió»— **se
+ampliaron** en lugar de traducirse: si solo se les hubiera puesto la tilde, la forma sin tilde
+dejaría de estar vigilada y la guardia se volvería más débil justo donde importa. Ahora cubren
+las dos ortografías, en una constante compartida `FRASES_PROHIBIDAS`.
+
+**Guardia contra la regresión.** Se añadieron cinco pruebas que retiran las etiquetas del HTML y
+buscan en el texto restante treinta y dos palabras que en español llevan tilde. Deliberadamente
+**no** incluye `proceso`, `intento`, `término`, `espero` ni `envío`: las primeras existen sin
+tilde como sustantivo o presente —«Código de proceso», «Todo intento queda registrado»— y
+prohibirlas daría falsos positivos sobre texto correcto. Se comprobó que la guardia no es vacua:
+detecta las cinco redacciones anteriores y no marca ninguno de los cinco casos límite
+—sustantivo `proceso`, sustantivo `intento`, `SIBU_TIEMPO_LIMITE`, `data-estado="error_conexion"`
+y las clases de estilo—.
+
+### Verificación
+
+182 pruebas en verde: las 141 anteriores más 41 nuevas de interfaz. Las nuevas vigilan contratos
+—navegación, los siete desenlaces, campos del formulario, columnas del historial, ausencia de
+número completo, tokens de la hoja— y **no** comprueban ningún color, medida ni clase de estilo
+concreta: eso rompería en el siguiente ajuste visual sin que nada se hubiera roto de verdad.
+
+La rueda construida desde el árbol de trabajo empaqueta `web/estatico/sibu.css` y
+`web/plantillas/_piezas.html`, así que una instalación no editable también sirve la hoja.
+
+## 2026-08-23 · Persistir los mensajes ISO sin pérdida
+
+**Origen.** No salió de una falla en producción ni de una prueba en rojo, sino de una pregunta del
+usuario durante un análisis de solo lectura: si el historial va a tener detalle navegable, ¿se
+puede reconstruir el ISO de una ejecución pasada? La respuesta obligó a medir en vez de suponer.
+
+### El defecto, medido
+
+`ejecuciones` guardaba cada mensaje en un solo formato de texto:
+
+```
+MTI=0100 | 2=************6666 | 3=000000 | 4=<monto en 12 dígitos> | ...
+```
+
+Separador `` | ``, **sin escape**. Se comprobó la ida y vuelta con un parser obvio
+(`split(" | ")` + `partition("=")`):
+
+| Caso | Resultado |
+|---|---|
+| Mensaje normal | ida y vuelta **fiel**: los once campos y sus valores idénticos |
+| `41 = "A=B \| C"` | recupera `41="A=B"` y **aparece un campo `C` que nunca existió** |
+| `41 = "X \| Y"` | recupera `41="X"` y aparece un campo `Y` |
+
+No es una corrupción que falle: **inventa un campo**. El campo 41 son ocho caracteres ASCII
+libres, así que el valor hostil cabe de verdad. Y aunque hoy nadie puede escribirlo, la iteración
+siguiente aprobada —el modo avanzado ISO 8583— lo haría editable. **Hacer el modo avanzado sobre
+esta serialización habría degradado el historial**, y por eso este bloque va primero en el plan de
+cinco commits.
+
+### La decisión: no parchear el separador
+
+Escapar el separador habría arreglado el síntoma dejando el vicio: seguir deduciendo dónde termina
+un valor a partir de la forma del texto. Se añadió una representación donde **la frontera la
+declara el formato**, en columnas aditivas y nullables, sin tocar la semántica de las existentes.
+
+```json
+{"version": 1, "mti": "0100", "perfil": "generico",
+ "campos": {"2": {"valor": "************6666"}, "3": {"valor": "000000"}}}
+```
+
+Cuatro decisiones de forma, consultadas y aprobadas antes de escribir código:
+
+| Decisión | Elegido | Razón |
+|---|---|---|
+| Clave `version` | **Sí** | Un lector futuro distingue formatos leyendo una declaración, no deduciéndolos por su forma — que es el defecto que se corrige. Y permite marcar como no interpretable una fila escrita por una versión más nueva, en vez de leerla mal |
+| `crudo` en la respuesta | **Sí, cuando exista** | Es información real que el formato de texto descartaba: `como_mensaje()` proyecta solo `valor`. Habilitará la columna «Tal como viajó» del detalle histórico sin tocar el codec |
+| Descripción por campo | **No persistir** | Se re-deriva del perfil al leer. `perfil` sí se guarda, así que se sabe con qué especificación se armó. Riesgo asumido y declarado: si el perfil cambia, un histórico se re-rotula con la especificación de hoy |
+| Ubicación | `application/serializacion.py` | En `adapters` obligaría a la capa de lectura a depender de un adaptador; en `domain` obligaría al dominio a conocer un formato de almacenamiento. Lo necesitan dos piezas de aplicación: el orquestador al escribir y las consultas al leer |
+
+### «Fiel» es una afirmación, y solo se hace cuando se puede demostrar
+
+El resultado de la lectura trae una bandera `fiel`:
+
+- **`True`** solo cuando se leyó un JSON de una versión conocida.
+- **`False`** siempre que provenga del texto anterior, **incluso si parece haberse leído bien.**
+
+Esa segunda regla es deliberada y es la misma disciplina de las iteraciones de semántica de
+comunicación: `41=A` es indistinguible de un `41=A | B` truncado. No se puede *demostrar*
+fidelidad, así que no se afirma. Una prueba lo fija explícitamente: un texto heredado que parsea
+sin ningún problema **tampoco** se declara fiel.
+
+Por el mismo criterio, un JSON que declare una versión desconocida **no se interpreta**. Leer una
+estructura que el programa no conoce sería inventar significado; se declara y se deja
+indisponible.
+
+### Migración sin recrear la base
+
+El proyecto no usa Alembic —para tres tablas sería sobreingeniería— y `CREATE TABLE IF NOT EXISTS`
+no altera una tabla que ya existe. `inicializar()` comprueba `PRAGMA table_info` y ejecuta
+`ALTER TABLE ... ADD COLUMN` solo para lo que falte.
+
+Verificado sobre la base real que quedó de la revisión manual de la interfaz, escrita con el
+código anterior:
+
+```
+ANTES :  15 columnas, 2 filas, ninguna columna _json
+DESPUES: 17 columnas, 2 filas, agregadas: respuesta_json, solicitud_json
+         filas conservadas: True    texto intacto: True
+         solicitud_json de las filas históricas: None
+TERCERA pasada: 17 columnas, 2 filas
+```
+
+**Las filas anteriores conservan `NULL`.** No se reconstruye su JSON, porque reconstruirlo sería
+inventarlo: el formato de texto no permite saber si un valor quedó partido.
+
+Se añadió también tolerancia en la lectura de la fila: `_opcional()` devuelve `None` si la columna
+no existe todavía. Cubre a quien ejecute el código nuevo contra una base que no pasó por
+`inicializar()`, y evita que un historial antiguo se convierta en un error del servidor.
+
+### Límite que queda pendiente, y no se disimula
+
+El JSON de la **solicitud no lleva `crudo` por campo**, y no es un olvido: `Codec.codificar`
+devuelve `bytes` y descarta el documento codificado de `pyiso8583` (`codec.py:30`), así que ese
+dato **no existe** en el flujo actual. Se decidió no rediseñar el codec para inventarlo. Una
+prueba fija el límite: todos los campos de `solicitud_json` tienen `crudo is None`.
+
+**Nunca se persisten los bytes crudos completos de un `0100`**, ni en hexadecimal. Contienen el
+PAN completo, y guardarlos pondría una segunda copia del número fuera de `tarjetas_prueba`, que es
+el único lugar que la política autoriza.
+
+### Gobernanza de PAN
+
+La barrera que ya existía se movió al módulo nuevo y ahora cubre las dos representaciones y
+también el `crudo`. Es `AssertionError` a propósito: no es una condición que el usuario pueda
+provocar, es un defecto de programación que debe romper la prueba en lugar de escribir un PAN
+completo en la base. Cuatro pruebas lo comprueban, incluida una que recorre **todas las tablas de
+la base entera** salvo `tarjetas_prueba` buscando el número completo.
+
+### Correcciones de documentación aplicadas en la misma iteración
+
+Al leer los documentos antes de tocar código aparecieron cinco afirmaciones falsas o
+desactualizadas. Se corrigieron las cinco:
+
+| Dónde | Qué decía | Qué dice ahora |
+|---|---|---|
+| `ARQUITECTURA.md` | «**Nada de lo aquí descrito está implementado.**» | Enumera los once módulos implementados y el único que falta. Contradecía directamente a `CONTEXTO.md` |
+| `ARQUITECTURA.md` | `RepositorioEjecuciones` solo declaraba `guardar` | Declara `guardar → id`, `obtener(id)` y `listar(limite)`, que es el puerto real |
+| `ARQUITECTURA.md` | «Esquema y columnas» e «Integración continua» seguían como decisiones abiertas | Movidas a decididas, con dónde se resolvieron |
+| `CONTEXTO.md` | «Última actualización: 2026-08-19» y «177 pruebas» | Fecha y recuento reales |
+| `CONTEXTO.md` | El hito P0-1 aparecía dos veces y el orden del historial estaba roto | Una sola entrada por hito, en orden |
+
+Queda registrado porque es el mismo control que ya aparece en la sección de gobernanza: **un
+documento que afirma algo que el código contradice es un defecto**, y se corrige cuando se
+detecta, no cuando estorba.
+
+### Verificación y cierre
+
+**254 pruebas en verde**, 72 nuevas: 48 puras del formato en `test_serializacion.py` y 24 contra
+SQLite real en `test_persistencia_json.py`. Ninguna prueba existente cambió: esta iteración es
+aditiva, no toca RN-1 a RN-4, ni la taxonomía de siete estados, ni el codec, ni el transporte, ni
+la web.
+
+**Las pruebas nuevas se revisaron buscando debilidad, y aparecieron dos defectos propios.** El
+primero era un `parametrize` que no parametrizaba: dos casos con veinte líneas de montaje distinto
+en cada rama, seleccionadas por un `if` sobre una cadena. Eran dos pruebas pegadas con un
+interruptor, y se separaron; al hacerlo se añadió una aserción que faltaba, que el fallo del codec
+ocurre **antes** de tocar el transporte. El segundo era una parametrización de ocho casos que
+replicaba, a través de SQLite, la matriz de contenidos malformados que ya cubre la prueba pura doce
+veces más rápido; en esa capa lo único nuevo es el paso por el repositorio, así que quedó en cuatro
+casos. Por eso el recuento bajó de 258 a 254: **se quitaron cuatro pruebas redundantes, no se
+perdió ninguna comprobación.**
+
+La fortaleza de las nuevas se midió mutando el fuente y comprobando que la suite lo detecta.
+Siete mutaciones —quitar la clave `version`, declarar fiel el formato heredado, aceptar cualquier
+versión de JSON, desactivar la barrera de enmascarado, dejar de persistir el `crudo`, inventar un
+`crudo` de solicitud y no llamar a la migración— fueron **detectadas las siete**. Una prueba que
+no falla cuando se borra lo que dice probar no prueba nada, y esta era la forma de saberlo.
+
+**Separación de las dos iteraciones en Git.** El rediseño de la interfaz se publicó primero, por
+sí solo, en el commit `ede40c0`; este commit añade únicamente la persistencia estructurada. Los
+dos compartían cuatro archivos en el working tree —`esquema.py` y los tres documentos—, y hubo
+que separarlos por hunks. En `esquema.py` la separación fue limpia: su cambio del rediseño era una
+sola línea de ortografía, aislada en su propio hunk. En `CONTEXTO.md` **no lo fue**: tres hunks
+mezclaban las dos iteraciones porque este turno sobrescribió texto que el anterior había escrito,
+y el estado intermedio no existía en ningún archivo. Reconstruirlo a mano habría sido inventar un
+estado que nunca se guardó, así que **la documentación completa quedó fuera del commit del
+rediseño** y describe aquí el estado acumulado de las dos iteraciones. Es la decisión del usuario
+entre tres opciones planteadas, y la que no exige escribir nada que no ocurrió.
+
+El recuento de 182 pruebas que aparece más arriba, en la sección del rediseño, **no se corrigió a
+254 a propósito**: era el estado real al cerrar esa iteración. Esta bitácora es acumulativa y cada
+sección describe su propio momento; reescribir aquel número para que coincida con el de hoy sería
+falsear el registro.
+
 ---
 
 ## Gobernanza

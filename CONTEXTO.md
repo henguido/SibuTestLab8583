@@ -4,12 +4,13 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-08-19
+**Última actualización:** 2026-08-23
 
 ## Estado actual
 
 **Fase:** calendario detenido a propósito para auditar y mejorar el prototipo. CI en verde en
-Python 3.11, 3.12 y 3.13. En curso: corrección de los defectos hallados en la auditoría.
+Python 3.11, 3.12 y 3.13. En curso: mejora del producto actual antes de retomar las iteraciones
+funcionales pendientes.
 
 | | |
 |---|---|
@@ -25,12 +26,23 @@ Para el estado exacto de Git —commits, `HEAD`, qué está publicado— consult
 simulado propio, con codec, framing, transporte y SQLite reales, terminando en una ejecución
 persistida y enmascarada. Las cuatro reglas de negocio están implementadas y probadas. El
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
-Y desde el navegador: formulario de compra, resultado con isoscopio enmascarado e historial.
-**141 pruebas en verde.** El CI las ejecuta en Python 3.11, 3.12 y 3.13, y comprueba además que
-un clon limpio se instale con el metadata declarado.
+Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
+enmascarado, e historial. **254 pruebas en verde.** El CI las ejecuta en Python 3.11, 3.12 y
+3.13, y comprueba además que un clon limpio se instale con el metadata declarado.
 
-**Todavía NO existe:** el motor de carga, los perfiles reales de Visa y Mastercard, `README.md`,
-Docker, skill propio en `.claude/` ni autenticación.
+La interfaz tiene identidad propia: cinta con la marca `SibuTestLab8583` y el subtítulo
+`Laboratorio de pruebas ISO 8583`, navegación entre `Nueva transacción` e `Historial`, y una
+hoja de estilos propia en `src/sibutestlab8583/web/estatico/sibu.css`, servida en `/estatico`.
+Los siete desenlaces se presentan con cuatro pistas simultáneas —señal gráfica, rótulo corto,
+título y explicación— para no depender del color. Todo el texto visible lleva ortografía española
+completa; identificadores, enums, clases, tokens y valores de `data-estado` se mantienen en ASCII,
+y una prueba lo comprueba en ambos sentidos. Contraste medido: el peor de los siete es
+5.89:1 y el peor par de texto 5.42:1, ambos por encima del mínimo AA de 4.5:1.
+
+**Todavía NO existe:** el detalle navegable de una ejecución (`/historial/{id}`), el modo
+avanzado ISO 8583 para editar campos de la solicitud, el isoscopio 2.0, el motor de carga, los
+perfiles reales de Visa y Mastercard, `README.md`, Docker, skill propio en `.claude/` ni
+autenticación.
 
 ## Decisiones vigentes
 
@@ -86,6 +98,19 @@ persistente en la tabla `secuencias` e incrementada con una sola sentencia
 La infraestructura se cablea en un solo lugar, `composicion.py`. La web recibe esa composición
 por inyección y no construye adaptadores en sus endpoints.
 
+La presentación de la web vive en `web/presentacion.py`: `AVISOS` es la única fuente de cómo se
+rotula cada estado —tono, señal, etiqueta corta, título y explicación— y `SECCIONES` la única
+fuente de la navegación. Las plantillas no duplican ninguna de las dos listas. Solo se declaran
+secciones cuya ruta existe: `Tarjetas de prueba` está prevista y no se muestra todavía.
+
+Cada ejecución guarda **dos** representaciones de cada mensaje, ya enmascaradas: el texto
+delimitado de siempre, legible de un vistazo, y una estructurada en JSON con `version`, `mti`,
+`perfil` y `campos`. La segunda existe porque la primera parte un valor que contenga su separador
+`` | ``, e inventa un campo inexistente al leerlo. `application/serializacion.py` concentra la
+escritura y una lectura que **nunca lanza** y que marca como no fiel todo lo que provenga del
+formato anterior, porque su fidelidad no es demostrable. La respuesta conserva `crudo` por campo;
+la solicitud no, porque el codec no lo entrega.
+
 RN-3 compara los campos **3, 4, 7, 11 y 41**, derivados del perfil (obligatorios de la respuesta
 menos el campo 39). RN-3 se evalúa **antes** que RN-1: una respuesta aprobada que no corresponde
 a la solicitud es `Invalida`, nunca `Aprobada`. Ese orden es el mecanismo contra falsos positivos
@@ -130,8 +155,11 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-08-19 | Núcleo transaccional: codec, las cuatro reglas de negocio, framing de demostración, transporte TCP asíncrono, host simulado y orquestador. Commit `de84818` |
 | 2026-08-19 | Interfaz web con FastAPI y Jinja: formulario, resultado, isoscopio enmascarado e historial sobre el núcleo real. Commit `dc8cc8b` |
 | 2026-08-19 | Workflow de GitHub Actions con matriz 3.11/3.12/3.13 y refactorización de lo acumulado. Commit `deb7f63`; CI en verde en las tres versiones |
-| 2026-08-19 | Auditoría del prototipo y corrección del primer defecto: el STAN se repetía en cada transacción. Puerto `GeneradorStan` con secuencia persistente y atómica en SQLite. Commit `8557c4c` |
-| 2026-08-19 | Semántica de comunicación: se distingue no poder conectar, un intercambio interrumpido de resultado indeterminado, y no recibir respuesta. Estados `ERROR_CONEXION` y `ERROR_TRANSMISION`; todo intento persistido. 141 pruebas |
+| 2026-08-19 | Auditoría de producto en cinco perspectivas, sin tocar código. Se ordenan los hallazgos en P0, P1 y P2 |
+| 2026-08-19 | P0-1: el STAN pasa a una secuencia persistente y atómica tras el puerto `GeneradorStan`. Commit `8557c4c` |
+| 2026-08-19 | P0-2 y P0-3: se distinguen y se persisten los siete desenlaces; `FalloDeTransmision` separa lo indeterminado de lo demostrable. Commit `78ecc59` |
+| 2026-08-20 | Rediseño de la interfaz: identidad propia, navegación, resumen de resultado, isoscopio legible e historial completo. Hoja de estilos propia con tokens, sin framework ni JavaScript. Ortografía española completa en todo el texto visible. Commit `ede40c0` |
+| 2026-08-23 | Persistencia estructurada: columnas `solicitud_json` y `respuesta_json`, migración SQLite idempotente y lectura tolerante. Corrige que el formato de texto delimitado partiera un valor que contuviera el separador |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -159,11 +187,17 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Seguir con los hallazgos de la auditoría. Cerrados P0-1, P0-2 y P0-3; quedan los P1: el
-isoscopio (dejar de descartar la representación transmitida, el MTI y el bitmap, y comparar
-solicitud contra respuesta), el detalle de historial, y provocar los seis códigos sin reiniciar el
-host. Pendiente aparte: ampliar `requires-python` a `>=3.11`, para lo que el CI ya aportó
-evidencia.
+Del plan aprobado de cinco commits para el constructor avanzado y el detalle del historial ya
+está hecho el primero, «Persistir los mensajes ISO sin pérdida». El siguiente es el detalle
+navegable `/historial/{id}`, que ya puede ser fiel porque la representación estructurada existe.
+Después: declarar campos permitidos y editables en el perfil, y el modo avanzado ISO 8583.
+
+Cerrados P0-1, P0-2 y P0-3, y publicado el rediseño de la interfaz. De los P1 quedan el
+isoscopio 2.0 —dejar de descartar la representación transmitida de la solicitud, el MTI y el
+bitmap, y comparar solicitud contra respuesta—, el detalle de historial y provocar los seis
+códigos sin reiniciar el host. Sobre lo ya construido queda además la pantalla `Tarjetas de
+prueba`, cuyo lugar en la navegación está preparado. Pendiente aparte: ampliar `requires-python`
+a `>=3.11`, para lo que el CI ya aportó evidencia.
 
 ## Archivos importantes
 
@@ -178,6 +212,9 @@ evidencia.
 | `docs/arquitectura/*.mmd` | Diagramas Mermaid: componentes y flujo de compra |
 | `pyproject.toml` | Dependencias, empaquetado y configuración de `pytest` |
 | `src/sibutestlab8583/` | Código: `domain/`, `application/`, `web/`, `profiles/`, `adapters/`, `composicion.py` |
+| `src/sibutestlab8583/web/estatico/sibu.css` | Hoja de estilos única de la interfaz: tokens, componentes y cortes responsive |
+| `src/sibutestlab8583/web/plantillas/_piezas.html` | Macros compartidas: señales SVG, pastilla de estado y métrica |
+| `src/sibutestlab8583/application/serializacion.py` | Representación persistida de un mensaje ISO y su lectura tolerante |
 | `.github/workflows/tests.yml` | CI: suite en Python 3.11/3.12/3.13 y verificación de clon limpio |
 | `tests/` | Pruebas técnicas de la fundación |
 

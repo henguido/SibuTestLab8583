@@ -178,8 +178,9 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                 "INSERT INTO ejecuciones"
                 " (creada_en, card_id, mti_solicitud, mti_respuesta, monto, moneda, stan,"
                 "  destino_host, destino_puerto, estado, codigo_respuesta,"
-                "  solicitud_enmascarada, respuesta_enmascarada, latencia_ms)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  solicitud_enmascarada, respuesta_enmascarada,"
+                "  solicitud_json, respuesta_json, latencia_ms)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ejecucion.creada_en.isoformat(),
                     ejecucion.card_id,
@@ -194,6 +195,8 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                     ejecucion.codigo_respuesta,
                     ejecucion.solicitud_enmascarada,
                     ejecucion.respuesta_enmascarada,
+                    ejecucion.solicitud_json,
+                    ejecucion.respuesta_json,
                     ejecucion.latencia_ms,
                 ),
             )
@@ -231,6 +234,17 @@ def _a_tarjeta(fila: aiosqlite.Row) -> TarjetaPrueba:
     )
 
 
+def _opcional(fila: aiosqlite.Row, columna: str):
+    """Lee una columna que puede no existir todavia en la base.
+
+    Las columnas JSON se agregan por migracion. Si alguien ejecuta este codigo
+    contra una base que no paso por `inicializar()`, la columna no esta y
+    `fila[columna]` lanzaria. Devolver `None` deja la fila legible en lugar de
+    convertir un historial antiguo en un error del servidor.
+    """
+    return fila[columna] if columna in fila.keys() else None
+
+
 def _a_ejecucion(fila: aiosqlite.Row) -> Ejecucion:
     return Ejecucion(
         id=fila["id"],
@@ -247,5 +261,7 @@ def _a_ejecucion(fila: aiosqlite.Row) -> Ejecucion:
         codigo_respuesta=fila["codigo_respuesta"],
         solicitud_enmascarada=fila["solicitud_enmascarada"],
         respuesta_enmascarada=fila["respuesta_enmascarada"],
+        solicitud_json=_opcional(fila, "solicitud_json"),
+        respuesta_json=_opcional(fila, "respuesta_json"),
         latencia_ms=fila["latencia_ms"],
     )

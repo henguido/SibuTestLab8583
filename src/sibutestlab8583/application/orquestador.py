@@ -39,7 +39,6 @@ from ..domain.armado import armar_compra
 from ..domain.catalogo import CatalogoDeRespuestas
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.modelos import (
-    CAMPOS_SENSIBLES,
     DatosCompra,
     DestinoTcp,
     Ejecucion,
@@ -58,6 +57,7 @@ from ..domain.puertos import (
     Transporte,
 )
 from ..domain.validacion import CAMPO_CODIGO_RESPUESTA, evaluar_respuesta, validar_envio
+from .serializacion import a_json_respuesta, a_json_solicitud, a_texto
 
 
 class TarjetaDesconocida(Exception):
@@ -223,6 +223,14 @@ class Orquestador:
         # eso tambien en ERROR_CONEXION: saber contra que se intento es la mitad
         # del diagnostico. Solo NO_ENVIADA se queda sin destino, porque no hubo.
         hubo_intento_de_red = estado is not EstadoEjecucion.NO_ENVIADA
+        # Se persisten DOS representaciones del mismo mensaje ya enmascarado: el
+        # texto de siempre, legible de un vistazo, y la estructurada, que es la
+        # unica que permite recuperar un valor sin depender de un separador.
+        # La respuesta se serializa desde el `MensajeInterpretado` y no desde
+        # `como_mensaje()`, porque esa proyeccion descarta el `crudo` por campo.
+        solicitud_enmascarada = solicitud.enmascarado()
+        respuesta_enmascarada = respuesta.enmascarado() if respuesta else None
+        perfil = self._perfil.nombre
         ejecucion = Ejecucion(
             card_id=datos.card_id,
             monto=datos.monto,
@@ -234,9 +242,15 @@ class Orquestador:
             codigo_respuesta=respuesta.valor(CAMPO_CODIGO_RESPUESTA) if respuesta else None,
             destino_host=self._destino.host if hubo_intento_de_red else None,
             destino_puerto=self._destino.puerto if hubo_intento_de_red else None,
-            solicitud_enmascarada=_serializar(solicitud.enmascarado()),
+            solicitud_enmascarada=a_texto(solicitud_enmascarada),
             respuesta_enmascarada=(
-                _serializar(respuesta.enmascarado().como_mensaje()) if respuesta else None
+                a_texto(respuesta_enmascarada.como_mensaje()) if respuesta_enmascarada else None
+            ),
+            solicitud_json=a_json_solicitud(solicitud_enmascarada, perfil),
+            respuesta_json=(
+                a_json_respuesta(respuesta_enmascarada, perfil)
+                if respuesta_enmascarada
+                else None
             ),
             latencia_ms=latencia_ms,
             creada_en=self._reloj(),
@@ -244,23 +258,8 @@ class Orquestador:
         await self._ejecuciones.guardar(ejecucion)
         return ResultadoCompra(
             ejecucion=ejecucion,
-            solicitud=solicitud.enmascarado(),
-            respuesta=respuesta.enmascarado() if respuesta else None,
+            solicitud=solicitud_enmascarada,
+            respuesta=respuesta_enmascarada,
             motivos=tuple(motivos),
         )
-
-
-def _serializar(mensaje: MensajeIso) -> str:
-    """Texto legible de un mensaje YA enmascarado, para persistir y mostrar.
-
-    Recibe siempre la version enmascarada; la comprobacion de abajo existe para
-    que un cambio futuro no cuele un PAN completo a la base de datos.
-    """
-    partes = [f"MTI={mensaje.mti}"]
-    for numero in sorted(mensaje.campos, key=int):
-        valor = mensaje.campos[numero]
-        if numero in CAMPOS_SENSIBLES and valor.isdigit():
-            raise AssertionError(f"el campo {numero} llego sin enmascarar a la persistencia")
-        partes.append(f"{numero}={valor}")
-    return " | ".join(partes)
 

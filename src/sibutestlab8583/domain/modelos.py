@@ -322,6 +322,13 @@ class Ejecucion:
     destino_puerto: int | None = None
     solicitud_enmascarada: str | None = None
     respuesta_enmascarada: str | None = None
+    #: Representacion estructurada de los mismos mensajes, ya enmascarados. Las
+    #: dos columnas de texto se conservan por compatibilidad y legibilidad; estas
+    #: son las que permiten recuperar campo por campo sin depender de un
+    #: separador sin escape. Quedan en `None` en las filas escritas antes de que
+    #: existieran, y en la respuesta cuando no llego ninguna.
+    solicitud_json: str | None = None
+    respuesta_json: str | None = None
     latencia_ms: int | None = None
     creada_en: datetime = field(default_factory=_ahora)
     id: int | None = None
