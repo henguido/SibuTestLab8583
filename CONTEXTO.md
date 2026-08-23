@@ -57,7 +57,7 @@ Acordadas y, salvo donde se indique, **ya implementadas y probadas**.
 | Codec ISO 8583 | `pyiso8583`; recibe la especificación como parámetro, lo que sirve de punto de inyección de perfiles |
 | Transporte TCP | Asíncrono desde el inicio (`asyncio.open_connection()`), para que el motor de carga reutilice el mismo contrato sin reescritura |
 | Framing | Contrato independiente (`FramingStrategy`), invocado por el transporte y solo por él; la web y el orquestador no conocen el formato. Implementado un framing **de demostración**: prefijo binario de 2 bytes big-endian. El de un switch real dependerá de su especificación |
-| Perfiles de marca | La arquitectura contempla Visa y Mastercard, pero **no se inventan sus especificaciones**: solo se implementan con documentos autorizados dentro del proyecto. Hoy existe únicamente el perfil genérico |
+| Perfiles de marca | La arquitectura contempla Visa y Mastercard, pero **no se inventan sus especificaciones**: solo se implementan a partir de documentación de marca disponible y aprobada como fuente. Esa documentación ya existe y **no se versiona**; los perfiles **siguen sin implementarse**. Hoy existe únicamente el perfil genérico |
 | Catálogo de respuestas | Genérico para la demostración: `00`, `05`, `14`, `51`, `54`, `94` |
 | Portabilidad | Ejecutable en local, en infraestructura bancaria, en contenedor o como servicio cloud. Docker es distribución posterior, no dependencia para desarrollar |
 
@@ -79,6 +79,9 @@ enviar.
 - Las ejecuciones referencian la tarjeta mediante un identificador interno.
 - Fuera de su pantalla de mantenimiento, mostrar solo `************1234`.
 - El archivo SQLite que contenga tarjetas reales de QA no debe versionarse.
+- **DE 14, fecha de vencimiento: decisión tomada.** Permanece visible y se persiste **sin
+  enmascarar** en esta etapa, asociada a la tarjeta de prueba. Por eso
+  `CAMPOS_SENSIBLES = {"2", "35"}` es deliberado y el campo 14 **no** se le añade.
 
 ## Arquitectura
 
@@ -166,7 +169,7 @@ El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 ## Decisiones pendientes
 
 1. Formato concreto del framing para un switch QA real. El de demostración existe (prefijo de 2 bytes); el del ambiente real dependerá de su especificación.
-2. Especificaciones reales de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca — bloqueadas por falta de documentos autorizados.
+2. Especificaciones reales de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca. **Ya no está bloqueado por falta de documentación**, que existe y se cita en `BITACORA.md`. Falta el análisis y la implementación: nada de su contenido se ha verificado todavía.
 3. Compatibilidad con Python 3.11 y 3.12. `requires-python` sigue declarando `>=3.13` porque es la única versión comprobada. El CI ya prueba las tres versiones usando `pip install --ignore-requires-python`, que ejecuta el código sin alterar el metadata. **Ampliar el rango solo cuando el CI muestre las tres en verde.**
 4. Si el motor de carga corre dentro del proceso web o aparte.
 5. Estrategia de datos de demostración reproducibles para un clon limpio, sin PAN reales.

@@ -192,9 +192,12 @@ Dos ejes de configuración **independientes**, inyectados por separado:
   la demostración académica: `00`, `05`, `14`, `51`, `54`, `94`.
 
 La arquitectura contempla perfiles de Visa y de Mastercard como punto de extensión. **No se
-crean ni se inventan especificaciones de ninguna marca**: los perfiles reales solo se
-implementan cuando existan en el proyecto los documentos autorizados que definan esos formatos.
-Mientras tanto se trabaja con un único perfil genérico.
+crean ni se inventan especificaciones de ninguna marca**: los perfiles reales solo se implementan
+a partir de documentación de marca disponible y aprobada como fuente. Esa documentación **ya
+existe** —se registra en `BITACORA.md`—, no se versiona en este repositorio y no se copia su
+contenido aquí. **Los perfiles siguen sin implementarse:** falta analizar cada documento y
+derivar de él la especificación, y nada de eso se ha hecho todavía. Mientras tanto se trabaja con
+un único perfil genérico.
 
 Contemplar perfiles de *formato* por marca no contradice la exclusión de alcance de
 `FICHA-APROBACION.md`, porque lo excluido son los catálogos de *códigos de respuesta* por marca.
@@ -317,6 +320,12 @@ Esto obliga a distinguir dos lugares distintos dentro de la misma base de datos:
   representación visible fuera de la pantalla de mantenimiento usa el PAN enmascarado
   (`************1234`).
 
+**DE 14, fecha de vencimiento: decidido.** Permanece visible y se persiste **sin enmascarar** en
+esta etapa, asociada a la tarjeta de prueba. Es dato de tarjeta pero no es el PAN, y el enmascarado
+que exige la política se define sobre `CAMPOS_SENSIBLES = {"2", "35"}`. Que el 14 no esté ahí es
+**deliberado**, no un olvido: no se le añade. Si una evolución comercial exigiera tratarlo como
+dato sensible, sería una decisión nueva y explícita.
+
 **No se decide todavía el cifrado en reposo.** Queda como decisión abierta: para el alcance
 académico basta con no versionar el archivo, pero una evolución comercial tendría que resolverlo.
 
@@ -325,12 +334,12 @@ académico basta con no versionar el archivo, pero una evolución comercial tend
 | Qué no se decidió | Cuándo se decide |
 |---|---|
 | Formato concreto del framing para un switch real | Depende de la especificación del ambiente. El de demostración ya existe |
-| Especificaciones de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca | Bloqueado: requiere documentos autorizados dentro del proyecto |
+| Especificaciones de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca | Ya hay documentación de marca disponible como fuente; falta el análisis y la implementación |
 | Si el motor de carga corre dentro del proceso web o aparte | Al construir el motor de carga |
 | Estrategia de datos de demostración reproducibles para un clon limpio | Antes de la entrega |
 | Cifrado en reposo del catálogo de tarjetas de QA | Fuera del alcance académico; necesario para una evolución comercial |
-| Si el campo 14 debe sumarse a los campos enmascarados | Es dato de tarjeta aunque no sea PAN; hoy se persiste en claro |
 
 **Ya decididas, antes abiertas.** El esquema y las columnas de la base se fijaron al construir el
 recorrido de extremo a extremo y se documentan más abajo. La integración continua se resolvió en
-la Sesión 6 con GitHub Actions y matriz 3.11/3.12/3.13.
+la Sesión 6 con GitHub Actions y matriz 3.11/3.12/3.13. **El campo 14 ya está decidido** y se
+describe en «Datos sensibles en el diseño».

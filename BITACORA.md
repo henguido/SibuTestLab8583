@@ -1110,6 +1110,70 @@ El recuento de 182 pruebas que aparece más arriba, en la sección del rediseño
 sección describe su propio momento; reescribir aquel número para que coincida con el de hoy sería
 falsear el registro.
 
+## 2026-08-23 · Dos decisiones que dejan de estar abiertas
+
+Iteración exclusivamente documental. **No se tocó código, pruebas, esquema, comportamiento ni
+interfaz.** Corrige dos afirmaciones que el propio repositorio había dejado obsoletas.
+
+### Documentación de marca: ya existe, y los perfiles siguen sin implementarse
+
+Hasta ahora la documentación decía que los perfiles de Visa y Mastercard estaban **bloqueados por
+falta de documentos autorizados**. Eso dejó de ser cierto: el usuario suministró y aprobó como
+fuente para iteraciones posteriores tres documentos de marca.
+
+| Documento | Vigencia declarada |
+|---|---|
+| VisaNet Authorization-Only Online Messages — Technical Specifications | 20-abr-2026 |
+| Mastercard Manual de Autorización | 16-ene-2024 |
+| Mastercard MDES Technical Specifications for Dual and Single Message Systems | 4-ago-2026 |
+
+Se registran **solo título y vigencia**, como cita de la fuente. Es lo que exige el control de
+gobernanza de este proyecto —toda justificación que dependa de una norma externa debe citar la
+norma— y es lo máximo que puede quedar aquí: **los manuales no se versionan y su contenido no se
+copia al repositorio.**
+
+**Lo que este registro NO afirma.** No se afirma que esos documentos cubran ningún campo, formato,
+obligatorio por MTI ni catálogo concreto: **nada de su contenido se ha verificado todavía.** Lo
+único que cambió es el estado del bloqueo. Los perfiles de Visa y de Mastercard **siguen sin
+implementarse**, y lo que falta ahora no es documentación sino el análisis de cada documento y la
+derivación de la especificación, que no se han hecho.
+
+**Lo que sigue prohibido, sin cambios.** Inventar especificaciones de una marca. Un archivo de
+perfil vacío sigue siendo preferible a uno con valores plausibles pero inventados.
+
+**Una tensión que queda declarada a propósito.** `CLAUDE.md` condiciona implementar los perfiles a
+que los documentos autorizados existan «en el proyecto». Como los manuales no se versionan, esa
+condición no puede cumplirse tal como está redactada. Se reformuló en `CONTEXTO.md` y en
+`ARQUITECTURA.md` —la condición pasa a ser que la documentación esté disponible y aprobada como
+fuente—, pero `CLAUDE.md` se dejó intacto por decisión expresa del usuario. **Habrá que resolver
+esa redacción antes de empezar la iteración de perfiles**, o la instrucción permanente bloqueará
+un trabajo que los otros dos documentos declaran desbloqueado.
+
+### DE 14, fecha de vencimiento: decisión tomada
+
+La documentación lo dejaba como decisión abierta: «si el campo 14 debe sumarse a los campos
+enmascarados». Queda decidido:
+
+> **El DE 14 permanece visible y se persiste sin enmascarar en esta etapa, asociado a la tarjeta
+> de prueba.**
+
+Por lo tanto `CAMPOS_SENSIBLES = {"2", "35"}` es **deliberado**, y el campo 14 **no** se le añade.
+El código no cambia: ya se comportaba así. Lo que cambia es que deja de estar descrito como algo
+pendiente de resolver y pasa a estar descrito como lo que es, una decisión.
+
+Es dato de tarjeta y no es el PAN. La política de tres ámbitos sigue intacta: el navegador nunca
+recibe el PAN completo, las ejecuciones y los logs nunca lo guardan, y el procesamiento
+transaccional sí lo usa desde `tarjetas_prueba`. Si una evolución comercial exigiera tratar la
+expiración como dato sensible, sería una decisión nueva y explícita, no una corrección de esta.
+
+### Por qué esto es una entrada de bitácora y no solo un `sed`
+
+Las secciones históricas **no se reescribieron**. `BITACORA.md:212` sigue diciendo que el
+2026-08-17 los perfiles requerían documentos autorizados, porque entonces era verdad. Esta
+bitácora es acumulativa y cada sección describe su propio momento; corregir el pasado para que
+coincida con el presente falsearía el registro. Lo que se corrigió fue el **estado actual**, que
+vive en `CONTEXTO.md` y en `ARQUITECTURA.md`, y la decisión nueva se registra aquí, fechada.
+
 ---
 
 ## Gobernanza
