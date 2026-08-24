@@ -124,6 +124,54 @@ async def historial(
     )
 
 
+@enrutador.get("/historial/{id_ejecucion}", response_class=HTMLResponse)
+async def detalle_ejecucion(
+    request: Request,
+    id_ejecucion: str,
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """Detalle de una ejecucion ya registrada.
+
+    El identificador se recibe como cadena **a proposito**, igual que los campos
+    del formulario: declarado como `int`, FastAPI responderia su propio 422 en
+    JSON ante `/historial/abc` y el usuario veria un error crudo en vez de una
+    pagina del producto. Convertirlo aqui deja los dos casos —no numerico y no
+    existente— en la misma respuesta 404 con HTML propio.
+    """
+    try:
+        numero = int(id_ejecucion)
+    except ValueError:
+        return _no_encontrado(request)
+
+    detalle = await composicion.consultas.detalle_ejecucion(numero)
+    if detalle is None:
+        return _no_encontrado(request)
+
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="detalle.html",
+        context=presentacion.contexto_de_detalle(
+            detalle, composicion.descripciones_de_campos
+        ),
+    )
+
+
+def _no_encontrado(request: Request):
+    """404 con HTML del producto, nunca el JSON por defecto de FastAPI."""
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="no_encontrado.html",
+        context={
+            "seccion": "historial",
+            "titulo": "Ejecución no encontrada",
+            "detalle": "La ejecución solicitada no existe o ya no está disponible.",
+            "ruta_vuelta": "/historial",
+            "texto_vuelta": "Volver al historial",
+        },
+        status_code=404,
+    )
+
+
 def _interpretar_formulario(
     card_id: str, monto: str, host: str, puerto: str
 ) -> tuple[DatosCompra, DestinoTcp]:

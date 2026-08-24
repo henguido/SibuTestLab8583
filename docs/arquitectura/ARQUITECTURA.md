@@ -41,7 +41,7 @@ Tres límites que no se cruzan:
 
 | Módulo | Capa | Responsabilidad |
 |---|---|---|
-| **Web** | Interfaz | Pantalla de nueva transacción, resultado con resumen e isoscopio (campos ISO interpretados) e historial de ejecuciones. Delgada: sin lógica de negocio. Se divide en rutas (`web/app.py`), presentación (`web/presentacion.py`), plantillas Jinja y una hoja de estilos propia servida en `/estatico` |
+| **Web** | Interfaz | Cinco pantallas: nueva transacción, resultado, historial, detalle de una ejecución (`/historial/{id}`) y no encontrado. Delgada: sin lógica de negocio, sin parsing y sin JavaScript. Se divide en rutas (`web/app.py`), presentación (`web/presentacion.py`), plantillas Jinja con macros compartidas en `_piezas.html`, y una hoja de estilos propia servida en `/estatico` |
 | **Composición** | Raíz de composición | Único lugar donde se cablean perfil, catálogo, codec, framing, transporte y repositorios. La web depende de ella y no construye infraestructura en sus endpoints |
 | **Orquestador** (application service) | Aplicación | Secuencia el recorrido: armar → validar (RN-4) → codificar → enviar → interpretar → evaluar → persistir. Convierte los resultados del transporte en estados de ejecución: `TiempoAgotado` en `TIMEOUT` (RN-2), `FalloDeConexion` en `ERROR_CONEXION` y `FalloDeTransmision` en `ERROR_TRANSMISION`. **Persiste todo intento**, incluidos los que no llegan a la red. Única pieza que conoce a todas las demás |
 | **Perfiles** | Dominio | Provee el `PerfilDeMarca` activo: especificación de formato y campos obligatorios por MTI |
@@ -301,6 +301,48 @@ isoscopio 2.0.
 
 **Nunca se persisten los bytes crudos completos de un `0100`**, ni en hexadecimal: contienen el
 PAN completo, y eso pondría una segunda copia del número fuera de `tarjetas_prueba`.
+
+## Decisión: el detalle histórico lee, no reinterpreta
+
+`GET /historial/{id}` muestra una ejecución ya registrada. Todo lo que necesita existe: el puerto
+`RepositorioEjecuciones` ya declaraba `obtener(id)` y la representación estructurada ya estaba
+persistida. Lo que se añadió es una proyección de lectura, no una capa nueva.
+
+```
+web/app.py  →  ServicioConsultas.detalle_ejecucion(id)  →  RepositorioEjecuciones.obtener(id)
+                                                        →  serializacion.interpretar(json, texto)
+```
+
+**La web no interpreta y la plantilla tampoco.** Decidir entre la representación estructurada y
+la de texto anterior es una regla de lectura de datos persistidos, así que vive en la capa de
+aplicación; la presentación solo convierte el resultado en filas y el nombre de cada campo se
+re-deriva del perfil activo. Un número que el perfil no conozca sale como `Campo 63`.
+
+**El identificador se recibe como cadena, no como entero.** Declarado `int`, FastAPI respondería
+su propio 422 en JSON ante `/historial/abc`, y el usuario vería un error crudo en vez de una
+página del producto. Convirtiéndolo en la ruta, tanto un identificador no numérico como uno
+inexistente terminan en la misma respuesta 404 con HTML propio.
+
+### Lo que la pantalla afirma, y lo que no
+
+- Cuando una ejecución proviene del formato de texto anterior, **se declara una sola vez, antes
+  de las tablas**, que los campos se recuperaron de esa representación y que no puede
+  garantizarse una reconstrucción exacta. No se afirma que haya habido corrupción: eso no se
+  sabe. Solo que la fidelidad no es demostrable.
+- Cuando no hubo respuesta —`NO_ENVIADA`, `ERROR_CONEXION`, `ERROR_TRANSMISION`, `TIMEOUT`— no se
+  muestra una tabla vacía que parezca una `0110` que no existió, sino la explicación del estado
+  tomada de `AVISOS`, más la advertencia de que **el motivo concreto no se conserva**.
+- La columna con la representación transmitida aparece solo cuando el dato existe de verdad: la
+  hay en la respuesta leída del JSON, y no la hay ni en la solicitud —el codec no la entrega— ni
+  en una fila leída del texto anterior.
+
+### Componentes compartidos
+
+El isoscopio vivía dentro de `resultado.html`; al aparecer el segundo consumidor se movió a
+`plantillas/_piezas.html` junto con el banner de estado y el resumen de métricas. La regla que se
+aplicó es que **se extrae solo lo que ya tiene dos consumidores reales**, no lo que podría
+tenerlos: la cabecera de panel es una línea y envolverla habría convertido la plantilla en un
+framework de componentes.
 
 ## Datos sensibles en el diseño
 

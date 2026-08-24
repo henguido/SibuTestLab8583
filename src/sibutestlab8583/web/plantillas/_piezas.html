@@ -71,3 +71,86 @@
   {%- endif %}
 </div>
 {%- endmacro %}
+
+
+{# Banner de un desenlace. Cuatro consumidores: la pantalla de transaccion lo
+   usa dos veces —el aviso del recorrido y el error de entrada—, y el resultado
+   y el detalle historico una vez cada uno. `valor_estado` solo se emite cuando
+   se pasa, porque en la pantalla de transaccion todavia no hay ejecucion a la
+   que referirse. #}
+{% macro estado(aviso, valor_estado='') -%}
+<div class="aviso {{ aviso.tono }}"{% if valor_estado %} data-estado="{{ valor_estado }}"{% endif %}>
+  <span class="aviso__senal">{{ senal(aviso.senal, 19) }}</span>
+  <h2 class="aviso__titulo">{{ aviso.titulo }}</h2>
+  <p class="aviso__detalle">{{ aviso.detalle }}</p>
+</div>
+{%- endmacro %}
+
+
+{# Las ocho metricas de una ejecucion. El destino llega como texto y nota en vez
+   de derivarse de la ejecucion, porque el resultado inmediato muestra el destino
+   *solicitado* y el detalle historico el *persistido*: son dos fuentes
+   distintas y las dos son correctas en su pantalla. #}
+{% macro resumen(ejecucion, aviso, destino, nota_destino='') -%}
+<div class="metricas">
+  <div class="metrica">
+    <span class="metrica__rotulo">Estado</span>
+    <span class="metrica__valor">{{ pastilla(aviso) }}</span>
+  </div>
+  {{ metrica('STAN', ejecucion.stan, mono=true, nota='campo 11') }}
+  {{ metrica('Monto', ejecucion.monto, mono=true, nota='moneda ' ~ ejecucion.moneda) }}
+  {{ metrica('Código de respuesta', ejecucion.codigo_respuesta, mono=true, nota='campo 39') }}
+  {{ metrica('Latencia', (ejecucion.latencia_ms ~ ' ms') if ejecucion.latencia_ms is not none else none) }}
+  {{ metrica('MTI', ejecucion.mti_solicitud ~ (' → ' ~ ejecucion.mti_respuesta if ejecucion.mti_respuesta else ''),
+             mono=true, nota='' if ejecucion.mti_respuesta else 'sin respuesta') }}
+  {{ metrica('Tarjeta', ejecucion.card_id, mono=true) }}
+  {{ metrica('Destino', destino, mono=true, nota=nota_destino) }}
+</div>
+{%- endmacro %}
+
+
+{# Isoscopio. Vivia dentro de resultado.html; se movio aqui al aparecer el
+   segundo consumidor, el detalle historico. En esta iteracion solo cambia de
+   lugar: mismas filas y misma estructura. #}
+{% macro isoscopio(titulo, filas, con_crudo, vacio) %}
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">{{ titulo }}</h2>
+    <span class="panel__nota">
+      {%- if filas %}{{ filas|length }} campo{{ 's' if filas|length != 1 }}
+      {%- else %}sin campos{% endif %}
+    </span>
+  </div>
+  {% if filas %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="{{ titulo }}">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Campo</th>
+          <th>Nombre</th>
+          <th>Valor</th>
+          {% if con_crudo %}<th>Tal como viajó</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr>
+          <td><span class="campo-iso">{{ fila.numero }}</span></td>
+          <td>{{ fila.descripcion }}</td>
+          <td>
+            <span class="valor-iso">{{ fila.valor }}</span>
+            {%- if fila.sensible %}
+            <span class="enmascarado">{{ senal('enmascarado', 11) }} enmascarado</span>
+            {%- endif %}
+          </td>
+          {% if con_crudo %}<td><span class="valor-iso">{{ fila.crudo }}</span></td>{% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="panel__cuerpo"><p class="vacio">{{ vacio }}</p></div>
+  {% endif %}
+</section>
+{% endmacro %}

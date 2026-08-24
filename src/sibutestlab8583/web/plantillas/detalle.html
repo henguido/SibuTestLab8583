@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import estado, isoscopio, resumen, senal %}
+{% block titulo %}Ejecución #{{ ejecucion.id }} · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>Ejecución #{{ ejecucion.id }}</h1>
+  <p class="encabezado__sub">
+    Detalle de una ejecución ya registrada. Los campos que transportan datos de tarjeta se
+    muestran enmascarados; el número completo nunca llega a esta pantalla.
+  </p>
+</div>
+
+{{ estado(aviso, ejecucion.estado.value) }}
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Resumen</h2>
+    <span class="panel__nota">{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
+  </div>
+  <div class="panel__cuerpo">
+    {%- if ejecucion.destino_host %}
+    {{ resumen(ejecucion, aviso, ejecucion.destino_host ~ ':' ~ ejecucion.destino_puerto) }}
+    {%- else %}
+    {{ resumen(ejecucion, aviso, none, 'no se intentó transmisión por la red') }}
+    {%- endif %}
+  </div>
+</section>
+
+{# Un solo aviso por ejecución, antes de las tablas: con qué formato se registró
+   es una propiedad de la fila, no de cada mensaje. No se afirma que haya habido
+   corrupción; se afirma únicamente que la fidelidad no puede demostrarse. #}
+{% if desde_formato_anterior or avisos_tecnicos %}
+<div class="nota-origen">
+  <span class="nota-origen__senal">{{ senal('invalida', 17) }}</span>
+  <div>
+    {%- if desde_formato_anterior %}
+    <p>
+      <strong>Esta ejecución fue registrada con el formato anterior.</strong> Los campos
+      mostrados se recuperaron de la representación textual y no puede garantizarse una
+      reconstrucción exacta.
+    </p>
+    {%- endif %}
+    {%- for aviso_tecnico in avisos_tecnicos %}
+    <p>{{ aviso_tecnico }}</p>
+    {%- endfor %}
+  </div>
+</div>
+{% endif %}
+
+{{ isoscopio('Solicitud ISO 8583 · ' ~ ejecucion.mti_solicitud, filas_solicitud, false,
+             'No quedó registrada ninguna representación de la solicitud.') }}
+
+{% if hubo_respuesta %}
+{{ isoscopio('Respuesta ISO 8583 · ' ~ ejecucion.mti_respuesta, filas_respuesta,
+             respuesta_con_crudo,
+             'Llegó una respuesta, pero no quedó registrada su representación.') }}
+{% else %}
+{# Sin respuesta no se muestra una tabla vacía: se explica el desenlace con el
+   mismo texto que usa el resultado inmediato, que ya está redactado para no
+   afirmar nada que no pueda demostrarse. #}
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Respuesta ISO 8583</h2>
+    <span class="panel__nota">no hubo respuesta</span>
+  </div>
+  <div class="panel__cuerpo">
+    <p class="encabezado__sub"><strong>{{ aviso.titulo }}.</strong> {{ aviso.detalle }}</p>
+    <p class="campo__pista">
+      El motivo concreto de esta ejecución no se conserva: no se persiste. Lo que se
+      muestra es la explicación del estado, no una reconstrucción de lo que ocurrió.
+    </p>
+  </div>
+</section>
+{% endif %}
+
+{# Evidencia técnica, secundaria. `<details>` nativo: se abre y se cierra sin
+   JavaScript, y llega cerrado porque no es lo primero que hay que leer. #}
+<details class="plegable">
+  <summary class="plegable__titulo">
+    Ver representación persistida
+    <span class="plegable__nota">evidencia · ya enmascarada</span>
+  </summary>
+  <div class="plegable__cuerpo">
+    <div class="campo">
+      <span class="campo__rotulo">Solicitud</span>
+      <div class="desplazable" tabindex="0" role="region" aria-label="Solicitud persistida">
+        {%- if ejecucion.solicitud_enmascarada %}
+        <p class="persistido">{{ ejecucion.solicitud_enmascarada }}</p>
+        {%- else %}
+        <p class="vacio">No quedó registrada.</p>
+        {%- endif %}
+      </div>
+    </div>
+    <div class="campo">
+      <span class="campo__rotulo">Respuesta</span>
+      <div class="desplazable" tabindex="0" role="region" aria-label="Respuesta persistida">
+        {%- if ejecucion.respuesta_enmascarada %}
+        <p class="persistido">{{ ejecucion.respuesta_enmascarada }}</p>
+        {%- else %}
+        <p class="vacio">No quedó registrada.</p>
+        {%- endif %}
+      </div>
+    </div>
+    <p class="campo__pista">
+      Es la representación de texto que se guarda junto a la estructurada. Se muestra solo
+      como evidencia de lo que quedó en la base.
+    </p>
+  </div>
+</details>
+
+<a class="volver" href="/historial">&larr; Volver al historial</a>
+{% endblock %}

@@ -811,6 +811,111 @@ select:hover {
   white-space: nowrap;
 }
 
+/* Codigo de moneda al lado del importe. Con el mismo estilo que la cifra los dos
+   se leen como un solo numero, asi que va tratado como codigo. */
+.moneda {
+  display: inline-block;
+  margin-left: 0.2rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--linea);
+  border-radius: var(--r-sm);
+  background: var(--panel-alterno);
+  color: var(--tenue);
+  font-family: var(--tipo-mono);
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-medio);
+  vertical-align: 1px;
+}
+
+/* Aviso de que la fila se registro con el formato anterior. Va antes de las
+   tablas y una sola vez por ejecucion, no una por tabla. Tono informativo: no
+   afirma que haya habido corrupcion, solo que la fidelidad no se puede
+   demostrar. */
+.nota-origen {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--e3);
+  align-items: start;
+  padding: var(--e3) var(--e4);
+  margin-bottom: var(--e4);
+  border: 1px dashed var(--est-invalida-b);
+  border-radius: var(--r-md);
+  background: var(--est-invalida-f);
+  color: var(--est-invalida);
+  font-size: var(--texto-sm);
+}
+
+.nota-origen__senal {
+  padding-top: 1px;
+}
+
+.nota-origen p + p {
+  margin-top: var(--e2);
+}
+
+/* Evidencia tecnica plegable. `<details>` nativo: sin JavaScript. */
+.plegable {
+  background: var(--panel);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-lg);
+  box-shadow: var(--s-1);
+  margin-bottom: var(--e4);
+  overflow: hidden;
+}
+
+.plegable__titulo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--e2) var(--e4);
+  padding: var(--e3) var(--e5);
+  background: var(--panel-alterno);
+  color: var(--tinta-media);
+  font-size: var(--texto-sm);
+  font-weight: var(--peso-alto);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.plegable__titulo:hover {
+  color: var(--acento);
+}
+
+.plegable[open] .plegable__titulo {
+  border-bottom: 1px solid var(--linea);
+}
+
+.plegable__nota {
+  margin-left: auto;
+  color: var(--tenue);
+  font-weight: var(--peso-medio);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.plegable__cuerpo {
+  padding: var(--e5);
+}
+
+.plegable__cuerpo > * + * {
+  margin-top: var(--e4);
+}
+
+/* Representacion de texto tal como quedo en la base. Se muestra como evidencia,
+   asi que no se envuelve: partirla en varias lineas cambiaria lo que se ve
+   respecto de lo que se guardo. El contenedor `.desplazable` la acota. */
+.persistido {
+  font-family: var(--tipo-mono);
+  font-size: var(--texto-sm);
+  white-space: pre;
+  padding: var(--e2) var(--e3);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-sm);
+  background: var(--panel-alterno);
+  color: var(--tinta-media);
+}
+
 .vacio {
   color: var(--tenue);
   font-style: italic;

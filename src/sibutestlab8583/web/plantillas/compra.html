@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_piezas.html" import senal %}
+{% from "_piezas.html" import estado, senal %}
 {% block titulo %}Nueva transacción · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
@@ -13,13 +13,11 @@
 </div>
 
 {% if aviso %}
-<div class="aviso {{ aviso.tono }}">
-  <span class="aviso__senal">{{ senal(aviso.senal, 19) }}</span>
-  <h2 class="aviso__titulo">{{ aviso.titulo }}</h2>
-  <p class="aviso__detalle">{{ aviso.detalle }}</p>
-</div>
+{{ estado(aviso) }}
 {% endif %}
 
+{# El bloque de error de entrada no usa el macro: su titulo es fijo y no
+   proviene de un `Aviso`, asi que no es la misma pieza. #}
 {% if error %}
 <div class="aviso error">
   <span class="aviso__senal">{{ senal('invalida', 19) }}</span>

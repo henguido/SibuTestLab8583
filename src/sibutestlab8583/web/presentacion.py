@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence
 
+from ..application.serializacion import (
+    AVISO_HEREDADO,
+    ORIGEN_TEXTO,
+    MensajeSerializado,
+)
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
@@ -253,6 +258,74 @@ def contexto_de_resultado(
             filas_de_respuesta(resultado.respuesta) if resultado.respuesta else []
         ),
     }
+
+
+def filas_de_persistido(
+    mensaje: MensajeSerializado, descripciones: Mapping[str, str]
+) -> Sequence[FilaIsoscopio]:
+    """Isoscopio de un mensaje leido de la base, para el detalle historico.
+
+    El nombre de cada campo se re-deriva del perfil activo, porque la
+    representacion persistida guarda numero y valor pero no la descripcion. Un
+    numero que el perfil de hoy no conozca sale como `Campo 63`: no se inventa
+    una descripcion ni se rompe la pagina.
+    """
+    return [
+        FilaIsoscopio(
+            numero=campo.numero,
+            descripcion=descripciones.get(campo.numero, f"Campo {campo.numero}"),
+            valor=campo.valor,
+            crudo=campo.crudo or "",
+            sensible=campo.numero in CAMPOS_SENSIBLES,
+        )
+        for campo in mensaje.campos
+    ]
+
+
+def contexto_de_detalle(detalle, descripciones: Mapping[str, str]) -> dict:
+    """Arma lo que la plantilla del detalle historico necesita.
+
+    La respuesta se considera existente por el MTI persistido y no por si la
+    representacion trae campos: una fila sin `mti_respuesta` es una ejecucion que
+    no obtuvo respuesta, y ahi la pantalla debe explicar el estado en lugar de
+    mostrar una tabla vacia. Distinguirlo por el numero de campos confundiria
+    "no hubo respuesta" con "la representacion no se pudo leer".
+    """
+    ejecucion = detalle.ejecucion
+    filas_respuesta = filas_de_persistido(detalle.respuesta, descripciones)
+    return {
+        "seccion": "historial",
+        "ejecucion": ejecucion,
+        "aviso": AVISOS[ejecucion.estado],
+        "solicitud": detalle.solicitud,
+        "respuesta": detalle.respuesta,
+        "filas_solicitud": filas_de_persistido(detalle.solicitud, descripciones),
+        "filas_respuesta": filas_respuesta,
+        "hubo_respuesta": ejecucion.mti_respuesta is not None,
+        # La solicitud nunca trae representacion transmitida; la respuesta solo
+        # si se leyo del JSON. Se decide por el contenido, no por suposicion.
+        "respuesta_con_crudo": any(fila.crudo for fila in filas_respuesta),
+        # Un unico aviso por ejecucion, no uno por tabla: el formato con el que
+        # se registro es una propiedad de la fila, no de cada mensaje.
+        "desde_formato_anterior": ORIGEN_TEXTO
+        in (detalle.solicitud.origen, detalle.respuesta.origen),
+        "avisos_tecnicos": _avisos_tecnicos(detalle.solicitud, detalle.respuesta),
+    }
+
+
+def _avisos_tecnicos(*mensajes: MensajeSerializado) -> tuple[str, ...]:
+    """Avisos que no son el del formato anterior, sin repetir.
+
+    El del formato anterior se comunica una sola vez y con su propia redaccion;
+    aqui quedan los demas —un JSON ilegible, una version que este programa no
+    interpreta—, que si son especificos y no deben perderse.
+    """
+    vistos: list[str] = []
+    for mensaje in mensajes:
+        for aviso in mensaje.avisos:
+            if aviso != AVISO_HEREDADO and aviso not in vistos:
+                vistos.append(aviso)
+    return tuple(vistos)
 
 
 def filas_de_respuesta(mensaje: MensajeInterpretado) -> Sequence[FilaIsoscopio]:

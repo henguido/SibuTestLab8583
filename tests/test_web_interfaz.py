@@ -50,17 +50,28 @@ def _solo_texto(html: str) -> str:
     return re.sub(r"<[^>]*>", " ", html)
 
 
+#: Toda pantalla del producto. Es la fuente unica: `_paginas()` la usa para
+#: renderizar y las guardias parametrizadas la usan para saber sobre que iterar,
+#: de modo que agregar una pantalla la mete en todas las guardias a la vez y no
+#: se puede olvidar ninguna.
+PANTALLAS = ("compra", "resultado", "historial", "detalle", "no_encontrado")
+
+
 def _paginas() -> dict[str, str]:
-    """Las tres pantallas, con contenido en todas."""
+    """El HTML de las cinco pantallas, con contenido en todas."""
     ejecucion = _resultado(EstadoEjecucion.APROBADA, codigo="00").ejecucion
     cliente = _cliente(
         resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"), ejecuciones=[ejecucion]
     )
-    return {
+    paginas = {
         "compra": cliente.get("/").text,
         "resultado": cliente.post("/compra", data=FORMULARIO).text,
         "historial": cliente.get("/historial").text,
+        "detalle": cliente.get(f"/historial/{ejecucion.id}").text,
+        "no_encontrado": cliente.get("/historial/999999").text,
     }
+    assert tuple(paginas) == PANTALLAS, "PANTALLAS y _paginas() se desincronizaron"
+    return paginas
 
 
 # ----------------------------------------------------------- 1. NAVEGACION ---
@@ -227,7 +238,7 @@ def test_el_historial_muestra_las_ocho_columnas_que_hacen_falta():
     html = _cliente(ejecuciones=[ejecucion]).get("/historial").text
 
     for encabezado in ("Fecha y hora", "STAN", "Tarjeta", "Monto", "Estado",
-                       "Código", "Latencia", "Destino"):
+                       "Código", "Latencia", "Destino", "Detalle"):
         assert encabezado in html, f"falta la columna {encabezado}"
 
     assert ejecucion.stan in html, "el STAN debe verse: distingue una ejecucion de otra"
@@ -248,7 +259,7 @@ def test_el_historial_dice_cuantos_registros_hay():
 
 def test_las_tablas_se_desplazan_sin_arrastrar_la_pagina():
     """El desplazamiento horizontal vive en el contenedor, no en el cuerpo."""
-    for nombre in ("resultado", "historial"):
+    for nombre in ("resultado", "historial", "detalle"):
         html = _paginas()[nombre]
         assert 'class="desplazable"' in html, f"{nombre} no acota el desplazamiento"
 
@@ -280,7 +291,7 @@ def test_la_interfaz_no_ejecuta_javascript():
 # --------------------------------------------------------- 5b. ORTOGRAFIA ---
 
 
-@pytest.mark.parametrize("pantalla", ["compra", "resultado", "historial"])
+@pytest.mark.parametrize("pantalla", PANTALLAS)
 def test_el_texto_visible_lleva_ortografia_espanola_completa(pantalla):
     """El usuario lee espanol, no ASCII.
 

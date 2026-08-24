@@ -1174,6 +1174,141 @@ bitácora es acumulativa y cada sección describe su propio momento; corregir el
 coincida con el presente falsearía el registro. Lo que se corrigió fue el **estado actual**, que
 vive en `CONTEXTO.md` y en `ARQUITECTURA.md`, y la decisión nueva se registra aquí, fechada.
 
+## 2026-08-24 · Detalle navegable de una ejecución histórica
+
+Segundo bloque del plan de cinco commits. La persistencia estructurada de la iteración
+anterior existía precisamente para esto: **ahora se consume**, y el historial deja de ser una
+tabla resumen para volverse navegable.
+
+### Qué se añadió
+
+`GET /historial/{id}` muestra una ejecución ya registrada: el desenlace, un resumen de ocho
+métricas, la solicitud y la respuesta ISO campo por campo, y la representación de texto
+persistida como evidencia. Desde el listado se llega con un enlace `Ver detalle` — un enlace
+normal, sin JavaScript, que se puede abrir en otra pestaña con el comportamiento habitual del
+navegador.
+
+**El identificador se recibe como cadena, no como entero, y es deliberado.** Declarado `int`,
+FastAPI respondería su propio 422 en JSON ante `/historial/abc` y el usuario vería un error
+crudo en vez de una página del producto. Es el mismo precedente que ya documenta `web/app.py`
+para los campos del formulario. Convirtiéndolo en la ruta, los dos casos —no numérico e
+inexistente— caen en la misma respuesta 404 con HTML propio: «Ejecución no encontrada».
+
+### De dónde salen los campos
+
+De `application/serializacion.py`, sin reimplementar nada: JSON estructurado cuando existe,
+representación de texto anterior como respaldo, resultado indisponible si no hay nada. **La web
+no interpreta y la plantilla tampoco.** El servicio de consultas devuelve un `DetalleEjecucion`
+con los dos mensajes ya leídos, y la presentación los convierte en filas.
+
+**La representación histórica no se declara fiel, y eso se ve en pantalla.** Cuando una fila
+proviene del formato anterior, la página lo dice una vez, antes de las tablas:
+
+> Esta ejecución fue registrada con el formato anterior. Los campos mostrados se recuperaron de
+> la representación textual y no puede garantizarse una reconstrucción exacta.
+
+No se afirma que haya habido corrupción —eso no se sabe— sino únicamente que la fidelidad no se
+puede demostrar. Una prueba vigila esa distinción buscando palabras como «corrupto» o «se
+perdió». Es la misma disciplina de las iteraciones de semántica de comunicación: no afirmar lo
+que no se puede demostrar.
+
+Los nombres de campo se re-derivan del perfil activo. Un número que el perfil de hoy no conozca
+sale como `Campo 63`: no se inventa una descripción ni se rompe la página. Ningún detalle de
+`pyiso8583` cruza a la plantilla.
+
+### Reutilización: un componente, dos pantallas
+
+El isoscopio vivía dentro de `resultado.html`. Al aparecer el segundo consumidor se movió a
+`_piezas.html`, y con él se extrajeron otros dos bloques. La regla que se siguió fue estricta:
+**se extrae solo lo que ya tiene dos consumidores reales**, no lo que podría tenerlos.
+
+| Macro | Consumidores | Qué evita duplicar |
+|---|---|---|
+| `isoscopio` | resultado, detalle | La tabla ISO completa, unas 40 líneas |
+| `estado` | resultado, detalle, transacción | El banner de desenlace |
+| `resumen` | resultado, detalle | Las ocho métricas |
+
+`resultado.html` bajó de 108 a 47 líneas y **no cambió de aspecto**. Nada más se extrajo: la
+cabecera de panel es una línea y envolverla habría sido convertir la plantilla en un framework
+de componentes. El bloque de error de entrada de la pantalla de transacción se quedó como
+estaba porque su título es fijo y no proviene de un `Aviso`: no es la misma pieza.
+
+El macro `resumen` recibe el destino como texto y nota en vez de derivarlo de la ejecución,
+porque el resultado inmediato muestra el destino **solicitado** y el detalle el **persistido**.
+Son dos fuentes distintas y las dos son correctas en su pantalla.
+
+### Ejecuciones sin respuesta
+
+`NO_ENVIADA`, `ERROR_CONEXION`, `ERROR_TRANSMISION` y `TIMEOUT` no muestran una tabla vacía que
+parezca una respuesta que no existió. Muestran el título y la explicación de `AVISOS`, que ya
+están redactados para no afirmar lo indemostrable, más una nota de que **el motivo concreto de
+aquella ejecución no se conserva**: no se persiste, y la página no finge conocerlo.
+
+La decisión de si hubo respuesta se toma por el MTI persistido y no por el número de campos
+recuperados, para no confundir «no hubo respuesta» con «la representación no se pudo leer».
+
+### Límite que no se disimula
+
+El JSON de la respuesta lleva `crudo` por campo y la columna «Tal como viajó» aparece cuando
+existe. El de la solicitud no lo lleva, porque el codec devuelve bytes y descarta el documento
+codificado: ese dato **no existe** en el flujo actual. La columna no se finge, y tampoco
+aparece en una fila histórica leída del texto. Tres pruebas fijan las tres situaciones.
+
+### Revisión visual humana antes del commit
+
+El bloque **no se dio por terminado con las pruebas en verde**. Se levantaron el host simulado y
+la aplicación web, se generaron ejecuciones reales y el usuario revisó la interfaz en el
+navegador antes de autorizar el commit. Se revisaron cuatro casos:
+
+| Caso | Qué se comprobó |
+|---|---|
+| **Ejecución nueva**, con JSON | Sin aviso histórico; la respuesta muestra «Tal como viajó» |
+| **Ejecución histórica**, ambas columnas JSON en `NULL` | Un solo aviso histórico; sin «Tal como viajó»; no se finge información |
+| **Sin respuesta** (error de conexión) | Sin tabla de respuesta; se explica el desenlace |
+| **404** | Página del producto, no el JSON por defecto de FastAPI |
+
+De esa revisión salió una ronda de limpieza visual, también antes del commit: el aviso histórico
+pasó de repetirse debajo de cada tabla a aparecer **una sola vez antes de ambas**; la columna de
+acciones del historial recibió encabezado; el importe y su código de moneda dejaron de leerse
+como un solo número; y la representación persistida pasó a un `<details>` nativo, cerrado por
+defecto, que se abre sin JavaScript y sin perder información.
+
+**La interfaz sigue sin ejecutar JavaScript.** Cero guiones en las cinco pantallas.
+
+### Un hallazgo del entorno, no del código
+
+Durante la revisión aparecieron ejecuciones con destino `127.0.0.1:8583` que no correspondían a
+ninguna de las creadas para la demostración. La causa resultó ser de entorno y no un defecto:
+`8583` es el puerto por defecto del proyecto, y existía una base en la ruta por defecto
+—`sibutestlab8583.db`, no versionada— con ejecuciones de un servidor levantado sin
+`SIBU_DB_PATH` ni `SIBU_PUERTO_DESTINO`. Esa base todavía tiene el esquema de quince columnas,
+anterior a la migración. **Se comprobó que se lee sin error**: `_opcional()` devuelve `None`
+para las columnas ausentes y el detalle la presenta como histórica, que es exactamente para lo
+que se escribió esa tolerancia. No se modificó esa base ni se cambió ninguna configuración.
+
+### Verificación
+
+**299 pruebas en verde**, 45 nuevas: 43 del detalle en `test_detalle_historial.py` y dos
+pantallas más en las guardias existentes. La ruta nueva y la de 404 entraron en `PANTALLAS`, que
+pasó a ser la fuente única: agregar una pantalla la mete de golpe en todas las guardias
+parametrizadas —ortografía, identidad, ausencia de PAN, ausencia de JavaScript, estructura— y
+una aserción impide que las dos listas se desincronicen.
+
+La fortaleza de las nuevas se midió mutando el código: siete mutaciones —declarar el
+identificador como entero, usar `HTTPException` en vez de la página propia, mostrar la tabla de
+respuesta siempre, inventar un nombre para un campo desconocido, ignorar el JSON, quitar el
+aviso histórico y no mostrar nunca la columna transmitida— fueron **detectadas las siete**.
+
+Dos de esas mutaciones destaparon defectos propios que se corrigieron antes de continuar.
+**Nada comprobaba que la columna «Tal como viajó» apareciera**, que era justamente para lo que
+se persistió `crudo` en la iteración anterior; y la guardia de frases prohibidas para `TIMEOUT`
+era demasiado burda y fallaba contra la negación correcta, así que se sustituyó por un contrato
+más fuerte: la página debe reutilizar el texto de `AVISOS` tal cual, sin escribir su propia
+explicación.
+
+Sin cambios en el esquema, la persistencia, el codec, las cuatro reglas de negocio ni la
+taxonomía de siete estados. Comprobado por hash de blob contra el commit anterior.
+
 ---
 
 ## Gobernanza

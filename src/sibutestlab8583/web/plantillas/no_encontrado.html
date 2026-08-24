@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal %}
+{% block titulo %}No encontrado · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>{{ titulo }}</h1>
+</div>
+
+<div class="aviso no-enviada">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">{{ titulo }}</h2>
+  <p class="aviso__detalle">{{ detalle }}</p>
+</div>
+
+<a class="volver" href="{{ ruta_vuelta }}">&larr; {{ texto_vuelta }}</a>
+{% endblock %}

@@ -19,6 +19,7 @@ from typing import Sequence
 
 from ..domain.modelos import Ejecucion
 from ..domain.puertos import RepositorioEjecuciones, RepositorioTarjetas
+from .serializacion import MensajeSerializado, interpretar
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,25 @@ class TarjetaListada:
     pan_enmascarado: str
     descripcion: str
     sintetica: bool
+
+
+@dataclass(frozen=True)
+class DetalleEjecucion:
+    """Una ejecucion pasada con sus dos mensajes ya interpretados.
+
+    El trabajo de decidir entre la representacion estructurada y la de texto
+    heredada se hace aqui, no en la web ni en la plantilla: es una regla de
+    lectura de datos persistidos, no de presentacion.
+
+    `solicitud` y `respuesta` son siempre `MensajeSerializado`, incluso cuando no
+    hay nada que leer: en ese caso llegan con `origen` ausente. Devolver el mismo
+    tipo en todos los casos evita que la plantilla tenga que distinguir entre
+    None y vacio.
+    """
+
+    ejecucion: Ejecucion
+    solicitud: MensajeSerializado
+    respuesta: MensajeSerializado
 
 
 class ServicioConsultas:
@@ -54,3 +74,28 @@ class ServicioConsultas:
 
     async def ejecuciones_recientes(self, limite: int = 20) -> Sequence[Ejecucion]:
         return await self._ejecuciones.listar(limite)
+
+    async def detalle_ejecucion(self, id_ejecucion: int) -> DetalleEjecucion | None:
+        """Una ejecucion pasada, con sus mensajes interpretados.
+
+        Devuelve `None` si no existe, para que la web decida como presentarlo;
+        lanzar aqui obligaria a la capa de interfaz a capturar una excepcion para
+        algo que es un resultado normal: un identificador que no esta.
+
+        La prioridad entre representaciones la resuelve `interpretar()`: usa la
+        estructurada cuando existe y cae al texto heredado cuando no. Las filas
+        anteriores a la persistencia estructurada se leen igual, y quedan
+        marcadas como no demostrablemente fieles.
+        """
+        ejecucion = await self._ejecuciones.obtener(id_ejecucion)
+        if ejecucion is None:
+            return None
+        return DetalleEjecucion(
+            ejecucion=ejecucion,
+            solicitud=interpretar(
+                ejecucion.solicitud_json, ejecucion.solicitud_enmascarada
+            ),
+            respuesta=interpretar(
+                ejecucion.respuesta_json, ejecucion.respuesta_enmascarada
+            ),
+        )

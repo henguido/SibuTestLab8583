@@ -48,6 +48,28 @@ class ConsultasFalsas:
     async def ejecuciones_recientes(self, limite=20):
         return self._ejecuciones
 
+    async def detalle_ejecucion(self, id_ejecucion):
+        """Detalle de la ejecucion que se le haya dado, interpretada de verdad.
+
+        Usa el mismo `interpretar()` que la aplicacion real: el doble sustituye
+        la persistencia, no la logica de lectura.
+        """
+        from sibutestlab8583.application.consultas import DetalleEjecucion
+        from sibutestlab8583.application.serializacion import interpretar
+
+        for ejecucion in self._ejecuciones:
+            if ejecucion.id == id_ejecucion:
+                return DetalleEjecucion(
+                    ejecucion=ejecucion,
+                    solicitud=interpretar(
+                        ejecucion.solicitud_json, ejecucion.solicitud_enmascarada
+                    ),
+                    respuesta=interpretar(
+                        ejecucion.respuesta_json, ejecucion.respuesta_enmascarada
+                    ),
+                )
+        return None
+
 
 class OrquestadorFalso:
     def __init__(self, resultado=None, error=None):
@@ -76,7 +98,21 @@ class ComposicionFalsa:
 
 
 def _resultado(estado, *, codigo=None, con_respuesta=True, motivos=()):
+    from sibutestlab8583.application.serializacion import (
+        a_json_respuesta,
+        a_json_solicitud,
+        a_texto,
+    )
+
+    solicitud = MensajeIso("0100", {"2": "************6666", "4": monto_iso("15000")})
+    respuesta = None
+    if con_respuesta:
+        respuesta = MensajeInterpretado(
+            MTI_RESPUESTA_COMPRA,
+            {"39": CampoInterpretado("39", codigo or "00", codigo or "00", "Código de respuesta")},
+        )
     ejecucion = Ejecucion(
+        id=11,
         card_id=CARD_ID_DEMO,
         monto=Decimal("150.00"),
         moneda="188",
@@ -86,18 +122,18 @@ def _resultado(estado, *, codigo=None, con_respuesta=True, motivos=()):
         codigo_respuesta=codigo,
         destino_host="127.0.0.1",
         destino_puerto=8583,
+        # Las dos representaciones, como las escribe el orquestador real: el
+        # doble sustituye la base de datos, no el formato de lo que guarda.
+        solicitud_enmascarada=a_texto(solicitud),
+        respuesta_enmascarada=a_texto(respuesta.como_mensaje()) if respuesta else None,
+        solicitud_json=a_json_solicitud(solicitud, "generico"),
+        respuesta_json=a_json_respuesta(respuesta, "generico") if respuesta else None,
         latencia_ms=7,
         creada_en=MOMENTO,
     )
-    respuesta = None
-    if con_respuesta:
-        respuesta = MensajeInterpretado(
-            MTI_RESPUESTA_COMPRA,
-            {"39": CampoInterpretado("39", codigo or "00", codigo or "00", "Código de respuesta")},
-        )
     return ResultadoCompra(
         ejecucion=ejecucion,
-        solicitud=MensajeIso("0100", {"2": "************6666", "4": monto_iso("15000")}),
+        solicitud=solicitud,
         respuesta=respuesta,
         motivos=tuple(motivos),
     )

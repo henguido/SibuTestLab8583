@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-08-23
+**Última actualización:** 2026-08-24
 
 ## Estado actual
 
@@ -27,8 +27,10 @@ simulado propio, con codec, framing, transporte y SQLite reales, terminando en u
 persistida y enmascarada. Las cuatro reglas de negocio están implementadas y probadas. El
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
 Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
-enmascarado, e historial. **254 pruebas en verde.** El CI las ejecuta en Python 3.11, 3.12 y
-3.13, y comprueba además que un clon limpio se instale con el metadata declarado.
+enmascarado, e historial **navegable**: cada ejecución tiene su detalle en `/historial/{id}`,
+con los campos ISO de la solicitud y de la respuesta. **299 pruebas en verde.** El CI las
+ejecuta en Python 3.11, 3.12 y 3.13, y comprueba además que un clon limpio se instale con el
+metadata declarado.
 
 La interfaz tiene identidad propia: cinta con la marca `SibuTestLab8583` y el subtítulo
 `Laboratorio de pruebas ISO 8583`, navegación entre `Nueva transacción` e `Historial`, y una
@@ -39,8 +41,8 @@ completa; identificadores, enums, clases, tokens y valores de `data-estado` se m
 y una prueba lo comprueba en ambos sentidos. Contraste medido: el peor de los siete es
 5.89:1 y el peor par de texto 5.42:1, ambos por encima del mínimo AA de 4.5:1.
 
-**Todavía NO existe:** el detalle navegable de una ejecución (`/historial/{id}`), el modo
-avanzado ISO 8583 para editar campos de la solicitud, el isoscopio 2.0, el motor de carga, los
+**Todavía NO existe:** el modo avanzado ISO 8583 para editar campos de la solicitud, el
+isoscopio 2.0 —comparar solicitud contra respuesta y mostrar el bitmap—, el motor de carga, los
 perfiles reales de Visa y Mastercard, `README.md`, Docker, skill propio en `.claude/` ni
 autenticación.
 
@@ -106,6 +108,13 @@ rotula cada estado —tono, señal, etiqueta corta, título y explicación— y 
 fuente de la navegación. Las plantillas no duplican ninguna de las dos listas. Solo se declaran
 secciones cuya ruta existe: `Tarjetas de prueba` está prevista y no se muestra todavía.
 
+Cinco pantallas: nueva transacción, resultado, historial, **detalle de una ejecución**
+(`/historial/{id}`) y la página de no encontrado. Los componentes que dos de ellas comparten
+—el isoscopio, el banner de estado y el resumen de métricas— viven como macros en
+`plantillas/_piezas.html`; se extrajo solo lo que ya tenía dos consumidores reales. El detalle
+lee los campos con `application/serializacion.py` y **declara en pantalla cuando una ejecución
+proviene del formato de texto anterior**, cuya fidelidad no es demostrable.
+
 Cada ejecución guarda **dos** representaciones de cada mensaje, ya enmascaradas: el texto
 delimitado de siempre, legible de un vistazo, y una estructurada en JSON con `version`, `mti`,
 `perfil` y `campos`. La segunda existe porque la primera parte un valor que contenga su separador
@@ -162,7 +171,8 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-08-19 | P0-1: el STAN pasa a una secuencia persistente y atómica tras el puerto `GeneradorStan`. Commit `8557c4c` |
 | 2026-08-19 | P0-2 y P0-3: se distinguen y se persisten los siete desenlaces; `FalloDeTransmision` separa lo indeterminado de lo demostrable. Commit `78ecc59` |
 | 2026-08-20 | Rediseño de la interfaz: identidad propia, navegación, resumen de resultado, isoscopio legible e historial completo. Hoja de estilos propia con tokens, sin framework ni JavaScript. Ortografía española completa en todo el texto visible. Commit `ede40c0` |
-| 2026-08-23 | Persistencia estructurada: columnas `solicitud_json` y `respuesta_json`, migración SQLite idempotente y lectura tolerante. Corrige que el formato de texto delimitado partiera un valor que contuviera el separador |
+| 2026-08-23 | Persistencia estructurada: columnas `solicitud_json` y `respuesta_json`, migración SQLite idempotente y lectura tolerante. Corrige que el formato de texto delimitado partiera un valor que contuviera el separador. Commit `d6a78b1` |
+| 2026-08-24 | Detalle navegable de una ejecución en `/historial/{id}`, con 404 propio. El isoscopio, el banner de estado y el resumen pasan a macros compartidas. Revisión visual humana antes del commit |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -191,14 +201,14 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 ## Próximo paso
 
 Del plan aprobado de cinco commits para el constructor avanzado y el detalle del historial ya
-está hecho el primero, «Persistir los mensajes ISO sin pérdida». El siguiente es el detalle
-navegable `/historial/{id}`, que ya puede ser fiel porque la representación estructurada existe.
-Después: declarar campos permitidos y editables en el perfil, y el modo avanzado ISO 8583.
+están hechos los dos primeros: «Persistir los mensajes ISO sin pérdida» y el detalle navegable
+`/historial/{id}`. Siguen: declarar campos permitidos y editables en el perfil, y el modo
+avanzado ISO 8583.
 
 Cerrados P0-1, P0-2 y P0-3, y publicado el rediseño de la interfaz. De los P1 quedan el
 isoscopio 2.0 —dejar de descartar la representación transmitida de la solicitud, el MTI y el
-bitmap, y comparar solicitud contra respuesta—, el detalle de historial y provocar los seis
-códigos sin reiniciar el host. Sobre lo ya construido queda además la pantalla `Tarjetas de
+bitmap, y comparar solicitud contra respuesta— y provocar los seis códigos sin reiniciar el
+host. Sobre lo ya construido queda además la pantalla `Tarjetas de
 prueba`, cuyo lugar en la navegación está preparado. Pendiente aparte: ampliar `requires-python`
 a `>=3.11`, para lo que el CI ya aportó evidencia.
 
@@ -218,6 +228,7 @@ a `>=3.11`, para lo que el CI ya aportó evidencia.
 | `src/sibutestlab8583/web/estatico/sibu.css` | Hoja de estilos única de la interfaz: tokens, componentes y cortes responsive |
 | `src/sibutestlab8583/web/plantillas/_piezas.html` | Macros compartidas: señales SVG, pastilla de estado y métrica |
 | `src/sibutestlab8583/application/serializacion.py` | Representación persistida de un mensaje ISO y su lectura tolerante |
+| `src/sibutestlab8583/web/plantillas/detalle.html` | Detalle de una ejecución histórica: resumen, isoscopios y evidencia persistida |
 | `.github/workflows/tests.yml` | CI: suite en Python 3.11/3.12/3.13 y verificación de clon limpio |
 | `tests/` | Pruebas técnicas de la fundación |
 
