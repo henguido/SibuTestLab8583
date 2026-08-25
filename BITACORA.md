@@ -1382,6 +1382,88 @@ mide lo que dice medir y no pasaría contra la implementación anterior.
 patrones de secreto en los archivos tocados. El cambio real quedó limitado a cuatro archivos:
 `composicion.py`, `web/app.py`, `tests/test_web.py` y el archivo nuevo de la prueba crítica.
 
+## 2026-08-24 · Fase 1, sub-bloque 2: persistencia base para tarjetas y destinos
+
+Segundo sub-bloque de la Fase 1 (módulo de Configuración). Solo persistencia: esquema, dominio,
+puerto y adaptador. **Sin esquema propuesto sin implementar, sin interfaz.** No existe todavía
+`/configuracion`, ni formularios, ni filtro de tarjetas activas en la compra, ni selector de
+destino, ni administración desde la web.
+
+### `tarjetas_prueba.activa`
+
+Columna `activa INTEGER NOT NULL DEFAULT 1` agregada al esquema, y consumida de inmediato en el
+dominio y el adaptador — no se dejó como columna huérfana para un sub-bloque posterior, porque el
+usuario corrigió explícitamente esa intención a mitad de la iteración. `TarjetaPrueba` gana el
+campo `activa: bool = True`, colocado después de `sintetica` para que ningún constructor existente
+se rompa: todo el repositorio construye `TarjetaPrueba` por palabra clave, nunca posicional.
+`RepositorioTarjetasSQLite.obtener()` y `.listar()` seleccionan la columna nueva; `.guardar()` la
+inserta y el `ON CONFLICT ... DO UPDATE` la actualiza, de modo que volver a guardar una tarjeta
+existente puede reactivarla o desactivarla. El puerto `RepositorioTarjetas` no ganó ningún método:
+`guardar()` ya alcanzaba. **Todavía no se filtra ninguna tarjeta inactiva en ningún flujo**: eso
+pertenece a la integración con la compra, fuera de este sub-bloque.
+
+### Tabla `destinos` y `DestinoGuardado`
+
+Tabla nueva, sembrada con un único destino `LOCAL-DEMO` (`127.0.0.1:8583` — mismo valor que
+`composicion.PUERTO_POR_DEFECTO`; `esquema.py` no importa `composicion.py` para evitar un ciclo,
+así que el valor se repite a propósito, con esa nota en el propio código). `DestinoGuardado` es
+la entidad administrada nueva en `domain/modelos.py`: identificador propio, nombre, host, puerto
+y estado activo/inactivo, con un método `a_destino_tcp()` que la proyecta al valor mínimo que el
+transporte necesita. **`DestinoTcp` no se tocó**: sigue siendo exactamente lo que era, y sigue
+siendo lo que efectivamente viaja al transporte.
+
+**Por qué una ejecución no referencia `destinos` por clave foránea.** `Ejecucion.destino_host` y
+`destino_puerto` ya eran, desde antes de este sub-bloque, valores propios de la fila y no una
+referencia a ninguna tabla de destinos —porque esa tabla no existía—. Al crearla ahora, se
+mantuvo la misma decisión a propósito: una ejecución debe conservar contra qué host y puerto
+corrió aunque el destino se edite o se desactive después. Acoplarla con una FK habría hecho que
+editar `destinos` reescribiera silenciosamente el historial. `RepositorioDestinos` (el puerto,
+en `domain/puertos.py`) y `RepositorioDestinosSQLite` (el adaptador, en `sqlite_repos.py`) siguen
+el mismo patrón que ya existía para tarjetas: `obtener`, `listar`, `guardar` como upsert.
+
+### Migración generalizada
+
+`_migrar_ejecuciones(conexion)` —de la iteración de persistencia estructurada— se generalizó en
+`_migrar(conexion, tabla, columnas)`, capaz de agregar columnas a cualquier tabla existente.
+`_migrar_ejecuciones` se conservó como envoltorio delgado sobre la función genérica, porque
+`tests/test_persistencia_json.py:62-67` la llama directamente por su nombre: generalizar no debía
+obligar a tocar una prueba que no tenía nada que ver con este sub-bloque. Una prueba nueva
+comprueba que `_migrar` funciona igual sobre una tercera tabla que no es ni `ejecuciones` ni
+`tarjetas_prueba`, para que quede demostrado que ya no está atada a ninguna de las dos.
+
+### La prueba de compatibilidad, completada tras una corrección del usuario
+
+La primera versión de la prueba de migración cubría solo `tarjetas_prueba.activa` de forma
+aislada. El usuario pidió el criterio completo: una base anterior real, con tarjeta, ejecución,
+secuencia STAN y el esquema anterior de `ejecuciones` **a la vez**, y una comprobación explícita
+de cada uno de ocho puntos. `test_compatibilidad_completa_de_una_base_anterior_real`
+(`tests/test_migracion_generalizada.py`) reconstruye esa base completa —sin `activa`, sin
+`destinos`, sin las columnas JSON de `ejecuciones`— con una tarjeta, una ejecución que la
+referencia (monto, moneda, STAN, destino, mensajes enmascarados y latencia reales, no inventados)
+y una secuencia `stan` ya avanzada a `123`. Tras `inicializar()`, comprueba explícitamente: que
+`activa` existe, que la tarjeta anterior queda `activa = 1`, que aparece `destinos` con
+exactamente una semilla `LOCAL-DEMO`, que la ejecución conserva **fila completa por fila
+completa** sus valores (comparando el `dict` entero de la fila, no solo algunas columnas), que la
+secuencia STAN sigue en `123`, y que las columnas JSON se agregan sin inventar contenido —quedan
+en `NULL`, porque reconstruirlas sería inventar datos históricos—. Repite la comprobación después
+de una segunda `inicializar()`: ningún valor cambia y `LOCAL-DEMO` no se duplica.
+
+**No vacuidad, comprobada por mutación sin usar `git stash`.** Se comentó temporalmente, con una
+edición directa, la línea `await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)`
+dentro de `inicializar()`; se corrieron las pruebas de migración y **tres fallaron**, incluida la
+de compatibilidad completa; se restauró la línea de inmediato. Confirma que las pruebas miden lo
+que dicen medir.
+
+### Verificación
+
+**319 pruebas en verde** (302 + 17: 8 de `tests/test_destinos.py`, 5 de
+`tests/test_migracion_generalizada.py`, 4 de `activa` en `tests/test_persistencia.py`). RN-1 a
+RN-4, STAN y persistencia JSON verificados aparte, sin regresiones. Guardia de PAN en verde. Sin
+secuencias de 12 a 19 dígitos ni patrones de secreto en los siete archivos tocados. El cambio real
+quedó limitado a `domain/modelos.py`, `domain/puertos.py`,
+`adapters/persistence/esquema.py`, `adapters/persistence/sqlite_repos.py`, `tests/test_persistencia.py`,
+y los dos archivos nuevos de prueba.
+
 ---
 
 ## Gobernanza

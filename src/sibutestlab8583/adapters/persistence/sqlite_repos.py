@@ -18,6 +18,7 @@ from ...domain.catalogo import CatalogoDeRespuestas, CodigoRespuesta
 from ...domain.modelos import (
     LARGO_STAN,
     STAN_MAXIMO,
+    DestinoGuardado,
     Ejecucion,
     EstadoEjecucion,
     TarjetaPrueba,
@@ -103,7 +104,7 @@ class RepositorioTarjetasSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
-                "SELECT card_id, pan, expiracion, descripcion, sintetica"
+                "SELECT card_id, pan, expiracion, descripcion, sintetica, activa"
                 " FROM tarjetas_prueba WHERE card_id = ?",
                 (card_id,),
             ) as cursor:
@@ -114,7 +115,7 @@ class RepositorioTarjetasSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
-                "SELECT card_id, pan, expiracion, descripcion, sintetica"
+                "SELECT card_id, pan, expiracion, descripcion, sintetica, activa"
                 " FROM tarjetas_prueba ORDER BY card_id"
             ) as cursor:
                 filas = await cursor.fetchall()
@@ -124,14 +125,16 @@ class RepositorioTarjetasSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             await conexion.execute(
                 "INSERT INTO tarjetas_prueba"
-                " (card_id, pan, pan_enmascarado, expiracion, descripcion, sintetica, creada_en)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                " (card_id, pan, pan_enmascarado, expiracion, descripcion, sintetica, activa,"
+                "  creada_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(card_id) DO UPDATE SET"
                 "   pan = excluded.pan,"
                 "   pan_enmascarado = excluded.pan_enmascarado,"
                 "   expiracion = excluded.expiracion,"
                 "   descripcion = excluded.descripcion,"
-                "   sintetica = excluded.sintetica",
+                "   sintetica = excluded.sintetica,"
+                "   activa = excluded.activa",
                 (
                     tarjeta.card_id,
                     tarjeta.pan,
@@ -139,6 +142,7 @@ class RepositorioTarjetasSQLite(_RepositorioSQLite):
                     tarjeta.expiracion,
                     tarjeta.descripcion,
                     int(tarjeta.sintetica),
+                    int(tarjeta.activa),
                     datetime.now().astimezone().isoformat(),
                 ),
             )
@@ -224,6 +228,68 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
         return [_a_ejecucion(f) for f in filas]
 
 
+class RepositorioDestinosSQLite(_RepositorioSQLite):
+    """Catalogo de destinos de prueba administrados.
+
+    Una ejecucion no referencia esta tabla: `Ejecucion.destino_host` y
+    `destino_puerto` son valores propios, para que editar o desactivar un
+    destino aqui no altere el historial ya registrado.
+    """
+
+    async def obtener(self, destino_id: str) -> DestinoGuardado | None:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT destino_id, nombre, host, puerto, activo, creado_en"
+                " FROM destinos WHERE destino_id = ?",
+                (destino_id,),
+            ) as cursor:
+                fila = await cursor.fetchone()
+        return _a_destino(fila) if fila else None
+
+    async def listar(self) -> Sequence[DestinoGuardado]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT destino_id, nombre, host, puerto, activo, creado_en"
+                " FROM destinos ORDER BY destino_id"
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_destino(f) for f in filas]
+
+    async def guardar(self, destino: DestinoGuardado) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "INSERT INTO destinos (destino_id, nombre, host, puerto, activo, creado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(destino_id) DO UPDATE SET"
+                "   nombre = excluded.nombre,"
+                "   host = excluded.host,"
+                "   puerto = excluded.puerto,"
+                "   activo = excluded.activo",
+                (
+                    destino.destino_id,
+                    destino.nombre,
+                    destino.host,
+                    destino.puerto,
+                    int(destino.activo),
+                    destino.creado_en.isoformat(),
+                ),
+            )
+            await conexion.commit()
+
+
+def _a_destino(fila: aiosqlite.Row) -> DestinoGuardado:
+    return DestinoGuardado(
+        destino_id=fila["destino_id"],
+        nombre=fila["nombre"],
+        host=fila["host"],
+        puerto=fila["puerto"],
+        activo=bool(fila["activo"]),
+        creado_en=datetime.fromisoformat(fila["creado_en"]),
+    )
+
+
 def _a_tarjeta(fila: aiosqlite.Row) -> TarjetaPrueba:
     return TarjetaPrueba(
         card_id=fila["card_id"],
@@ -231,6 +297,7 @@ def _a_tarjeta(fila: aiosqlite.Row) -> TarjetaPrueba:
         expiracion=fila["expiracion"],
         descripcion=fila["descripcion"],
         sintetica=bool(fila["sintetica"]),
+        activa=bool(fila["activa"]),
     )
 
 

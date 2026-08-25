@@ -67,6 +67,7 @@ Contratos conceptuales entre módulos. No son firmas definitivas ni implementaci
 | `GeneradorStan` | `siguiente() → str` *(asíncrono)* | Entrega el campo 11. Es un puerto y no una función porque la unicidad exige estado compartido y duradero: entre peticiones, entre peticiones concurrentes y entre reinicios |
 | `RepositorioEjecuciones` | `guardar(ejecucion) → id`<br>`obtener(id) → Ejecucion \| None`<br>`listar(limite) → Ejecucion[]` *(asíncronos)* | El dominio no conoce el motor de base de datos. `guardar` devuelve el identificador asignado, que es lo que permitirá enlazar el detalle de una ejecución |
 | `RepositorioCatalogos` | `catalogo_respuestas()`, `tarjetas_prueba()` *(asíncronos)* | Las tarjetas se referencian por identificador interno, nunca por PAN |
+| `RepositorioDestinos` | `obtener(destino_id)`, `listar()`, `guardar(destino)` *(asíncronos)* | Catálogo de destinos administrados (`DestinoGuardado`). `guardar` es un upsert por `destino_id`. No hay clave foránea desde `ejecuciones`: una ejecución guarda `destino_host`/`destino_puerto` como valores propios, para que editar o desactivar un destino no reescriba el historial |
 
 El orquestador depende de estos contratos, no de sus implementaciones. Esto permite probarlo con
 dobles de prueba y es lo que hará posible que el motor de carga reutilice transporte, validación
@@ -210,6 +211,41 @@ existe** —se registra en `BITACORA.md`—, no se versiona en este repositorio 
 contenido aquí. **Los perfiles siguen sin implementarse:** falta analizar cada documento y
 derivar de él la especificación, y nada de eso se ha hecho todavía. Mientras tanto se trabaja con
 un único perfil genérico.
+
+## Persistencia base para tarjetas y destinos (Fase 1, sub-bloque 2)
+
+Segundo sub-bloque del módulo de Configuración. Solo esquema, dominio, puerto y adaptador — **sin
+interfaz todavía**: no existe `/configuracion` ni ninguna pantalla de administración.
+
+- **`tarjetas_prueba.activa`.** Columna nueva, `INTEGER NOT NULL DEFAULT 1`. A diferencia de un
+  esquema propuesto sin consumidor, se conecta de inmediato: `TarjetaPrueba` gana el campo
+  `activa: bool = True`, y `RepositorioTarjetasSQLite` la lee en `obtener()`/`listar()` y la
+  escribe en `guardar()`, cuyo `ON CONFLICT ... DO UPDATE` también la actualiza. Ningún flujo
+  filtra todavía tarjetas inactivas: eso pertenece a la integración con la compra, en un
+  sub-bloque posterior.
+- **Tabla `destinos` y `DestinoGuardado`.** `DestinoGuardado` es la entidad administrada
+  (identificador, nombre, host, puerto, estado activo/inactivo) con un método `a_destino_tcp()`
+  que la proyecta al valor mínimo que el transporte necesita. **`DestinoTcp` no cambió**: sigue
+  siendo exactamente el mismo valor que ya viajaba al transporte. `RepositorioDestinos` (puerto) y
+  `RepositorioDestinosSQLite` (adaptador) siguen el mismo patrón de `guardar` como upsert que ya
+  tenían las tarjetas. Se siembra un único destino, `LOCAL-DEMO` (`127.0.0.1:8583`).
+- **Sin clave foránea de `ejecuciones` a `destinos`.** `Ejecucion.destino_host` y `destino_puerto`
+  ya eran valores propios de la fila, no una referencia — la misma decisión que ya regía para
+  tarjetas y ejecuciones (`destino_host`/`destino_puerto` como valores, §«No borrar históricos» de
+  `BITACORA.md`). Se mantiene a propósito al crear `destinos`: editar o desactivar un destino no
+  debe alterar el historial ya registrado.
+- **Migración generalizada.** `_migrar_ejecuciones(conexion)` se generalizó en
+  `_migrar(conexion, tabla, columnas)`, capaz de agregar columnas a cualquier tabla; se conservó
+  como envoltorio de compatibilidad porque una prueba existente la invoca por nombre. Sigue siendo
+  aditiva e idempotente: ninguna fila existente se modifica, y correr `inicializar()` dos veces no
+  duplica nada.
+- **Compatibilidad, comprobada contra una base anterior real y completa.** Una prueba reconstruye
+  una base con tarjeta, ejecución, secuencia STAN y el esquema previo de `ejecuciones` —todo a la
+  vez, sin `activa` ni `destinos`— y comprueba, tras `inicializar()` y otra vez tras una segunda
+  llamada, que la tarjeta, la ejecución (comparada campo por campo) y la secuencia STAN no
+  cambian, y que `LOCAL-DEMO` no se duplica.
+
+**319 pruebas en verde** (302 + 17).
 
 Contemplar perfiles de *formato* por marca no contradice la exclusión de alcance de
 `FICHA-APROBACION.md`, porque lo excluido son los catálogos de *códigos de respuesta* por marca.

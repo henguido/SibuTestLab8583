@@ -55,6 +55,7 @@ class TarjetaPrueba:
     expiracion: str
     descripcion: str = ""
     sintetica: bool = True
+    activa: bool = True
 
     @property
     def pan_enmascarado(self) -> str:
@@ -92,6 +93,29 @@ class DestinoTcp:
 
     def __str__(self) -> str:
         return f"{self.host}:{self.puerto}"
+
+
+@dataclass(frozen=True)
+class DestinoGuardado:
+    """Destino de prueba administrado, persistido en el catalogo de destinos.
+
+    Distinto de `DestinoTcp`: este es la entidad con identidad propia
+    (`destino_id`), nombre y estado activo/inactivo, la que administra la
+    pantalla de destinos. `DestinoTcp` sigue siendo el valor minimo que el
+    transporte necesita para conectar, y una ejecucion sigue guardando
+    `destino_host`/`destino_puerto` como valores propios: desactivar o editar
+    un `DestinoGuardado` no debe alterar el historial ya registrado.
+    """
+
+    destino_id: str
+    nombre: str
+    host: str
+    puerto: int
+    activo: bool = True
+    creado_en: datetime = field(default_factory=_ahora)
+
+    def a_destino_tcp(self) -> DestinoTcp:
+        return DestinoTcp(host=self.host, puerto=self.puerto)
 
 
 @dataclass(frozen=True)

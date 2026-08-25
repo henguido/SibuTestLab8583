@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS tarjetas_prueba (
     expiracion       TEXT    NOT NULL,
     descripcion      TEXT    NOT NULL DEFAULT '',
     sintetica        INTEGER NOT NULL DEFAULT 1,
+    activa           INTEGER NOT NULL DEFAULT 1,
     creada_en        TEXT    NOT NULL
 );
 
@@ -46,6 +47,20 @@ CREATE TABLE IF NOT EXISTS codigos_respuesta (
     descripcion  TEXT    NOT NULL,
     aprobado     INTEGER NOT NULL,
     PRIMARY KEY (catalogo, codigo)
+);
+
+-- Destinos de prueba administrados. LOCAL-DEMO se siembra abajo y apunta al
+-- host simulado local; el puerto sembrado es el mismo valor por defecto que
+-- composicion.PUERTO_POR_DEFECTO (8583). Una ejecucion NO referencia esta
+-- tabla: guarda destino_host/destino_puerto como valores propios, para que
+-- editar o desactivar un destino no altere el historial ya registrado.
+CREATE TABLE IF NOT EXISTS destinos (
+    destino_id  TEXT    PRIMARY KEY,
+    nombre      TEXT    NOT NULL,
+    host        TEXT    NOT NULL,
+    puerto      INTEGER NOT NULL,
+    activo      INTEGER NOT NULL DEFAULT 1,
+    creado_en   TEXT    NOT NULL
 );
 
 -- Sin columna de PAN a proposito: una ejecucion referencia la tarjeta por
@@ -104,6 +119,14 @@ PAN_DEMO = pan_sintetico(SUFIJO_DEMO)
 EXPIRACION_DEMO = "3012"
 DESCRIPCION_DEMO = "Tarjeta de demostración"
 
+# Destino de demostracion, sembrado en `destinos`. El puerto coincide con
+# composicion.PUERTO_POR_DEFECTO (8583); esquema.py no importa composicion.py
+# para evitar un ciclo, asi que el valor se repite aqui a proposito.
+DESTINO_ID_DEMO = "LOCAL-DEMO"
+DESTINO_NOMBRE_DEMO = "Host simulado local"
+DESTINO_HOST_DEMO = "127.0.0.1"
+DESTINO_PUERTO_DEMO = 8583
+
 
 def ruta_base_datos() -> Path:
     """Ruta del archivo SQLite. Configurable por variable de entorno."""
@@ -151,10 +174,16 @@ async def _sembrar_tarjeta_demo(conexion: aiosqlite.Connection) -> None:
 
 #: Columnas agregadas despues de que la tabla `ejecuciones` ya existiera en
 #: bases locales. El DDL de arriba las crea en una base nueva; en una existente
-#: las agrega `_migrar_ejecuciones`.
+#: las agrega `_migrar`.
 COLUMNAS_AGREGADAS: tuple[tuple[str, str], ...] = (
     ("solicitud_json", "TEXT"),
     ("respuesta_json", "TEXT"),
+)
+
+#: Lo mismo para `tarjetas_prueba`: la columna `activa` es posterior a bases ya
+#: creadas por un clon anterior de este repositorio.
+COLUMNAS_AGREGADAS_TARJETAS: tuple[tuple[str, str], ...] = (
+    ("activa", "INTEGER NOT NULL DEFAULT 1"),
 )
 
 
@@ -163,8 +192,10 @@ async def _columnas_de(conexion: aiosqlite.Connection, tabla: str) -> set[str]:
         return {fila[1] for fila in await cursor.fetchall()}
 
 
-async def _migrar_ejecuciones(conexion: aiosqlite.Connection) -> tuple[str, ...]:
-    """Agrega a `ejecuciones` las columnas que una base anterior no tenga.
+async def _migrar(
+    conexion: aiosqlite.Connection, tabla: str, columnas: tuple[tuple[str, str], ...]
+) -> tuple[str, ...]:
+    """Agrega a `tabla` las columnas de `columnas` que una base anterior no tenga.
 
     El proyecto no usa Alembic: para este alcance, comprobar y agregar es mas
     simple de leer y de auditar que una herramienta de migraciones.
@@ -174,20 +205,40 @@ async def _migrar_ejecuciones(conexion: aiosqlite.Connection) -> tuple[str, ...]
     consultas fallarian. Es idempotente: si la columna esta, no se toca nada, y
     **ninguna fila existente se modifica**.
 
-    Los nombres de columna se interpolan porque `ALTER TABLE` no admite
-    parametros; provienen de la constante de arriba, nunca de entrada externa.
+    Los nombres de tabla y columna se interpolan porque `ALTER TABLE` no admite
+    parametros; provienen siempre de las constantes de arriba, nunca de
+    entrada externa.
 
     Corre despues del DDL, asi que la tabla siempre existe: en una base nueva ya
     trae las columnas y este bucle no hace nada; en una anterior las agrega.
     Devuelve los nombres que agrego, para que una prueba pueda comprobarlo.
     """
-    existentes = await _columnas_de(conexion, "ejecuciones")
+    existentes = await _columnas_de(conexion, tabla)
     agregadas: list[str] = []
-    for columna, tipo in COLUMNAS_AGREGADAS:
+    for columna, tipo in columnas:
         if columna not in existentes:
-            await conexion.execute(f"ALTER TABLE ejecuciones ADD COLUMN {columna} {tipo}")
+            await conexion.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {tipo}")
             agregadas.append(columna)
     return tuple(agregadas)
+
+
+async def _migrar_ejecuciones(conexion: aiosqlite.Connection) -> tuple[str, ...]:
+    """Compatibilidad: `ejecuciones` migrada con el `_migrar` generalizado."""
+    return await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS)
+
+
+async def _sembrar_destinos(conexion: aiosqlite.Connection) -> None:
+    await conexion.execute(
+        "INSERT OR IGNORE INTO destinos (destino_id, nombre, host, puerto, activo, creado_en)"
+        " VALUES (?, ?, ?, ?, 1, ?)",
+        (
+            DESTINO_ID_DEMO,
+            DESTINO_NOMBRE_DEMO,
+            DESTINO_HOST_DEMO,
+            DESTINO_PUERTO_DEMO,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
 
 
 async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = True) -> Path:
@@ -202,9 +253,11 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
     async with aiosqlite.connect(destino) as conexion:
         await conexion.execute("PRAGMA foreign_keys = ON")
         await conexion.executescript(DDL)
-        await _migrar_ejecuciones(conexion)
+        await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS)
+        await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
         await _sembrar_secuencias(conexion)
         await _sembrar_catalogo(conexion, CATALOGO_GENERICO)
+        await _sembrar_destinos(conexion)
         if con_datos_demo:
             await _sembrar_tarjeta_demo(conexion)
         await conexion.commit()

@@ -31,9 +31,20 @@ clasifica según el **catálogo persistido en SQLite**, leído en cada compra me
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
 Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
 enmascarado, e historial **navegable**: cada ejecución tiene su detalle en `/historial/{id}`,
-con los campos ISO de la solicitud y de la respuesta. **302 pruebas en verde.** El CI las
+con los campos ISO de la solicitud y de la respuesta. **319 pruebas en verde.** El CI las
 ejecuta en Python 3.11, 3.12 y 3.13, y comprueba además que un clon limpio se instale con el
 metadata declarado.
+
+Persistencia base para la Fase 1 de Configuración (sub-bloque 2, sin interfaz todavía):
+`TarjetaPrueba.activa` (con lectura y escritura reales en `RepositorioTarjetasSQLite`, incluido el
+upsert) y la tabla `destinos`, con su entidad `DestinoGuardado`, su puerto `RepositorioDestinos` y
+su adaptador `RepositorioDestinosSQLite`, sembrada con un único destino `LOCAL-DEMO`. `DestinoTcp`
+no cambió. Una ejecución sigue guardando `destino_host`/`destino_puerto` como valores propios, sin
+clave foránea hacia `destinos`: editar o desactivar un destino no debe alterar el historial ya
+registrado. La migración aditiva se generalizó (`_migrar(conexion, tabla, columnas)`) y se probó
+contra una base anterior real —con tarjeta, ejecución, secuencia STAN y el esquema previo de
+`ejecuciones` a la vez— comprobando que ninguno de esos datos se pierde ni se modifica, ni siquiera
+tras una segunda inicialización.
 
 La interfaz tiene identidad propia: cinta con la marca `SibuTestLab8583` y el subtítulo
 `Laboratorio de pruebas ISO 8583`, navegación entre `Nueva transacción` e `Historial`, y una
@@ -44,10 +55,12 @@ completa; identificadores, enums, clases, tokens y valores de `data-estado` se m
 y una prueba lo comprueba en ambos sentidos. Contraste medido: el peor de los siete es
 5.89:1 y el peor par de texto 5.42:1, ambos por encima del mínimo AA de 4.5:1.
 
-**Todavía NO existe:** el modo avanzado ISO 8583 para editar campos de la solicitud, el
-isoscopio 2.0 —comparar solicitud contra respuesta y mostrar el bitmap—, el motor de carga, los
-perfiles reales de Visa y Mastercard, `README.md`, Docker, skill propio en `.claude/` ni
-autenticación.
+**Todavía NO existe:** ninguna interfaz para el módulo de Configuración —sin `/configuracion`,
+sin formularios, sin administración de tarjetas ni de destinos desde la web, sin filtro de
+tarjetas activas ni selector de destino en la compra—, el modo avanzado ISO 8583 para editar
+campos de la solicitud, el isoscopio 2.0 —comparar solicitud contra respuesta y mostrar el
+bitmap—, el motor de carga, los perfiles reales de Visa y Mastercard, `README.md`, Docker, skill
+propio en `.claude/` ni autenticación.
 
 ## Decisiones vigentes
 
@@ -177,6 +190,7 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-08-23 | Persistencia estructurada: columnas `solicitud_json` y `respuesta_json`, migración SQLite idempotente y lectura tolerante. Corrige que el formato de texto delimitado partiera un valor que contuviera el separador. Commit `d6a78b1` |
 | 2026-08-24 | Detalle navegable de una ejecución en `/historial/{id}`, con 404 propio. El isoscopio, el banner de estado y el resumen pasan a macros compartidas. Revisión visual humana antes del commit |
 | 2026-08-24 | D-1: RN-1 pasa a usar el catálogo persistido en SQLite (`RepositorioCatalogosSQLite`) en vez de la constante `CATALOGO_GENERICO`. `Composicion.orquestador()` pasa a asíncrono y consulta la base en cada llamada, sin caché. Sin cambios de esquema ni de interfaz |
+| 2026-08-24 | Fase 1, sub-bloque 2: `TarjetaPrueba.activa` con lectura/escritura reales; tabla `destinos` con `DestinoGuardado`, `RepositorioDestinos` y `RepositorioDestinosSQLite`, semilla `LOCAL-DEMO`; migración aditiva generalizada, probada contra una base anterior real completa. Sin interfaz |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -204,10 +218,11 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Fase 1 (módulo de Configuración) en curso. Cerrado el primer sub-bloque, **D-1: catálogo
-persistido**. Siguen, en el orden aprobado: esquema para tarjetas y destinos (`activa` en
-tarjetas, tabla `destinos`), navegación y `GET /configuracion`, administración de tarjetas,
-administración de destinos, integración con la compra, y documentación final de la fase.
+Fase 1 (módulo de Configuración) en curso. Cerrados los sub-bloques 1 (**D-1: catálogo
+persistido**) y 2 (**persistencia base para tarjetas y destinos**: `activa`, tabla `destinos`,
+migración generalizada). Siguen, en el orden aprobado: navegación y `GET /configuracion`,
+administración de tarjetas, administración de destinos, integración con la compra, y
+documentación final de la fase.
 
 Del plan previo de cinco commits para el constructor avanzado y el detalle del historial siguen
 pendientes, después de la Fase 1: declarar campos permitidos y editables en el perfil, y el modo

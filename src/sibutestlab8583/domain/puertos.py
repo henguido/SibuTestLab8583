@@ -12,6 +12,7 @@ from typing import Protocol, Sequence, runtime_checkable
 
 from .catalogo import CatalogoDeRespuestas
 from .modelos import (
+    DestinoGuardado,
     DestinoTcp,
     Ejecucion,
     FalloDeConexion,
@@ -126,3 +127,14 @@ class RepositorioEjecuciones(Protocol):
     async def obtener(self, id_ejecucion: int) -> Ejecucion | None: ...
 
     async def listar(self, limite: int = 50) -> Sequence[Ejecucion]: ...
+
+
+@runtime_checkable
+class RepositorioDestinos(Protocol):
+    """Catalogo de destinos de prueba administrados."""
+
+    async def obtener(self, destino_id: str) -> DestinoGuardado | None: ...
+
+    async def listar(self) -> Sequence[DestinoGuardado]: ...
+
+    async def guardar(self, destino: DestinoGuardado) -> None: ...

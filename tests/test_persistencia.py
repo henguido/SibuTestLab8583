@@ -71,6 +71,56 @@ async def test_la_tarjeta_de_demostracion_es_sintetica(base):
     assert tarjeta.pan_enmascarado == "************6666"
 
 
+async def test_la_tarjeta_de_demostracion_de_una_base_nueva_esta_activa(base):
+    tarjeta = await RepositorioTarjetasSQLite(base).obtener(CARD_ID_DEMO)
+    assert tarjeta is not None
+    assert tarjeta.activa is True
+
+
+async def test_guardar_una_tarjeta_inactiva_y_recuperarla(base):
+    repo = RepositorioTarjetasSQLite(base)
+    await repo.guardar(
+        TarjetaPrueba(
+            card_id="T-INACTIVA",
+            pan=pan_sintetico("4444"),
+            expiracion="3006",
+            activa=False,
+        )
+    )
+    recuperada = await repo.obtener("T-INACTIVA")
+    assert recuperada is not None
+    assert recuperada.activa is False
+
+
+async def test_listar_conserva_el_estado_activo_de_cada_tarjeta(base):
+    repo = RepositorioTarjetasSQLite(base)
+    await repo.guardar(
+        TarjetaPrueba(
+            card_id="T-LISTA-INACTIVA", pan=pan_sintetico("5555"), expiracion="3007", activa=False
+        )
+    )
+    listadas = {t.card_id: t.activa for t in await repo.listar()}
+    assert listadas["T-LISTA-INACTIVA"] is False
+    assert listadas[CARD_ID_DEMO] is True
+
+
+async def test_guardar_de_nuevo_una_tarjeta_reactiva_su_estado(base):
+    """El UPSERT actualiza `activa`, no solo la crea la primera vez."""
+    repo = RepositorioTarjetasSQLite(base)
+    tarjeta = TarjetaPrueba(
+        card_id="T-REACTIVAR", pan=pan_sintetico("7777"), expiracion="3008", activa=False
+    )
+    await repo.guardar(tarjeta)
+    assert (await repo.obtener("T-REACTIVAR")).activa is False
+
+    await repo.guardar(
+        TarjetaPrueba(
+            card_id="T-REACTIVAR", pan=pan_sintetico("7777"), expiracion="3008", activa=True
+        )
+    )
+    assert (await repo.obtener("T-REACTIVAR")).activa is True
+
+
 async def test_guardar_y_recuperar_una_tarjeta(base):
     repo = RepositorioTarjetasSQLite(base)
     await repo.guardar(
