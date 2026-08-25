@@ -1309,6 +1309,79 @@ explicación.
 Sin cambios en el esquema, la persistencia, el codec, las cuatro reglas de negocio ni la
 taxonomía de siete estados. Comprobado por hash de blob contra el commit anterior.
 
+## 2026-08-24 · D-1: RN-1 pasa a usar el catálogo persistido
+
+Primer sub-bloque de la Fase 1 (módulo de Configuración). Cierra una deuda técnica detectada en
+la auditoría previa, sin tocar esquema ni interfaz.
+
+### La causa raíz
+
+`codigos_respuesta` ya existía en el esquema SQLite, con su semilla de seis códigos y su clave
+primaria `(catalogo, codigo)` lista para varios catálogos. `RepositorioCatalogosSQLite` ya
+existía y ya funcionaba: sabía leer esa tabla y devolver un `CatalogoDeRespuestas`. Pero **nada
+en producción lo instanciaba**. `Composicion.__init__` fijaba `self._catalogo =
+CATALOGO_GENERICO` — la constante en memoria de `domain/catalogo.py` — una sola vez, al construir
+la composición, y `Composicion.orquestador()` era síncrono. El único consumidor real de
+`RepositorioCatalogosSQLite` era `tests/test_persistencia.py`. Editar la tabla `codigos_respuesta`
+no tenía ningún efecto sobre RN-1: la base y el código en ejecución estaban desconectados.
+
+### Lo que se hizo
+
+- `Composicion` instancia `RepositorioCatalogosSQLite` junto con los demás repositorios.
+- `Composicion.orquestador()` pasa a `async def` y **consulta el catálogo en cada llamada**,
+  vía `self._catalogos.catalogo_respuestas(self.configuracion.catalogo_activo)`, en vez de
+  leerlo una sola vez al construir la composición. Es la condición explícita de esta iteración:
+  editar `codigos_respuesta` en SQLite debe reflejarse sin reiniciar la aplicación, y cachear el
+  catálogo en `__init__` habría reproducido el mismo defecto en otra forma.
+- `Configuracion` (la clase real donde ya viven `host_destino`, `puerto_destino` y
+  `tiempo_limite`, en `composicion.py`) gana el campo `catalogo_activo: str`, con valor por
+  defecto el catálogo genérico y lectura desde la variable de entorno `SIBU_CATALOGO`.
+- `CATALOGO_GENERICO` **queda solo como semilla** de `inicializar()` (`esquema.py`), tal como ya
+  era: no se convirtió en fuente activa en ningún punto de este cambio.
+- Único punto de llamada en producción actualizado: `web/app.py`, dentro de `ejecutar_compra`,
+  pasa de `composicion.orquestador(destino).ejecutar_compra(datos)` a `await
+  composicion.orquestador(destino)` seguido de `await orquestador.ejecutar_compra(datos)`.
+- El doble de prueba `ComposicionFalsa` en `tests/test_web.py` (reutilizado también por
+  `tests/test_web_interfaz.py`) se ajustó a la misma firma asíncrona.
+- `tests/conftest.py` **no se tocó**: `construir_orquestador` sigue construyendo el `Orquestador`
+  directamente con `CATALOGO_GENERICO`, sin pasar por `Composicion` — es un doble deliberado para
+  las pruebas de reglas de negocio, no el camino de producción, y no formaba parte de la deuda.
+
+### Lo que no cambió
+
+RN-3 se sigue evaluando **antes** que RN-1 dentro de `Orquestador.ejecutar_compra`: el orden no
+se tocó, porque no era el defecto. `RepositorioCatalogos` (el puerto) y `Orquestador` (el
+constructor recibe `catalogo` como antes) tampoco cambiaron: el contrato existente alcanzaba. Sin
+cambios de esquema — `codigos_respuesta` ya tenía todo lo necesario — y sin interfaz nueva.
+
+### Prueba crítica
+
+`tests/test_catalogo_persistido.py`, nueva. Construye una base SQLite real y temporal,
+la inicializa con `inicializar()`, edita el catálogo persistido con una sentencia `UPDATE`
+directa sobre `codigos_respuesta`, y ejecuta la compra completa contra un `HostSimulado` real por
+TCP, construyendo el sistema con la `Composicion` real (no con `construir_orquestador`, que
+seguiría usando la constante a propósito). Comprueba las dos direcciones:
+
+- `00` marcado como rechazado en la base → el host responde `00` → RN-3 es válida → RN-1 clasifica
+  **RECHAZADA**.
+- `51` (normalmente rechazado) marcado como aprobado en la base → **APROBADA**.
+- Una tercera prueba comprueba que, sin editar nada, la semilla actual se sigue comportando igual
+  que antes: `00` aprueba, `05` rechaza.
+
+**No vacuidad, comprobada por mutación.** Con `composicion.py` revertido temporalmente a la
+versión anterior a este cambio (vía `git stash`, restaurado de inmediato), las tres pruebas
+nuevas fallan con `TypeError: object Orquestador can't be used in 'await' expression` — la firma
+síncrona anterior no soporta el `await` que ahora usa el punto de llamada. Confirma que la prueba
+mide lo que dice medir y no pasaría contra la implementación anterior.
+
+### Verificación
+
+**302 pruebas en verde**, 3 nuevas (299 + 3). RN-1/RN-3 (`test_reglas_negocio.py`,
+`test_catalogo.py`, `test_catalogo_persistido.py`, 37 pruebas) y la guardia de PAN
+(`test_datos_sinteticos.py`, 10 pruebas) verificadas aparte. Sin secuencias de 12 a 19 dígitos ni
+patrones de secreto en los archivos tocados. El cambio real quedó limitado a cuatro archivos:
+`composicion.py`, `web/app.py`, `tests/test_web.py` y el archivo nuevo de la prueba crítica.
+
 ---
 
 ## Gobernanza

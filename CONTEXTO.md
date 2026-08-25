@@ -24,11 +24,14 @@ Para el estado exacto de Git —commits, `HEAD`, qué está publicado— consult
 
 **Qué funciona y está verificado:** una compra completa `0100 → TCP → 0110` contra el host
 simulado propio, con codec, framing, transporte y SQLite reales, terminando en una ejecución
-persistida y enmascarada. Las cuatro reglas de negocio están implementadas y probadas. El
+persistida y enmascarada. Las cuatro reglas de negocio están implementadas y probadas. RN-1
+clasifica según el **catálogo persistido en SQLite**, leído en cada compra mediante
+`RepositorioCatalogosSQLite` — ya no según una constante fija en memoria; editar la tabla
+`codigos_respuesta` cambia el comportamiento sin reiniciar la aplicación. El
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
 Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
 enmascarado, e historial **navegable**: cada ejecución tiene su detalle en `/historial/{id}`,
-con los campos ISO de la solicitud y de la respuesta. **299 pruebas en verde.** El CI las
+con los campos ISO de la solicitud y de la respuesta. **302 pruebas en verde.** El CI las
 ejecuta en Python 3.11, 3.12 y 3.13, y comprueba además que un clon limpio se instale con el
 metadata declarado.
 
@@ -60,7 +63,7 @@ Acordadas y, salvo donde se indique, **ya implementadas y probadas**.
 | Transporte TCP | Asíncrono desde el inicio (`asyncio.open_connection()`), para que el motor de carga reutilice el mismo contrato sin reescritura |
 | Framing | Contrato independiente (`FramingStrategy`), invocado por el transporte y solo por él; la web y el orquestador no conocen el formato. Implementado un framing **de demostración**: prefijo binario de 2 bytes big-endian. El de un switch real dependerá de su especificación |
 | Perfiles de marca | La arquitectura contempla Visa y Mastercard, pero **no se inventan sus especificaciones**: solo se implementan a partir de documentación de marca disponible y aprobada como fuente. Esa documentación ya existe y **no se versiona**; los perfiles **siguen sin implementarse**. Hoy existe únicamente el perfil genérico |
-| Catálogo de respuestas | Genérico para la demostración: `00`, `05`, `14`, `51`, `54`, `94` |
+| Catálogo de respuestas | Genérico para la demostración: `00`, `05`, `14`, `51`, `54`, `94`. Persistido en SQLite (`codigos_respuesta`) y leído en cada compra vía `RepositorioCatalogosSQLite`, sin caché; `CATALOGO_GENERICO` (en `domain/catalogo.py`) queda solo como semilla de `inicializar()`, no como fuente activa en ejecución. Catálogo activo configurable con `Configuracion.catalogo_activo` / variable `SIBU_CATALOGO`, con el genérico como valor por defecto |
 | Portabilidad | Ejecutable en local, en infraestructura bancaria, en contenedor o como servicio cloud. Docker es distribución posterior, no dependencia para desarrollar |
 
 **`PerfilDeMarca` ≠ `CatalogoDeRespuestas`** — ejes independientes que no deben mezclarse: el
@@ -173,6 +176,7 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-08-20 | Rediseño de la interfaz: identidad propia, navegación, resumen de resultado, isoscopio legible e historial completo. Hoja de estilos propia con tokens, sin framework ni JavaScript. Ortografía española completa en todo el texto visible. Commit `ede40c0` |
 | 2026-08-23 | Persistencia estructurada: columnas `solicitud_json` y `respuesta_json`, migración SQLite idempotente y lectura tolerante. Corrige que el formato de texto delimitado partiera un valor que contuviera el separador. Commit `d6a78b1` |
 | 2026-08-24 | Detalle navegable de una ejecución en `/historial/{id}`, con 404 propio. El isoscopio, el banner de estado y el resumen pasan a macros compartidas. Revisión visual humana antes del commit |
+| 2026-08-24 | D-1: RN-1 pasa a usar el catálogo persistido en SQLite (`RepositorioCatalogosSQLite`) en vez de la constante `CATALOGO_GENERICO`. `Composicion.orquestador()` pasa a asíncrono y consulta la base en cada llamada, sin caché. Sin cambios de esquema ni de interfaz |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -200,9 +204,13 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Del plan aprobado de cinco commits para el constructor avanzado y el detalle del historial ya
-están hechos los dos primeros: «Persistir los mensajes ISO sin pérdida» y el detalle navegable
-`/historial/{id}`. Siguen: declarar campos permitidos y editables en el perfil, y el modo
+Fase 1 (módulo de Configuración) en curso. Cerrado el primer sub-bloque, **D-1: catálogo
+persistido**. Siguen, en el orden aprobado: esquema para tarjetas y destinos (`activa` en
+tarjetas, tabla `destinos`), navegación y `GET /configuracion`, administración de tarjetas,
+administración de destinos, integración con la compra, y documentación final de la fase.
+
+Del plan previo de cinco commits para el constructor avanzado y el detalle del historial siguen
+pendientes, después de la Fase 1: declarar campos permitidos y editables en el perfil, y el modo
 avanzado ISO 8583.
 
 Cerrados P0-1, P0-2 y P0-3, y publicado el rediseño de la interfaz. De los P1 quedan el

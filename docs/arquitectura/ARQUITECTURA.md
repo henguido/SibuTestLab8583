@@ -42,7 +42,7 @@ Tres límites que no se cruzan:
 | Módulo | Capa | Responsabilidad |
 |---|---|---|
 | **Web** | Interfaz | Cinco pantallas: nueva transacción, resultado, historial, detalle de una ejecución (`/historial/{id}`) y no encontrado. Delgada: sin lógica de negocio, sin parsing y sin JavaScript. Se divide en rutas (`web/app.py`), presentación (`web/presentacion.py`), plantillas Jinja con macros compartidas en `_piezas.html`, y una hoja de estilos propia servida en `/estatico` |
-| **Composición** | Raíz de composición | Único lugar donde se cablean perfil, catálogo, codec, framing, transporte y repositorios. La web depende de ella y no construye infraestructura en sus endpoints |
+| **Composición** | Raíz de composición | Único lugar donde se cablean perfil, catálogo, codec, framing, transporte y repositorios. La web depende de ella y no construye infraestructura en sus endpoints. `orquestador()` es asíncrono y lee el catálogo de respuestas de SQLite en cada llamada, sin cachearlo: editar `codigos_respuesta` se refleja sin reiniciar la aplicación |
 | **Orquestador** (application service) | Aplicación | Secuencia el recorrido: armar → validar (RN-4) → codificar → enviar → interpretar → evaluar → persistir. Convierte los resultados del transporte en estados de ejecución: `TiempoAgotado` en `TIMEOUT` (RN-2), `FalloDeConexion` en `ERROR_CONEXION` y `FalloDeTransmision` en `ERROR_TRANSMISION`. **Persiste todo intento**, incluidos los que no llegan a la red. Única pieza que conoce a todas las demás |
 | **Perfiles** | Dominio | Provee el `PerfilDeMarca` activo: especificación de formato y campos obligatorios por MTI |
 | **Codec ISO 8583** | Adaptador | Codifica y decodifica mensajes sobre `pyiso8583`. Recibe la especificación como parámetro; no conoce marcas. Traduce los errores de la librería a errores del dominio |
@@ -190,6 +190,18 @@ Dos ejes de configuración **independientes**, inyectados por separado:
   entrega a `pyiso8583` y lo que alimenta RN-4.
 - **`CatalogoDeRespuestas`** — qué código del campo 39 cuenta como aprobado. Alimenta RN-1. Para
   la demostración académica: `00`, `05`, `14`, `51`, `54`, `94`.
+
+**El catálogo activo se lee de SQLite, no de una constante.** `RepositorioCatalogosSQLite` existía
+desde antes, pero hasta el sub-bloque D-1 (Fase 1 de Configuración) ningún punto de producción lo
+consumía: `Composicion` fijaba `CATALOGO_GENERICO` una sola vez en `__init__`, así que la tabla
+`codigos_respuesta` estaba desconectada del comportamiento real de RN-1. Ahora `Composicion`
+instancia el repositorio y `orquestador()` (asíncrono) consulta `catalogo_respuestas(nombre)` en
+cada construcción — sin caché, para que un cambio en la base no exija reiniciar el proceso. El
+nombre del catálogo activo es `Configuracion.catalogo_activo` (variable `SIBU_CATALOGO`, por
+defecto el genérico). `CATALOGO_GENERICO` **queda como semilla** de `inicializar()`
+(`adapters/persistence/esquema.py`), no como fuente activa. RN-3 sigue evaluándose antes que RN-1
+dentro de `Orquestador.ejecutar_compra`: ese orden no formaba parte de esta deuda y no se tocó.
+Sin cambios de esquema —`codigos_respuesta` ya tenía la forma multi-catálogo— ni de interfaz.
 
 La arquitectura contempla perfiles de Visa y de Mastercard como punto de extensión. **No se
 crean ni se inventan especificaciones de ninguna marca**: los perfiles reales solo se implementan

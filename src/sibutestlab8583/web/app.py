@@ -84,7 +84,8 @@ async def ejecutar_compra(
 
     # --- el recorrido lo hace el orquestador, no esta capa ---
     try:
-        resultado = await composicion.orquestador(destino).ejecutar_compra(datos)
+        orquestador = await composicion.orquestador(destino)
+        resultado = await orquestador.ejecutar_compra(datos)
     except TarjetaDesconocida:
         return await _formulario(
             request,

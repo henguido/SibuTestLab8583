@@ -93,7 +93,7 @@ class ComposicionFalsa:
         self.descripciones_de_campos = {"2": "Número de tarjeta (PAN)", "4": "Monto"}
         self._orquestador = OrquestadorFalso(resultado, error)
 
-    def orquestador(self, destino):
+    async def orquestador(self, destino):
         return self._orquestador
 
 

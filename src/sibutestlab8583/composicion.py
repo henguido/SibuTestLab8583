@@ -21,6 +21,7 @@ from .adapters.iso8583.codec import CodecIso8583
 from .adapters.persistence.esquema import ruta_base_datos
 from .adapters.persistence.sqlite_repos import (
     GeneradorStanSQLite,
+    RepositorioCatalogosSQLite,
     RepositorioEjecucionesSQLite,
     RepositorioTarjetasSQLite,
 )
@@ -28,13 +29,14 @@ from .adapters.transporte.framing_demo import FramingDemostracion
 from .adapters.transporte.tcp import TIEMPO_LIMITE_POR_DEFECTO, TransporteTcp
 from .application.consultas import ServicioConsultas
 from .application.orquestador import Orquestador
-from .domain.catalogo import CATALOGO_GENERICO
+from .domain.catalogo import NOMBRE_CATALOGO_GENERICO
 from .domain.modelos import DestinoTcp
 from .profiles.generico import CODIGO_PROCESO_COMPRA, perfil_activo
 
 VARIABLE_HOST = "SIBU_HOST_DESTINO"
 VARIABLE_PUERTO = "SIBU_PUERTO_DESTINO"
 VARIABLE_TIEMPO_LIMITE = "SIBU_TIEMPO_LIMITE"
+VARIABLE_CATALOGO = "SIBU_CATALOGO"
 
 HOST_POR_DEFECTO = "127.0.0.1"
 PUERTO_POR_DEFECTO = 8583
@@ -48,6 +50,7 @@ class Configuracion:
     host_destino: str = HOST_POR_DEFECTO
     puerto_destino: int = PUERTO_POR_DEFECTO
     tiempo_limite: float = TIEMPO_LIMITE_POR_DEFECTO
+    catalogo_activo: str = NOMBRE_CATALOGO_GENERICO
 
     @classmethod
     def desde_entorno(cls) -> "Configuracion":
@@ -58,6 +61,7 @@ class Configuracion:
             tiempo_limite=float(
                 os.environ.get(VARIABLE_TIEMPO_LIMITE, TIEMPO_LIMITE_POR_DEFECTO)
             ),
+            catalogo_activo=os.environ.get(VARIABLE_CATALOGO, NOMBRE_CATALOGO_GENERICO),
         )
 
     @property
@@ -71,11 +75,11 @@ class Composicion:
     def __init__(self, configuracion: Configuracion) -> None:
         self.configuracion = configuracion
         self._perfil = perfil_activo()
-        self._catalogo = CATALOGO_GENERICO
         self._codec = CodecIso8583()
         self._framing = FramingDemostracion()
         self._tarjetas = RepositorioTarjetasSQLite(configuracion.ruta_base_datos)
         self._ejecuciones = RepositorioEjecucionesSQLite(configuracion.ruta_base_datos)
+        self._catalogos = RepositorioCatalogosSQLite(configuracion.ruta_base_datos)
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
         self._stan = GeneradorStanSQLite(configuracion.ruta_base_datos)
@@ -97,17 +101,20 @@ class Composicion:
             if numero.isdigit()
         }
 
-    def orquestador(self, destino: DestinoTcp) -> Orquestador:
+    async def orquestador(self, destino: DestinoTcp) -> Orquestador:
         """Un orquestador apuntando al destino indicado.
 
         Se construye por peticion porque el destino lo elige el usuario en el
         formulario. Es cableado barato: los repositorios abren su conexion por
-        operacion.
+        operacion. El catalogo de respuestas se lee de la base en cada
+        construccion, y no se cachea en la instancia: editar la tabla
+        `codigos_respuesta` debe reflejarse sin reiniciar la aplicacion.
         """
+        catalogo = await self._catalogos.catalogo_respuestas(self.configuracion.catalogo_activo)
         return Orquestador(
             codec=self._codec,
             perfil=self._perfil,
-            catalogo=self._catalogo,
+            catalogo=catalogo,
             transporte=TransporteTcp(
                 self._framing, tiempo_limite=self.configuracion.tiempo_limite
             ),
