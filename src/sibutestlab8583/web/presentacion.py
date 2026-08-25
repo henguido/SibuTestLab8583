@@ -61,11 +61,11 @@ class Seccion:
 #: no hay ninguna lista de enlaces duplicada en el HTML.
 #:
 #: Solo se listan secciones con ruta servida: un enlace que no funciona es peor
-#: que un enlace ausente. Cuando exista `/tarjetas`, se agrega aqui esta linea:
-#:     Seccion("tarjetas", "/tarjetas", "Tarjetas de prueba"),
+#: que un enlace ausente.
 SECCIONES: tuple[Seccion, ...] = (
     Seccion("compra", "/", "Nueva transacción"),
     Seccion("historial", "/historial", "Historial"),
+    Seccion("configuracion", "/configuracion", "Configuración"),
 )
 
 
@@ -216,6 +216,20 @@ def validar_host(texto: str) -> str:
     if not host:
         raise ValueError("Indique el host de destino.")
     return host
+
+
+def validar_activa(texto: str) -> bool:
+    """Interpreta el valor exacto que envia el formulario de activar/desactivar.
+
+    Solo admite ``"0"`` o ``"1"``: cualquier otro valor se rechaza en vez de
+    convertirse silenciosamente en `False`. Un formulario manipulado que
+    mande ``"si"``, ``"2"`` o nada no debe poder cambiar el estado de una
+    tarjeta sin que el error quede explicito.
+    """
+    valor = (texto or "").strip()
+    if valor not in ("0", "1"):
+        raise ValueError("El valor de estado recibido no es válido.")
+    return valor == "1"
 
 
 def filas_de_solicitud(

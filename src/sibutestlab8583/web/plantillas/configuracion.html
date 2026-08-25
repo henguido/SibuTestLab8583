@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block titulo %}Configuración · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>Configuración</h1>
+  <p class="encabezado__sub">
+    Administra los catálogos que usa el simulador para armar y evaluar cada transacción.
+  </p>
+</div>
+
+<div class="rejilla">
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Tarjetas de prueba</h2>
+    </div>
+    <div class="panel__cuerpo">
+      <p>Administra las tarjetas disponibles para las pruebas.</p>
+    </div>
+    <div class="acciones">
+      <a class="boton" href="/configuracion/tarjetas">Administrar tarjetas</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Códigos de respuesta</h2>
+      <span class="chip chip--proximamente">Próximamente</span>
+    </div>
+    <div class="panel__cuerpo">
+      <p>Configura cómo se interpreta cada código de respuesta recibido.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Destinos</h2>
+      <span class="chip chip--proximamente">Próximamente</span>
+    </div>
+    <div class="panel__cuerpo">
+      <p>Guarda hosts y puertos de prueba para reutilizarlos.</p>
+    </div>
+  </section>
+</div>
+{% endblock %}

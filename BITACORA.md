@@ -1464,6 +1464,88 @@ quedó limitado a `domain/modelos.py`, `domain/puertos.py`,
 `adapters/persistence/esquema.py`, `adapters/persistence/sqlite_repos.py`, `tests/test_persistencia.py`,
 y los dos archivos nuevos de prueba.
 
+## 2026-08-25 · Fase 1, sub-bloque 3/4: Configuración y administración de tarjetas
+
+Iteración visual combinada: la portada del módulo de Configuración y la administración completa
+de tarjetas de prueba (crear, editar, activar/desactivar), sobre la persistencia que ya dejó el
+sub-bloque 2.
+
+### Navegación y portada
+
+`Configuración` se agregó como tercera entrada de `presentacion.SECCIONES` (junto a `Nueva
+transacción` e `Historial`), la misma fuente única que ya recorre `base.html`: no hay ninguna
+lista de navegación duplicada. `GET /configuracion` muestra tres bloques — Tarjetas de prueba,
+Códigos de respuesta y Destinos —, pero **solo el primero enlaza a algo real**: Códigos y Destinos
+siguen marcados «Próximamente» y no enlazan a ninguna ruta, porque esas rutas no existen todavía.
+
+### Administración de tarjetas
+
+Nuevo servicio de aplicación, `ServicioTarjetas` (`application/tarjetas.py`), construido solo con
+el puerto `RepositorioTarjetas` — que no necesitó ningún método nuevo: `guardar()`, ya un upsert
+desde el sub-bloque 2, alcanza para crear, editar y cambiar el estado. La web no valida PAN ni
+Luhn: delega esa validación en el servicio y solo se ocupa de leer el formulario y renderizar HTML.
+
+Rutas nuevas, todas bajo `/configuracion/tarjetas`: listado, formulario de creación, creación,
+formulario de edición, edición, y `POST .../{card_id}/estado` para activar o desactivar.
+
+- **`card_id`** es requerido, y su familia de caracteres (`[A-Za-z0-9_-]`) reutiliza la que ya
+  seguían los identificadores existentes del proyecto (`DEMO-0001`, `T-002`, `SIN-VENC`) — no es
+  una regla nueva. **Es inmutable tras crear**: en el formulario de edición no es un campo de
+  formulario, solo texto de solo lectura; viaja en la ruta, no en el cuerpo del `POST`. Una
+  revisión posterior pidió justificar o eliminar un límite de 40 caracteres que se había agregado
+  junto con esa regla: no existía ningún precedente de ese número en el proyecto —ni en los
+  documentos, ni en el esquema SQLite (`card_id TEXT PRIMARY KEY`, sin longitud), ni en ninguna
+  otra constante de largo del código, todas ancladas a un campo ISO real o a una restricción
+  técnica— así que **se eliminó** en vez de inventarle una justificación.
+- **Activar/desactivar** usa `TarjetaPrueba.activa` (del sub-bloque 2). Desactivar no borra la
+  fila, no toca el PAN ni ninguna ejecución que referencie la tarjeta: se comprobó comparando una
+  ejecución real, campo por campo, antes y después de desactivar la tarjeta que usó. Activar
+  vuelve a dejarla disponible. **`POST .../estado` valida estrictamente su entrada**: solo acepta
+  `"0"` o `"1"` (`presentacion.validar_activa`); cualquier otro valor —incluidos intentos de
+  manipular el formulario— se rechaza con un error HTML propio (400), en vez de convertirse
+  silenciosamente en `False`. Este bloque no filtra tarjetas inactivas en la pantalla de compra:
+  esa integración pertenece a un sub-bloque posterior y no se adelantó.
+
+### Política de PAN en la pantalla administrativa
+
+El PAN completo **solo** se recibe en este formulario, y solo por `POST` (nunca en la URL ni en
+query string). `TarjetaAdministrada` —lo único que la web puede ver— no tiene ningún campo para
+el PAN completo, igual que `TarjetaListada` en `consultas.py`; solo trae `pan_enmascarado`. Un
+error de validación nunca repuebla el campo del PAN recibido, ni el que ya existía: se comprobó
+explícitamente que ni el HTML de éxito ni el de error contienen el número. El pie de página global
+(`base.html`) afirmaba antes que «la interfaz no recibe el número completo en ningún momento»,
+lo cual dejó de ser cierto con esta pantalla; se corrigió para decir la excepción exacta que
+`CLAUDE.md` ya definía: fuera de la pantalla de mantenimiento, nunca.
+
+- **PAN que falla Luhn** → `sintetica = True`, sin fricción.
+- **PAN que pasa Luhn** → exige la casilla de confirmación QA; sin marcarla, se rechaza sin
+  repetir el número en el mensaje.
+- **Edición con «Nuevo PAN» vacío** → conserva el PAN y el tipo (`sintetica`) actuales.
+- **Edición con un PAN nuevo** → aplica la misma validación que crear y recalcula el tipo.
+
+### Flujo y errores
+
+Tras crear, editar o cambiar el estado con éxito: `redirect` HTTP 303 a `/configuracion/tarjetas`
+— decisión nueva en este proyecto (el resto de las pantallas renderiza el resultado directamente),
+adoptada para evitar reenvíos duplicados de un formulario administrativo; aprobada explícitamente
+antes de implementar. Todo error de validación re-renderiza el formulario o el listado con un
+banner de error igual al que ya usa `compra.html`: nunca traceback, SQL, ni el 422 en JSON por
+defecto de FastAPI. Una tarjeta inexistente en editar o en `/estado` responde 404 con
+`no_encontrado.html`, la misma plantilla que ya usaba `/historial/{id}`. Cero JavaScript.
+
+### Verificación
+
+**380 pruebas en verde.** Reconciliado el crecimiento desde las 319 previas: +1 por el crecimiento
+de `SECCIONES` (parametrización existente), +1 por una entrada agregada a mano a la prueba de
+sección activa, +4 por el crecimiento de `PANTALLAS` de 5 a 9 pantallas, +27 pruebas nuevas de
+`test_tarjetas_administracion.py`, +22 de `test_web_configuracion.py`, +6 de la prueba paramétrica
+de valores manipulados en `/estado` agregada en la revisión final. RN-1 a RN-4, guardia de PAN y
+ausencia de secretos verificados aparte, sin regresiones. El cambio real quedó limitado a trece
+archivos: `composicion.py`, `web/app.py`, `web/presentacion.py`, `web/estatico/sibu.css`,
+`web/plantillas/base.html`, `tests/test_web.py`, `tests/test_web_interfaz.py` (modificados), y
+`application/tarjetas.py`, las tres plantillas de Configuración, y `tests/test_tarjetas_administracion.py`
+más `tests/test_web_configuracion.py` (nuevos).
+
 ---
 
 ## Gobernanza

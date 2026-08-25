@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, PAN_DEMO
 from sibutestlab8583.application.consultas import TarjetaListada
+from sibutestlab8583.application.tarjetas import ServicioTarjetas
 from sibutestlab8583.domain.datos_sinteticos import monto_iso
 from sibutestlab8583.application.orquestador import TarjetaDesconocida
 from sibutestlab8583.domain.modelos import (
@@ -25,6 +26,7 @@ from sibutestlab8583.domain.modelos import (
     MensajeInterpretado,
     MensajeIso,
     ResultadoCompra,
+    TarjetaPrueba,
 )
 from sibutestlab8583.web.app import crear_app
 
@@ -71,6 +73,28 @@ class ConsultasFalsas:
         return None
 
 
+class RepositorioTarjetasFalso:
+    """Doble en memoria de `RepositorioTarjetas`, para probar la web sin SQLite.
+
+    `ServicioTarjetas` es real: lo que se sustituye es solo la persistencia,
+    igual que `ConsultasFalsas` sustituye la lectura de ejecuciones. Asi la
+    validacion de negocio (PAN, Luhn, vencimiento) se ejercita de verdad en las
+    pruebas de la capa web, no se reimplementa en un doble.
+    """
+
+    def __init__(self, tarjetas=()):
+        self._tarjetas = {t.card_id: t for t in tarjetas}
+
+    async def obtener(self, card_id):
+        return self._tarjetas.get(card_id)
+
+    async def listar(self):
+        return sorted(self._tarjetas.values(), key=lambda t: t.card_id)
+
+    async def guardar(self, tarjeta):
+        self._tarjetas[tarjeta.card_id] = tarjeta
+
+
 class OrquestadorFalso:
     def __init__(self, resultado=None, error=None):
         self._resultado = resultado
@@ -82,8 +106,20 @@ class OrquestadorFalso:
         return self._resultado
 
 
+#: Tarjeta de demostracion para los dobles de la capa web. El PAN es el mismo
+#: que ya siembra `esquema.py` (generado en ejecucion, nunca literal).
+_TARJETA_DEMO_FALSA = TarjetaPrueba(
+    card_id=CARD_ID_DEMO,
+    pan=PAN_DEMO,
+    expiracion="3012",
+    descripcion="Tarjeta de demostración",
+    sintetica=True,
+    activa=True,
+)
+
+
 class ComposicionFalsa:
-    def __init__(self, resultado=None, error=None, ejecuciones=()):
+    def __init__(self, resultado=None, error=None, ejecuciones=(), tarjetas=None):
         from sibutestlab8583.composicion import Configuracion
 
         self.configuracion = Configuracion(
@@ -92,6 +128,11 @@ class ComposicionFalsa:
         self.consultas = ConsultasFalsas(ejecuciones)
         self.descripciones_de_campos = {"2": "Número de tarjeta (PAN)", "4": "Monto"}
         self._orquestador = OrquestadorFalso(resultado, error)
+        self.administracion_tarjetas = ServicioTarjetas(
+            RepositorioTarjetasFalso(
+                tarjetas if tarjetas is not None else [_TARJETA_DEMO_FALSA]
+            )
+        )
 
     async def orquestador(self, destino):
         return self._orquestador

@@ -20,11 +20,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..application.orquestador import TarjetaDesconocida
+from ..application.tarjetas import (
+    DatosEdicionTarjeta,
+    DatosNuevaTarjeta,
+    TarjetaNoEncontrada,
+)
 from ..composicion import Composicion, Configuracion
 from ..domain.errores import ErrorDelSimulador
 from ..domain.modelos import DatosCompra, DestinoTcp
@@ -154,6 +159,215 @@ async def detalle_ejecucion(
         context=presentacion.contexto_de_detalle(
             detalle, composicion.descripciones_de_campos
         ),
+    )
+
+
+@enrutador.get("/configuracion", response_class=HTMLResponse)
+async def configuracion(
+    request: Request, composicion: Composicion = Depends(obtener_composicion)
+):
+    return PLANTILLAS.TemplateResponse(
+        request=request, name="configuracion.html", context={"seccion": "configuracion"}
+    )
+
+
+@enrutador.get("/configuracion/tarjetas", response_class=HTMLResponse)
+async def config_tarjetas(
+    request: Request, composicion: Composicion = Depends(obtener_composicion)
+):
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="config_tarjetas.html",
+        context={
+            "seccion": "configuracion",
+            "tarjetas": await composicion.administracion_tarjetas.listar(),
+        },
+    )
+
+
+@enrutador.get("/configuracion/tarjetas/nueva", response_class=HTMLResponse)
+async def config_tarjeta_nueva(
+    request: Request, composicion: Composicion = Depends(obtener_composicion)
+):
+    return _formulario_tarjeta(request, modo="nueva")
+
+
+@enrutador.post("/configuracion/tarjetas", response_class=HTMLResponse)
+async def config_tarjeta_crear(
+    request: Request,
+    # Cadena vacia a proposito: declarar los campos obligatorios haria que
+    # FastAPI respondiera su propio 422 en JSON ante un formulario vacio, en
+    # vez de la pantalla propia con el error explicado.
+    card_id: str = Form(""),
+    descripcion: str = Form(""),
+    pan: str = Form(""),
+    expiracion: str = Form(""),
+    confirma_qa: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    try:
+        await composicion.administracion_tarjetas.crear(
+            DatosNuevaTarjeta(
+                card_id=card_id,
+                descripcion=descripcion,
+                pan=pan,
+                expiracion=expiracion,
+                confirma_qa=bool(confirma_qa),
+            )
+        )
+    except ValueError as error:
+        # El PAN nunca vuelve al formulario: ni el recibido ni ningun otro.
+        return _formulario_tarjeta(
+            request,
+            modo="nueva",
+            error=str(error),
+            card_id=card_id,
+            descripcion=descripcion,
+            expiracion=expiracion,
+            confirma_qa=bool(confirma_qa),
+            estado_http=400,
+        )
+    return RedirectResponse("/configuracion/tarjetas", status_code=303)
+
+
+@enrutador.get("/configuracion/tarjetas/{card_id}/editar", response_class=HTMLResponse)
+async def config_tarjeta_editar_formulario(
+    request: Request,
+    card_id: str,
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    tarjeta = await composicion.administracion_tarjetas.obtener(card_id)
+    if tarjeta is None:
+        return _tarjeta_no_encontrada(request)
+    return _formulario_tarjeta(
+        request,
+        modo="editar",
+        card_id=tarjeta.card_id,
+        descripcion=tarjeta.descripcion,
+        expiracion=tarjeta.expiracion,
+        pan_enmascarado=tarjeta.pan_enmascarado,
+    )
+
+
+@enrutador.post("/configuracion/tarjetas/{card_id}", response_class=HTMLResponse)
+async def config_tarjeta_actualizar(
+    request: Request,
+    card_id: str,
+    descripcion: str = Form(""),
+    expiracion: str = Form(""),
+    pan_nuevo: str = Form(""),
+    confirma_qa: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    try:
+        await composicion.administracion_tarjetas.actualizar(
+            card_id,
+            DatosEdicionTarjeta(
+                descripcion=descripcion,
+                expiracion=expiracion,
+                pan_nuevo=pan_nuevo,
+                confirma_qa=bool(confirma_qa),
+            ),
+        )
+    except TarjetaNoEncontrada:
+        return _tarjeta_no_encontrada(request)
+    except ValueError as error:
+        actual = await composicion.administracion_tarjetas.obtener(card_id)
+        return _formulario_tarjeta(
+            request,
+            modo="editar",
+            error=str(error),
+            card_id=card_id,
+            descripcion=descripcion,
+            expiracion=expiracion,
+            pan_enmascarado=actual.pan_enmascarado if actual else "",
+            confirma_qa=bool(confirma_qa),
+            estado_http=400,
+        )
+    return RedirectResponse("/configuracion/tarjetas", status_code=303)
+
+
+@enrutador.post("/configuracion/tarjetas/{card_id}/estado", response_class=HTMLResponse)
+async def config_tarjeta_estado(
+    request: Request,
+    card_id: str,
+    activa: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    try:
+        activa_bool = presentacion.validar_activa(activa)
+    except ValueError as error:
+        return await _config_tarjetas_con_error(request, composicion, str(error))
+
+    try:
+        await composicion.administracion_tarjetas.cambiar_estado(card_id, activa=activa_bool)
+    except TarjetaNoEncontrada:
+        return _tarjeta_no_encontrada(request)
+    return RedirectResponse("/configuracion/tarjetas", status_code=303)
+
+
+async def _config_tarjetas_con_error(request: Request, composicion: Composicion, error: str):
+    """El listado de tarjetas, con un banner de error. 400: entrada rechazada."""
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="config_tarjetas.html",
+        context={
+            "seccion": "configuracion",
+            "tarjetas": await composicion.administracion_tarjetas.listar(),
+            "error": error,
+        },
+        status_code=400,
+    )
+
+
+def _formulario_tarjeta(
+    request: Request,
+    *,
+    modo: str,
+    card_id: str = "",
+    descripcion: str = "",
+    expiracion: str = "",
+    pan_enmascarado: str = "",
+    confirma_qa: bool = False,
+    error: str | None = None,
+    estado_http: int = 200,
+):
+    """Renderiza el formulario de tarjeta, comun a crear y editar.
+
+    Nunca recibe ni reenvia el PAN: ni el que se acaba de escribir ni ninguno
+    guardado. `pan_enmascarado` es lo unico que puede mostrarse de un numero
+    ya existente.
+    """
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="config_tarjeta_form.html",
+        context={
+            "seccion": "configuracion",
+            "modo": modo,
+            "card_id": card_id,
+            "descripcion": descripcion,
+            "expiracion": expiracion,
+            "pan_enmascarado": pan_enmascarado,
+            "confirma_qa": confirma_qa,
+            "error": error,
+        },
+        status_code=estado_http,
+    )
+
+
+def _tarjeta_no_encontrada(request: Request):
+    """404 con HTML del producto para un `card_id` que no existe."""
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="no_encontrado.html",
+        context={
+            "seccion": "configuracion",
+            "titulo": "Tarjeta no encontrada",
+            "detalle": "La tarjeta solicitada no existe o ya no está disponible.",
+            "ruta_vuelta": "/configuracion/tarjetas",
+            "texto_vuelta": "Volver a tarjetas",
+        },
+        status_code=404,
     )
 
 

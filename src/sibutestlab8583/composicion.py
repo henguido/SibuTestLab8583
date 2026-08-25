@@ -29,6 +29,7 @@ from .adapters.transporte.framing_demo import FramingDemostracion
 from .adapters.transporte.tcp import TIEMPO_LIMITE_POR_DEFECTO, TransporteTcp
 from .application.consultas import ServicioConsultas
 from .application.orquestador import Orquestador
+from .application.tarjetas import ServicioTarjetas
 from .domain.catalogo import NOMBRE_CATALOGO_GENERICO
 from .domain.modelos import DestinoTcp
 from .profiles.generico import CODIGO_PROCESO_COMPRA, perfil_activo
@@ -87,6 +88,10 @@ class Composicion:
     @property
     def consultas(self) -> ServicioConsultas:
         return ServicioConsultas(self._tarjetas, self._ejecuciones)
+
+    @property
+    def administracion_tarjetas(self) -> ServicioTarjetas:
+        return ServicioTarjetas(self._tarjetas)
 
     @property
     def descripciones_de_campos(self) -> Mapping[str, str]:

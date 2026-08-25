@@ -54,11 +54,14 @@ def _solo_texto(html: str) -> str:
 #: renderizar y las guardias parametrizadas la usan para saber sobre que iterar,
 #: de modo que agregar una pantalla la mete en todas las guardias a la vez y no
 #: se puede olvidar ninguna.
-PANTALLAS = ("compra", "resultado", "historial", "detalle", "no_encontrado")
+PANTALLAS = (
+    "compra", "resultado", "historial", "detalle", "no_encontrado",
+    "configuracion", "config_tarjetas", "config_tarjeta_nueva", "config_tarjeta_editar",
+)
 
 
 def _paginas() -> dict[str, str]:
-    """El HTML de las cinco pantallas, con contenido en todas."""
+    """El HTML de las nueve pantallas, con contenido en todas."""
     ejecucion = _resultado(EstadoEjecucion.APROBADA, codigo="00").ejecucion
     cliente = _cliente(
         resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"), ejecuciones=[ejecucion]
@@ -69,6 +72,12 @@ def _paginas() -> dict[str, str]:
         "historial": cliente.get("/historial").text,
         "detalle": cliente.get(f"/historial/{ejecucion.id}").text,
         "no_encontrado": cliente.get("/historial/999999").text,
+        "configuracion": cliente.get("/configuracion").text,
+        "config_tarjetas": cliente.get("/configuracion/tarjetas").text,
+        "config_tarjeta_nueva": cliente.get("/configuracion/tarjetas/nueva").text,
+        "config_tarjeta_editar": cliente.get(
+            f"/configuracion/tarjetas/{CARD_ID_DEMO}/editar"
+        ).text,
     }
     assert tuple(paginas) == PANTALLAS, "PANTALLAS y _paginas() se desincronizaron"
     return paginas
@@ -102,7 +111,8 @@ def test_la_navegacion_no_ofrece_secciones_todavia_no_servidas():
 
 
 @pytest.mark.parametrize(
-    "ruta,clave", [("/", "compra"), ("/historial", "historial")]
+    "ruta,clave",
+    [("/", "compra"), ("/historial", "historial"), ("/configuracion", "configuracion")],
 )
 def test_cada_pantalla_marca_su_propia_seccion_como_activa(ruta, clave):
     html = _cliente().get(ruta).text

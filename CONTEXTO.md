@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-08-24
+**Última actualización:** 2026-08-25
 
 ## Estado actual
 
@@ -31,7 +31,7 @@ clasifica según el **catálogo persistido en SQLite**, leído en cada compra me
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
 Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
 enmascarado, e historial **navegable**: cada ejecución tiene su detalle en `/historial/{id}`,
-con los campos ISO de la solicitud y de la respuesta. **319 pruebas en verde.** El CI las
+con los campos ISO de la solicitud y de la respuesta. **380 pruebas en verde.** El CI las
 ejecuta en Python 3.11, 3.12 y 3.13, y comprueba además que un clon limpio se instale con el
 metadata declarado.
 
@@ -46,19 +46,33 @@ contra una base anterior real —con tarjeta, ejecución, secuencia STAN y el es
 `ejecuciones` a la vez— comprobando que ninguno de esos datos se pierde ni se modifica, ni siquiera
 tras una segunda inicialización.
 
+Módulo de Configuración con interfaz propia (sub-bloque 3/4): `GET /configuracion` muestra tres
+bloques —Tarjetas de prueba, Códigos de respuesta, Destinos—, y solo el primero enlaza a algo
+real; Códigos y Destinos siguen marcados «Próximamente», sin ruta propia todavía. La
+administración de tarjetas es completa: listar, crear, editar y activar/desactivar, con
+`ServicioTarjetas` (`application/tarjetas.py`) construido solo sobre `RepositorioTarjetas` (sin
+cambios de contrato). `card_id` es requerido e inmutable tras crear. El PAN completo solo se
+recibe en ese formulario, nunca se reexpone (ni en éxito ni en error), y `TarjetaAdministrada` no
+tiene campo para el PAN completo. Un PAN que falla Luhn queda `sintetica=True` sin fricción; uno
+que pasa Luhn exige la casilla de confirmación QA. En edición, «Nuevo PAN» vacío conserva el
+número y el tipo actuales. Toda mutación exitosa redirige (303) a `/configuracion/tarjetas`;
+`POST .../estado` valida estrictamente `"0"`/`"1"`, sin convertir un valor manipulado en booleano.
+Sin filtrar todavía tarjetas inactivas en la pantalla de compra: esa integración es un sub-bloque
+posterior.
+
 La interfaz tiene identidad propia: cinta con la marca `SibuTestLab8583` y el subtítulo
-`Laboratorio de pruebas ISO 8583`, navegación entre `Nueva transacción` e `Historial`, y una
-hoja de estilos propia en `src/sibutestlab8583/web/estatico/sibu.css`, servida en `/estatico`.
+`Laboratorio de pruebas ISO 8583`, navegación entre `Nueva transacción`, `Historial` y
+`Configuración`, y una hoja de estilos propia en `src/sibutestlab8583/web/estatico/sibu.css`,
+servida en `/estatico`.
 Los siete desenlaces se presentan con cuatro pistas simultáneas —señal gráfica, rótulo corto,
 título y explicación— para no depender del color. Todo el texto visible lleva ortografía española
 completa; identificadores, enums, clases, tokens y valores de `data-estado` se mantienen en ASCII,
 y una prueba lo comprueba en ambos sentidos. Contraste medido: el peor de los siete es
 5.89:1 y el peor par de texto 5.42:1, ambos por encima del mínimo AA de 4.5:1.
 
-**Todavía NO existe:** ninguna interfaz para el módulo de Configuración —sin `/configuracion`,
-sin formularios, sin administración de tarjetas ni de destinos desde la web, sin filtro de
-tarjetas activas ni selector de destino en la compra—, el modo avanzado ISO 8583 para editar
-campos de la solicitud, el isoscopio 2.0 —comparar solicitud contra respuesta y mostrar el
+**Todavía NO existe:** administración visual de códigos de respuesta ni de destinos, selector de
+destino ni filtro de tarjetas activas en la pantalla de compra, el modo avanzado ISO 8583 para
+editar campos de la solicitud, el isoscopio 2.0 —comparar solicitud contra respuesta y mostrar el
 bitmap—, el motor de carga, los perfiles reales de Visa y Mastercard, `README.md`, Docker, skill
 propio en `.claude/` ni autenticación.
 
@@ -191,6 +205,7 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-08-24 | Detalle navegable de una ejecución en `/historial/{id}`, con 404 propio. El isoscopio, el banner de estado y el resumen pasan a macros compartidas. Revisión visual humana antes del commit |
 | 2026-08-24 | D-1: RN-1 pasa a usar el catálogo persistido en SQLite (`RepositorioCatalogosSQLite`) en vez de la constante `CATALOGO_GENERICO`. `Composicion.orquestador()` pasa a asíncrono y consulta la base en cada llamada, sin caché. Sin cambios de esquema ni de interfaz |
 | 2026-08-24 | Fase 1, sub-bloque 2: `TarjetaPrueba.activa` con lectura/escritura reales; tabla `destinos` con `DestinoGuardado`, `RepositorioDestinos` y `RepositorioDestinosSQLite`, semilla `LOCAL-DEMO`; migración aditiva generalizada, probada contra una base anterior real completa. Sin interfaz |
+| 2026-08-25 | Fase 1, sub-bloque 3/4: `GET /configuracion` (tres bloques, solo Tarjetas enlaza a algo real) y administración web completa de tarjetas (`ServicioTarjetas`): crear, editar, activar/desactivar. `card_id` inmutable, PAN completo solo en el formulario administrativo y nunca reexpuesto, validación Luhn con confirmación QA, redirect 303 tras mutaciones, `/estado` con validación estricta de entrada. Sin filtro de tarjetas activas en la compra todavía |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -219,10 +234,10 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 ## Próximo paso
 
 Fase 1 (módulo de Configuración) en curso. Cerrados los sub-bloques 1 (**D-1: catálogo
-persistido**) y 2 (**persistencia base para tarjetas y destinos**: `activa`, tabla `destinos`,
-migración generalizada). Siguen, en el orden aprobado: navegación y `GET /configuracion`,
-administración de tarjetas, administración de destinos, integración con la compra, y
-documentación final de la fase.
+persistido**), 2 (**persistencia base para tarjetas y destinos**) y 3/4 (**`/configuracion` y
+administración de tarjetas**). Siguen, en el orden aprobado: administración visual de códigos de
+respuesta, administración visual de destinos, integración con la compra (selector de destino,
+filtro de tarjetas activas), y documentación final de la fase.
 
 Del plan previo de cinco commits para el constructor avanzado y el detalle del historial siguen
 pendientes, después de la Fase 1: declarar campos permitidos y editables en el perfil, y el modo
@@ -231,9 +246,8 @@ avanzado ISO 8583.
 Cerrados P0-1, P0-2 y P0-3, y publicado el rediseño de la interfaz. De los P1 quedan el
 isoscopio 2.0 —dejar de descartar la representación transmitida de la solicitud, el MTI y el
 bitmap, y comparar solicitud contra respuesta— y provocar los seis códigos sin reiniciar el
-host. Sobre lo ya construido queda además la pantalla `Tarjetas de
-prueba`, cuyo lugar en la navegación está preparado. Pendiente aparte: ampliar `requires-python`
-a `>=3.11`, para lo que el CI ya aportó evidencia.
+host. Pendiente aparte: ampliar `requires-python` a `>=3.11`, para lo que el CI ya aportó
+evidencia.
 
 ## Archivos importantes
 

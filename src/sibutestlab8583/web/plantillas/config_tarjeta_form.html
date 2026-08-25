@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal %}
+{% block titulo %}{{ 'Nueva tarjeta' if modo == 'nueva' else 'Editar tarjeta' }} · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>{{ 'Nueva tarjeta de prueba' if modo == 'nueva' else 'Editar tarjeta de prueba' }}</h1>
+  {% if modo == 'editar' %}
+  <p class="encabezado__sub">Editando la tarjeta <code>{{ card_id }}</code>.</p>
+  {% endif %}
+</div>
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise los datos</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+<form method="post"
+      action="{{ '/configuracion/tarjetas' if modo == 'nueva' else '/configuracion/tarjetas/' ~ card_id }}">
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Identificación</h2>
+    </div>
+    <div class="panel__cuerpo">
+      <div class="rejilla">
+        {% if modo == 'nueva' %}
+        <div class="campo campo--mono">
+          <label class="campo__rotulo" for="card_id">Identificador</label>
+          <input type="text" id="card_id" name="card_id" autocomplete="off"
+                 value="{{ card_id }}" required>
+          <p class="campo__pista">
+            Letras, números, guiones y guion bajo. No podrá modificarse después de crear
+            la tarjeta.
+          </p>
+        </div>
+        {% else %}
+        <div class="campo campo--mono">
+          <span class="campo__rotulo">Identificador</span>
+          <div class="informativo">
+            <span class="informativo__valor">{{ card_id }}</span>
+            <span>no editable</span>
+          </div>
+        </div>
+        {% endif %}
+        <div class="campo">
+          <label class="campo__rotulo" for="descripcion">Descripción</label>
+          <input type="text" id="descripcion" name="descripcion" autocomplete="off"
+                 value="{{ descripcion }}" required>
+        </div>
+        <div class="campo campo--mono">
+          <label class="campo__rotulo" for="expiracion">Vencimiento</label>
+          <input type="text" id="expiracion" name="expiracion" autocomplete="off"
+                 placeholder="AAMM" value="{{ expiracion }}" required>
+          <p class="campo__pista">Formato AAMM: dos dígitos de año y dos dígitos de mes.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Número de tarjeta</h2>
+    </div>
+    <div class="panel__cuerpo">
+      {% if modo == 'editar' %}
+      <div class="campo">
+        <span class="campo__rotulo">Número actual</span>
+        <div class="informativo">
+          <span class="informativo__valor">{{ pan_enmascarado }}</span>
+        </div>
+      </div>
+      {% endif %}
+      <div class="campo campo--mono">
+        <label class="campo__rotulo" for="{{ 'pan' if modo == 'nueva' else 'pan_nuevo' }}">
+          {{ 'Número de tarjeta (PAN)' if modo == 'nueva' else 'Nuevo número (opcional)' }}
+        </label>
+        <input type="text" id="{{ 'pan' if modo == 'nueva' else 'pan_nuevo' }}"
+               name="{{ 'pan' if modo == 'nueva' else 'pan_nuevo' }}"
+               inputmode="numeric" autocomplete="off" value=""
+               {% if modo == 'nueva' %}required{% endif %}>
+        <p class="campo__pista">
+          {% if modo == 'nueva' %}
+          Entre 12 y 19 dígitos. Se recibe completo únicamente en este formulario.
+          {% else %}
+          Déjelo vacío para conservar el número actual. Si informa uno nuevo, se aplica la
+          misma validación que al crear una tarjeta.
+          {% endif %}
+        </p>
+      </div>
+      <div class="campo campo--casilla">
+        <input type="checkbox" id="confirma_qa" name="confirma_qa" value="1"
+               {% if confirma_qa %}checked{% endif %}>
+        <label for="confirma_qa">
+          Confirmo que esta tarjeta proviene de un ambiente de pruebas autorizado
+        </label>
+      </div>
+      <p class="campo__pista">
+        Solo hace falta marcar la casilla si el número informado supera la validación de
+        tarjeta real.
+      </p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="acciones">
+      <button class="boton" type="submit">Guardar</button>
+      <span class="acciones__nota">Los cambios no alteran el historial de ejecuciones ya registrado.</span>
+    </div>
+  </section>
+</form>
+
+<a class="volver" href="/configuracion/tarjetas">&larr; Volver a tarjetas</a>
+{% endblock %}

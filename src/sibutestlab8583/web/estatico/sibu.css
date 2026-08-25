@@ -921,7 +921,92 @@ select:hover {
   font-style: italic;
 }
 
-/* ==================================================== 10. RESPONSIVE === */
+/* ================================================ 10. ADMINISTRACION === */
+
+/* Enlace y boton de activar/desactivar en una misma celda de tabla. */
+.tabla-acciones {
+  display: flex;
+  align-items: center;
+  gap: var(--e3);
+}
+
+/* Boton que se ve como enlace: mismas acciones que un boton (envia un POST),
+   pero no compite visualmente con la accion principal de la pantalla. */
+.enlace-boton {
+  font: inherit;
+  color: var(--acento);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.enlace-boton:hover {
+  color: var(--acento-alto);
+}
+
+/* Rotulo corto de tipo o estado de una tarjeta. No es un `Aviso` de los siete
+   desenlaces: es una propiedad de la tarjeta, no de una ejecucion, asi que
+   toma sus propios tonos, reutilizando los mismos tokens de la seccion 1. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--e1);
+  padding: 0.2rem var(--e2);
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-fuerte);
+  border-radius: var(--r-pastilla);
+  border: 1px solid;
+}
+
+.chip--activa {
+  color: var(--est-aprobada);
+  background: var(--est-aprobada-f);
+  border-color: var(--est-aprobada-b);
+}
+
+.chip--inactiva {
+  color: var(--est-no-enviada);
+  background: var(--est-no-enviada-f);
+  border-color: var(--est-no-enviada-b);
+}
+
+.chip--sintetica {
+  color: var(--est-timeout);
+  background: var(--est-timeout-f);
+  border-color: var(--est-timeout-b);
+}
+
+.chip--qa {
+  color: var(--est-indeterminado);
+  background: var(--est-indeterminado-f);
+  border-color: var(--est-indeterminado-b);
+}
+
+.chip--proximamente {
+  color: var(--tenue);
+  background: var(--panel-alterno);
+  border-color: var(--linea);
+}
+
+/* Fila de casilla de confirmacion: la etiqueta va al lado, no encima. */
+.campo--casilla {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--e2);
+}
+
+.campo--casilla input[type="checkbox"] {
+  margin-top: 0.2rem;
+  accent-color: var(--acento);
+  width: 1rem;
+  height: 1rem;
+}
+
+/* ==================================================== 11. RESPONSIVE === */
 
 /* Tableta: la cinta deja de competir por el ancho y la navegacion baja. */
 @media (max-width: 860px) {
