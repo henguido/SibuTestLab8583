@@ -1546,6 +1546,73 @@ archivos: `composicion.py`, `web/app.py`, `web/presentacion.py`, `web/estatico/s
 `application/tarjetas.py`, las tres plantillas de Configuración, y `tests/test_tarjetas_administracion.py`
 más `tests/test_web_configuracion.py` (nuevos).
 
+## 2026-08-25 · Fase 1, sub-bloque 5: modelo extendido y persistencia de tarjetas
+
+Precedido por una auditoría técnica de solo lectura del modelo de tarjeta actual (sin cambios de
+código), que confirmó que hoy solo existen PAN y expiración como datos transaccionales, que DE35
+(Track 2) ya estaba reservado en `CAMPOS_SENSIBLES` sin implementarse nunca, y que Service
+Code/Discretionary Data no son DE independientes sino subcampos posicionales de Track1/Track2. La
+auditoría se aprobó con una corrección de diseño: no persistir Track1/Track2 completos ni sus
+overrides, para no crear una segunda fuente de verdad del PAN.
+
+### Modelo de dominio
+
+`TarjetaPrueba` gana ocho campos de laboratorio, todos `str = ""`: `titular`, `service_code`,
+`discretionary_data`, `cvv`, `cvv2`, `icvv`, `card_sequence_number`, `pin_block_laboratorio`.
+Ningún constructor existente se rompe: el repositorio entero construye `TarjetaPrueba` por
+palabra clave. **`track1`, `track2` y sus overrides no se agregaron**: se derivarán más adelante
+desde PAN + titular + expiración + service code + discretionary data, en un sub-bloque posterior,
+sin persistirse como estado normal de la tarjeta. **El PIN en claro no se modela en ningún
+campo**, ni aquí ni en ningún otro lugar del sistema. `pin_block_laboratorio` es un valor con
+forma de PIN Block —para pruebas de laboratorio—, nunca un PIN Block criptográficamente válido:
+el proyecto no tiene ninguna clave de cifrado detrás. **El PAN completo sigue teniendo una única
+fuente persistente: `tarjetas_prueba.pan`.**
+
+### Esquema y migración
+
+Ocho columnas nuevas en `tarjetas_prueba`, todas `TEXT NOT NULL DEFAULT ''`, agregadas al mismo
+`CREATE TABLE` (bases nuevas) y a la misma tupla `COLUMNAS_AGREGADAS_TARJETAS` que ya migraba
+`activa` (bases existentes) — sin recrear la tabla, sin copiar filas, sin backfill inventado.
+Bases anteriores reciben `''` en las ocho columnas nuevas; ninguna otra columna se toca.
+`inicializar()` sigue siendo idempotente.
+
+**Prueba de compatibilidad completa:** `test_compatibilidad_con_esquema_anterior_a_las_columnas_de_laboratorio`
+reconstruye el esquema exacto de justo antes de este sub-bloque —tarjeta, ejecución histórica,
+secuencia STAN y dos destinos ya sembrados— y comprueba los doce puntos exigidos (columnas
+nuevas presentes, valores `''` para la fila anterior, PAN/máscara/expiración/descripción/
+sintética/activa idénticos, ejecución idéntica, STAN idéntico, destinos idénticos, sin filas
+duplicadas), antes y después de una segunda `inicializar()`. **No vacuidad comprobada por
+mutación** (se comentaron las ocho columnas en `COLUMNAS_AGREGADAS_TARJETAS`, la prueba falló, se
+restauró el código), sin usar `git stash`. Al escribirla se detectó y corrigió un defecto propio:
+la lista de columnas esperadas en la prueba se derivaba inicialmente de la misma constante de
+producción que la prueba debía vigilar, así que una mutación de esa constante no se detectaba a
+sí misma; se reescribió como una lista independiente, literal, en el archivo de prueba.
+
+### `RepositorioTarjetasSQLite`
+
+`obtener()`, `listar()` y `guardar()` (INSERT y `ON CONFLICT ... DO UPDATE`) leen, listan y
+persisten los ocho campos nuevos; `_a_tarjeta()` los construye. **El puerto `RepositorioTarjetas`
+no cambió**: `guardar()` ya era un upsert y alcanzaba.
+
+### Explícitamente fuera de este sub-bloque
+
+`application/tarjetas.py`, `ServicioTarjetas` y `TarjetaAdministrada` no se tocaron: la capa de
+aplicación y la interfaz todavía no exponen estos campos. `profiles/generico.py` y `armado.py`
+no cambiaron: ningún campo nuevo viaja en el mensaje ISO. No se agregó ninguna validación de
+negocio para los ocho campos —longitud, formato— ni se tocó la política de tarjeta sintética
+frente a QA autorizada: quedan para el bloque que decida cómo exponerlos y validarlos.
+
+### Verificación
+
+**385 pruebas en verde** (380 + 5: 1 en `test_migracion_generalizada.py`, 4 en
+`test_persistencia.py`). Una revisión posterior corrigió un error de redacción propio que había
+reportado «10 pruebas nuevas» sin que el desglose lo respaldara; se reconcilió contando con
+`pytest --collect-only` en ambos archivos, confirmando el 5. RN-1 a RN-4, STAN y persistencia
+JSON verificados aparte, sin regresiones. Guardia de PAN en verde. Sin PIN en claro ni patrones
+de secreto en los cinco archivos tocados: `domain/modelos.py`, `adapters/persistence/esquema.py`,
+`adapters/persistence/sqlite_repos.py`, `tests/test_migracion_generalizada.py`,
+`tests/test_persistencia.py`.
+
 ---
 
 ## Gobernanza

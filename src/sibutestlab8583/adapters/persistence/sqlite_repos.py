@@ -104,7 +104,9 @@ class RepositorioTarjetasSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
-                "SELECT card_id, pan, expiracion, descripcion, sintetica, activa"
+                "SELECT card_id, pan, expiracion, descripcion, sintetica, activa,"
+                "       titular, service_code, discretionary_data, cvv, cvv2, icvv,"
+                "       card_sequence_number, pin_block_laboratorio"
                 " FROM tarjetas_prueba WHERE card_id = ?",
                 (card_id,),
             ) as cursor:
@@ -115,7 +117,9 @@ class RepositorioTarjetasSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
-                "SELECT card_id, pan, expiracion, descripcion, sintetica, activa"
+                "SELECT card_id, pan, expiracion, descripcion, sintetica, activa,"
+                "       titular, service_code, discretionary_data, cvv, cvv2, icvv,"
+                "       card_sequence_number, pin_block_laboratorio"
                 " FROM tarjetas_prueba ORDER BY card_id"
             ) as cursor:
                 filas = await cursor.fetchall()
@@ -126,15 +130,24 @@ class RepositorioTarjetasSQLite(_RepositorioSQLite):
             await conexion.execute(
                 "INSERT INTO tarjetas_prueba"
                 " (card_id, pan, pan_enmascarado, expiracion, descripcion, sintetica, activa,"
-                "  creada_en)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                "  titular, service_code, discretionary_data, cvv, cvv2, icvv,"
+                "  card_sequence_number, pin_block_laboratorio, creada_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(card_id) DO UPDATE SET"
                 "   pan = excluded.pan,"
                 "   pan_enmascarado = excluded.pan_enmascarado,"
                 "   expiracion = excluded.expiracion,"
                 "   descripcion = excluded.descripcion,"
                 "   sintetica = excluded.sintetica,"
-                "   activa = excluded.activa",
+                "   activa = excluded.activa,"
+                "   titular = excluded.titular,"
+                "   service_code = excluded.service_code,"
+                "   discretionary_data = excluded.discretionary_data,"
+                "   cvv = excluded.cvv,"
+                "   cvv2 = excluded.cvv2,"
+                "   icvv = excluded.icvv,"
+                "   card_sequence_number = excluded.card_sequence_number,"
+                "   pin_block_laboratorio = excluded.pin_block_laboratorio",
                 (
                     tarjeta.card_id,
                     tarjeta.pan,
@@ -143,6 +156,14 @@ class RepositorioTarjetasSQLite(_RepositorioSQLite):
                     tarjeta.descripcion,
                     int(tarjeta.sintetica),
                     int(tarjeta.activa),
+                    tarjeta.titular,
+                    tarjeta.service_code,
+                    tarjeta.discretionary_data,
+                    tarjeta.cvv,
+                    tarjeta.cvv2,
+                    tarjeta.icvv,
+                    tarjeta.card_sequence_number,
+                    tarjeta.pin_block_laboratorio,
                     datetime.now().astimezone().isoformat(),
                 ),
             )
@@ -298,6 +319,14 @@ def _a_tarjeta(fila: aiosqlite.Row) -> TarjetaPrueba:
         descripcion=fila["descripcion"],
         sintetica=bool(fila["sintetica"]),
         activa=bool(fila["activa"]),
+        titular=fila["titular"],
+        service_code=fila["service_code"],
+        discretionary_data=fila["discretionary_data"],
+        cvv=fila["cvv"],
+        cvv2=fila["cvv2"],
+        icvv=fila["icvv"],
+        card_sequence_number=fila["card_sequence_number"],
+        pin_block_laboratorio=fila["pin_block_laboratorio"],
     )
 
 

@@ -184,6 +184,130 @@ async def test_una_ejecucion_referencia_card_id_y_no_duplica_el_pan(base):
             assert PAN_DEMO not in str(valor), "el PAN completo no puede aparecer en ejecuciones"
 
 
+# ------------------------------ sub-bloque 5: campos de laboratorio de la tarjeta --
+
+
+def test_un_constructor_anterior_sigue_funcionando_y_los_campos_nuevos_quedan_vacios():
+    """Compatibilidad del modelo: nadie construye TarjetaPrueba posicionalmente."""
+    tarjeta = TarjetaPrueba(
+        card_id="COMPATIBLE-01",
+        pan=pan_sintetico("1230"),
+        expiracion="3012",
+    )
+    assert tarjeta.titular == ""
+    assert tarjeta.service_code == ""
+    assert tarjeta.discretionary_data == ""
+    assert tarjeta.cvv == ""
+    assert tarjeta.cvv2 == ""
+    assert tarjeta.icvv == ""
+    assert tarjeta.card_sequence_number == ""
+    assert tarjeta.pin_block_laboratorio == ""
+
+
+async def test_guardar_y_recuperar_los_ocho_campos_de_laboratorio(base):
+    repo = RepositorioTarjetasSQLite(base)
+    tarjeta = TarjetaPrueba(
+        card_id="LAB-01",
+        pan=pan_sintetico("1231"),
+        expiracion="3012",
+        titular="LABORATORIO SIBU",
+        service_code="201",
+        discretionary_data="00000000",
+        cvv="123",
+        cvv2="456",
+        icvv="789",
+        card_sequence_number="01",
+        pin_block_laboratorio="0000AAAABBBBCCCC",  # forma de laboratorio, no un PIN Block real
+    )
+    await repo.guardar(tarjeta)
+
+    recuperada = await repo.obtener("LAB-01")
+    assert recuperada is not None
+    for campo in (
+        "titular", "service_code", "discretionary_data", "cvv", "cvv2", "icvv",
+        "card_sequence_number", "pin_block_laboratorio",
+    ):
+        assert getattr(recuperada, campo) == getattr(tarjeta, campo), campo
+
+    listadas = {t.card_id: t for t in await repo.listar()}
+    listada = listadas["LAB-01"]
+    for campo in (
+        "titular", "service_code", "discretionary_data", "cvv", "cvv2", "icvv",
+        "card_sequence_number", "pin_block_laboratorio",
+    ):
+        assert getattr(listada, campo) == getattr(tarjeta, campo), campo
+
+
+async def test_el_upsert_actualiza_los_campos_de_laboratorio_sin_afectar_el_resto(base):
+    repo = RepositorioTarjetasSQLite(base)
+    original = TarjetaPrueba(
+        card_id="LAB-02",
+        pan=pan_sintetico("1232"),
+        expiracion="3012",
+        descripcion="original",
+        sintetica=True,
+        activa=True,
+        titular="PRIMER TITULAR",
+        service_code="101",
+        discretionary_data="11111111",
+        cvv="111",
+        cvv2="222",
+        icvv="333",
+        card_sequence_number="01",
+        pin_block_laboratorio="1111AAAA",
+    )
+    await repo.guardar(original)
+
+    actualizada_valores = TarjetaPrueba(
+        card_id="LAB-02",
+        pan=original.pan,
+        expiracion=original.expiracion,
+        descripcion=original.descripcion,
+        sintetica=original.sintetica,
+        activa=original.activa,
+        titular="SEGUNDO TITULAR",
+        service_code="202",
+        discretionary_data="22222222",
+        cvv="444",
+        cvv2="555",
+        icvv="666",
+        card_sequence_number="02",
+        pin_block_laboratorio="2222BBBB",
+    )
+    await repo.guardar(actualizada_valores)
+
+    recuperada = await repo.obtener("LAB-02")
+    assert recuperada.titular == "SEGUNDO TITULAR"
+    assert recuperada.service_code == "202"
+    assert recuperada.discretionary_data == "22222222"
+    assert recuperada.cvv == "444"
+    assert recuperada.cvv2 == "555"
+    assert recuperada.icvv == "666"
+    assert recuperada.card_sequence_number == "02"
+    assert recuperada.pin_block_laboratorio == "2222BBBB"
+
+    # Lo que no se toco en este upsert sigue intacto.
+    assert recuperada.pan == original.pan
+    assert recuperada.expiracion == original.expiracion
+    assert recuperada.descripcion == "original"
+    assert recuperada.sintetica is True
+    assert recuperada.activa is True
+
+
+async def test_una_base_nueva_trae_las_ocho_columnas_de_laboratorio_vacias(base):
+    """La tarjeta de demostracion, sembrada por `inicializar()`, no las define."""
+    tarjeta = await RepositorioTarjetasSQLite(base).obtener(CARD_ID_DEMO)
+    assert tarjeta is not None
+    assert tarjeta.titular == ""
+    assert tarjeta.service_code == ""
+    assert tarjeta.discretionary_data == ""
+    assert tarjeta.cvv == ""
+    assert tarjeta.cvv2 == ""
+    assert tarjeta.icvv == ""
+    assert tarjeta.card_sequence_number == ""
+    assert tarjeta.pin_block_laboratorio == ""
+
+
 async def test_una_ejecucion_exige_una_tarjeta_existente(base):
     repo = RepositorioEjecucionesSQLite(base)
     with pytest.raises(sqlite3.IntegrityError):

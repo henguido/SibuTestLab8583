@@ -31,7 +31,7 @@ clasifica según el **catálogo persistido en SQLite**, leído en cada compra me
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
 Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
 enmascarado, e historial **navegable**: cada ejecución tiene su detalle en `/historial/{id}`,
-con los campos ISO de la solicitud y de la respuesta. **380 pruebas en verde.** El CI las
+con los campos ISO de la solicitud y de la respuesta. **385 pruebas en verde.** El CI las
 ejecuta en Python 3.11, 3.12 y 3.13, y comprueba además que un clon limpio se instale con el
 metadata declarado.
 
@@ -59,6 +59,17 @@ número y el tipo actuales. Toda mutación exitosa redirige (303) a `/configurac
 `POST .../estado` valida estrictamente `"0"`/`"1"`, sin convertir un valor manipulado en booleano.
 Sin filtrar todavía tarjetas inactivas en la pantalla de compra: esa integración es un sub-bloque
 posterior.
+
+`TarjetaPrueba` se amplió (sub-bloque 5) con ocho campos de laboratorio: `titular`,
+`service_code`, `discretionary_data`, `cvv`, `cvv2`, `icvv`, `card_sequence_number`,
+`pin_block_laboratorio` — todos `str = ""`, persistidos en `tarjetas_prueba` y leídos/escritos
+por `RepositorioTarjetasSQLite`. **No se persisten Track1 ni Track2 completos, ni overrides de
+track**: se derivarán más adelante desde PAN + titular + expiración + service code +
+discretionary data, sin crear una segunda fuente del PAN. **El PIN en claro no se modela en
+ningún campo**; `pin_block_laboratorio` es un valor con forma de PIN Block para pruebas de
+laboratorio, no uno criptográficamente válido. `application/tarjetas.py`, `ServicioTarjetas`,
+`TarjetaAdministrada` y la interfaz todavía no exponen estos campos; el perfil genérico y el
+mensaje ISO no cambiaron — nada de esto viaja todavía en el 0100/0110.
 
 La interfaz tiene identidad propia: cinta con la marca `SibuTestLab8583` y el subtítulo
 `Laboratorio de pruebas ISO 8583`, navegación entre `Nueva transacción`, `Historial` y
@@ -206,6 +217,7 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-08-24 | D-1: RN-1 pasa a usar el catálogo persistido en SQLite (`RepositorioCatalogosSQLite`) en vez de la constante `CATALOGO_GENERICO`. `Composicion.orquestador()` pasa a asíncrono y consulta la base en cada llamada, sin caché. Sin cambios de esquema ni de interfaz |
 | 2026-08-24 | Fase 1, sub-bloque 2: `TarjetaPrueba.activa` con lectura/escritura reales; tabla `destinos` con `DestinoGuardado`, `RepositorioDestinos` y `RepositorioDestinosSQLite`, semilla `LOCAL-DEMO`; migración aditiva generalizada, probada contra una base anterior real completa. Sin interfaz |
 | 2026-08-25 | Fase 1, sub-bloque 3/4: `GET /configuracion` (tres bloques, solo Tarjetas enlaza a algo real) y administración web completa de tarjetas (`ServicioTarjetas`): crear, editar, activar/desactivar. `card_id` inmutable, PAN completo solo en el formulario administrativo y nunca reexpuesto, validación Luhn con confirmación QA, redirect 303 tras mutaciones, `/estado` con validación estricta de entrada. Sin filtro de tarjetas activas en la compra todavía |
+| 2026-08-25 | Fase 1, sub-bloque 5: `TarjetaPrueba` gana ocho campos de laboratorio (titular, service_code, discretionary_data, cvv, cvv2, icvv, card_sequence_number, pin_block_laboratorio), persistidos en SQLite con migración aditiva. Sin Track1/Track2 completos ni overrides persistentes, sin PIN en claro, sin cambios en `ServicioTarjetas`, la interfaz ni el perfil genérico |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -234,10 +246,13 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 ## Próximo paso
 
 Fase 1 (módulo de Configuración) en curso. Cerrados los sub-bloques 1 (**D-1: catálogo
-persistido**), 2 (**persistencia base para tarjetas y destinos**) y 3/4 (**`/configuracion` y
-administración de tarjetas**). Siguen, en el orden aprobado: administración visual de códigos de
-respuesta, administración visual de destinos, integración con la compra (selector de destino,
-filtro de tarjetas activas), y documentación final de la fase.
+persistido**), 2 (**persistencia base para tarjetas y destinos**), 3/4 (**`/configuracion` y
+administración de tarjetas**) y 5 (**modelo extendido y persistencia de tarjetas de
+laboratorio**). Pendiente, ya identificado pero no planificado en sub-bloques: exponer los ocho
+campos de laboratorio en `ServicioTarjetas` y en la interfaz, y decidir la generación de
+Track1/Track2 (sin persistirlos completos). Siguen además, en el orden aprobado: administración
+visual de códigos de respuesta, administración visual de destinos, integración con la compra
+(selector de destino, filtro de tarjetas activas), y documentación final de la fase.
 
 Del plan previo de cinco commits para el constructor avanzado y el detalle del historial siguen
 pendientes, después de la Fase 1: declarar campos permitidos y editables en el perfil, y el modo

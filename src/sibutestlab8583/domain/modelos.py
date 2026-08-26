@@ -48,6 +48,16 @@ class TarjetaPrueba:
 
     Es el unico lugar del sistema donde vive el PAN completo, y solo dentro del
     archivo SQLite local, que no se versiona.
+
+    Los ocho campos de laboratorio (titular en adelante) son datos propios de
+    la tarjeta, todavia sin validar y sin transmitirse por ISO: ninguno de
+    ellos viaja hoy en el 0100, ninguno esta en `ESPECIFICACION_GENERICA`, y
+    `card_sequence_number` no es lo mismo que `card_id` -uno identifica la fila
+    en este catalogo, el otro seria el numero de secuencia de la tarjeta
+    fisica-. `pin_block_laboratorio` es un valor de laboratorio con forma de
+    PIN Block, no un PIN Block criptograficamente valido: este proyecto no
+    tiene ninguna clave de cifrado detras. El PIN en claro nunca se modela
+    aqui ni en ningun otro lugar del sistema.
     """
 
     card_id: str
@@ -56,6 +66,14 @@ class TarjetaPrueba:
     descripcion: str = ""
     sintetica: bool = True
     activa: bool = True
+    titular: str = ""
+    service_code: str = ""
+    discretionary_data: str = ""
+    cvv: str = ""
+    cvv2: str = ""
+    icvv: str = ""
+    card_sequence_number: str = ""
+    pin_block_laboratorio: str = ""
 
     @property
     def pan_enmascarado(self) -> str:

@@ -30,15 +30,27 @@ RUTA_POR_DEFECTO = Path("sibutestlab8583.db")
 DDL = """
 PRAGMA journal_mode = WAL;
 
+-- Los ocho campos de laboratorio (titular en adelante) son datos propios de la
+-- tarjeta, todavia sin validar y sin transmitirse por ISO: ver el docstring de
+-- TarjetaPrueba en domain/modelos.py. pin_block_laboratorio es un valor con
+-- forma de PIN Block, nunca un PIN en claro.
 CREATE TABLE IF NOT EXISTS tarjetas_prueba (
-    card_id          TEXT    PRIMARY KEY,
-    pan              TEXT    NOT NULL,
-    pan_enmascarado  TEXT    NOT NULL,
-    expiracion       TEXT    NOT NULL,
-    descripcion      TEXT    NOT NULL DEFAULT '',
-    sintetica        INTEGER NOT NULL DEFAULT 1,
-    activa           INTEGER NOT NULL DEFAULT 1,
-    creada_en        TEXT    NOT NULL
+    card_id                TEXT    PRIMARY KEY,
+    pan                    TEXT    NOT NULL,
+    pan_enmascarado        TEXT    NOT NULL,
+    expiracion             TEXT    NOT NULL,
+    descripcion            TEXT    NOT NULL DEFAULT '',
+    sintetica              INTEGER NOT NULL DEFAULT 1,
+    activa                 INTEGER NOT NULL DEFAULT 1,
+    titular                TEXT    NOT NULL DEFAULT '',
+    service_code           TEXT    NOT NULL DEFAULT '',
+    discretionary_data     TEXT    NOT NULL DEFAULT '',
+    cvv                    TEXT    NOT NULL DEFAULT '',
+    cvv2                   TEXT    NOT NULL DEFAULT '',
+    icvv                   TEXT    NOT NULL DEFAULT '',
+    card_sequence_number   TEXT    NOT NULL DEFAULT '',
+    pin_block_laboratorio  TEXT    NOT NULL DEFAULT '',
+    creada_en              TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS codigos_respuesta (
@@ -180,10 +192,19 @@ COLUMNAS_AGREGADAS: tuple[tuple[str, str], ...] = (
     ("respuesta_json", "TEXT"),
 )
 
-#: Lo mismo para `tarjetas_prueba`: la columna `activa` es posterior a bases ya
-#: creadas por un clon anterior de este repositorio.
+#: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
+#: (titular en adelante) son posteriores a bases ya creadas por un clon
+#: anterior de este repositorio.
 COLUMNAS_AGREGADAS_TARJETAS: tuple[tuple[str, str], ...] = (
     ("activa", "INTEGER NOT NULL DEFAULT 1"),
+    ("titular", "TEXT NOT NULL DEFAULT ''"),
+    ("service_code", "TEXT NOT NULL DEFAULT ''"),
+    ("discretionary_data", "TEXT NOT NULL DEFAULT ''"),
+    ("cvv", "TEXT NOT NULL DEFAULT ''"),
+    ("cvv2", "TEXT NOT NULL DEFAULT ''"),
+    ("icvv", "TEXT NOT NULL DEFAULT ''"),
+    ("card_sequence_number", "TEXT NOT NULL DEFAULT ''"),
+    ("pin_block_laboratorio", "TEXT NOT NULL DEFAULT ''"),
 )
 
 

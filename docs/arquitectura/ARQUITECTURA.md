@@ -296,6 +296,35 @@ del sub-bloque 2.
 `test_web_configuracion.py` + 6 de crecimiento en `SECCIONES`/`PANTALLAS` + 6 de una prueba
 paramétrica de valores manipulados en `/estado`).
 
+## Modelo extendido y persistencia de tarjetas de laboratorio (Fase 1, sub-bloque 5)
+
+Precedido por una auditoría técnica de solo lectura: confirmó que el modelo transaccional de
+tarjeta se reducía a PAN y expiración, que DE35 (Track 2) ya estaba reservado en
+`CAMPOS_SENSIBLES` sin implementarse, y que Service Code/Discretionary Data no son campos ISO
+independientes sino subcampos posicionales de Track1/Track2. La auditoría se aprobó con una
+corrección: **no persistir Track1/Track2 completos ni sus overrides**, para no crear una segunda
+fuente de verdad del PAN además de `tarjetas_prueba.pan`.
+
+- **`TarjetaPrueba`** gana ocho campos de laboratorio (`titular`, `service_code`,
+  `discretionary_data`, `cvv`, `cvv2`, `icvv`, `card_sequence_number`,
+  `pin_block_laboratorio`), todos `str = ""` — compatibles con todo constructor existente, que
+  siempre usa palabra clave. **El PIN en claro no se modela en ningún campo**;
+  `pin_block_laboratorio` es un valor con forma de PIN Block para pruebas de laboratorio, no uno
+  criptográficamente válido: el proyecto no tiene ninguna clave de cifrado detrás.
+- **Esquema y migración**: ocho columnas `TEXT NOT NULL DEFAULT ''`, agregadas al mismo
+  `CREATE TABLE` y a la misma tupla `COLUMNAS_AGREGADAS_TARJETAS` que ya migraba `activa`, mismo
+  patrón aditivo e idempotente que los sub-bloques anteriores. Bases anteriores reciben `''` en
+  las ocho columnas nuevas.
+- **`RepositorioTarjetasSQLite`** lee, lista y persiste (INSERT y upsert) los ocho campos. **El
+  puerto `RepositorioTarjetas` no cambió**: `guardar()` ya alcanzaba.
+- **Explícitamente fuera de este sub-bloque**: `application/tarjetas.py`, `ServicioTarjetas`,
+  `TarjetaAdministrada` y la interfaz no exponen todavía estos campos; `profiles/generico.py` y
+  `armado.py` no cambiaron — nada de esto viaja hoy en el 0100/0110. Track1 y Track2 se
+  derivarán en un sub-bloque posterior desde PAN + titular + expiración + service code +
+  discretionary data, sin persistirse completos.
+
+**385 pruebas en verde** (380 + 5: 1 de compatibilidad de migración, 4 de modelo/persistencia).
+
 ## Decisión: la presentación es una capa, no una decoración de la plantilla
 
 Cómo se rotula un desenlace es una decisión, y las decisiones no viven repartidas en el HTML.

@@ -274,3 +274,227 @@ async def test_compatibilidad_completa_de_una_base_anterior_real(tmp_path):
     assert dict(ejecucion_tras_segunda) == dict(ejecucion)
     # 8d. no modifica la secuencia
     assert _valor_secuencia_stan(ruta) == 123
+
+
+# ------------------------------------- compatibilidad con el esquema previo al sub-bloque 5 ----
+
+
+def _crear_base_anterior_a_laboratorio(ruta) -> None:
+    """Reproduce el esquema EXACTO de justo antes de este sub-bloque: con
+    `activa`, con `destinos` ya poblada, con las columnas JSON de `ejecuciones`
+    -todo lo que ya existia-, pero SIN los ocho campos de laboratorio nuevos
+    (`titular` en adelante) en `tarjetas_prueba`.
+
+    Trae una tarjeta preexistente, una ejecucion historica que la referencia,
+    una secuencia STAN ya avanzada, y un destino ya sembrado ademas de
+    LOCAL-DEMO -exactamente lo que existiria en un clon usado antes de esta
+    iteracion-.
+    """
+    ddl_anterior = """
+    CREATE TABLE tarjetas_prueba (
+        card_id          TEXT    PRIMARY KEY,
+        pan              TEXT    NOT NULL,
+        pan_enmascarado  TEXT    NOT NULL,
+        expiracion       TEXT    NOT NULL,
+        descripcion      TEXT    NOT NULL DEFAULT '',
+        sintetica        INTEGER NOT NULL DEFAULT 1,
+        activa           INTEGER NOT NULL DEFAULT 1,
+        creada_en        TEXT    NOT NULL
+    );
+
+    CREATE TABLE codigos_respuesta (
+        catalogo     TEXT    NOT NULL,
+        codigo       TEXT    NOT NULL,
+        descripcion  TEXT    NOT NULL,
+        aprobado     INTEGER NOT NULL,
+        PRIMARY KEY (catalogo, codigo)
+    );
+
+    CREATE TABLE destinos (
+        destino_id  TEXT    PRIMARY KEY,
+        nombre      TEXT    NOT NULL,
+        host        TEXT    NOT NULL,
+        puerto      INTEGER NOT NULL,
+        activo      INTEGER NOT NULL DEFAULT 1,
+        creado_en   TEXT    NOT NULL
+    );
+
+    CREATE TABLE ejecuciones (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        creada_en               TEXT    NOT NULL,
+        card_id                 TEXT    NOT NULL REFERENCES tarjetas_prueba(card_id),
+        mti_solicitud           TEXT    NOT NULL,
+        mti_respuesta           TEXT,
+        monto                   TEXT    NOT NULL,
+        moneda                  TEXT    NOT NULL,
+        stan                    TEXT    NOT NULL,
+        destino_host            TEXT,
+        destino_puerto          INTEGER,
+        estado                  TEXT    NOT NULL,
+        codigo_respuesta        TEXT,
+        solicitud_enmascarada   TEXT,
+        respuesta_enmascarada   TEXT,
+        solicitud_json          TEXT,
+        respuesta_json          TEXT,
+        latencia_ms             INTEGER
+    );
+
+    CREATE TABLE secuencias (
+        nombre  TEXT    PRIMARY KEY,
+        valor   INTEGER NOT NULL
+    );
+    """
+    with sqlite3.connect(ruta) as conexion:
+        conexion.executescript(ddl_anterior)
+        conexion.execute(
+            "INSERT INTO tarjetas_prueba"
+            " (card_id, pan, pan_enmascarado, expiracion, descripcion, sintetica, activa,"
+            "  creada_en)"
+            " VALUES ('VIEJA-LAB', '0', '****8888', '3012', 'previa laboratorio',"
+            "         1, 1, '2026-01-01T00:00:00+00:00')"
+        )
+        conexion.execute(
+            "INSERT INTO ejecuciones"
+            " (creada_en, card_id, mti_solicitud, mti_respuesta, monto, moneda, stan,"
+            "  destino_host, destino_puerto, estado, codigo_respuesta,"
+            "  solicitud_enmascarada, respuesta_enmascarada, solicitud_json, respuesta_json,"
+            "  latencia_ms)"
+            " VALUES ('2026-01-02T00:00:00+00:00', 'VIEJA-LAB', '0100', '0110',"
+            "         '150.00', '188', '000456', '127.0.0.1', 8583, 'aprobada', '00',"
+            "         'MTI=0100 | 2=****8888', 'MTI=0110 | 39=00', NULL, NULL, 55)"
+        )
+        conexion.execute("INSERT INTO secuencias (nombre, valor) VALUES ('stan', 456)")
+        conexion.execute(
+            "INSERT INTO destinos (destino_id, nombre, host, puerto, activo, creado_en)"
+            " VALUES ('LOCAL-DEMO', 'Host simulado local', '127.0.0.1', 8583, 1,"
+            "         '2026-01-01T00:00:00+00:00')"
+        )
+        conexion.execute(
+            "INSERT INTO destinos (destino_id, nombre, host, puerto, activo, creado_en)"
+            " VALUES ('QA-EXISTENTE', 'Switch QA', '192.0.2.10', 9583, 1,"
+            "         '2026-01-01T00:00:00+00:00')"
+        )
+
+
+def _fila_tarjeta_lab(ruta):
+    with sqlite3.connect(ruta) as conexion:
+        conexion.row_factory = sqlite3.Row
+        return conexion.execute(
+            "SELECT * FROM tarjetas_prueba WHERE card_id = 'VIEJA-LAB'"
+        ).fetchone()
+
+
+def _fila_ejecucion_lab(ruta):
+    with sqlite3.connect(ruta) as conexion:
+        conexion.row_factory = sqlite3.Row
+        return conexion.execute(
+            "SELECT * FROM ejecuciones WHERE card_id = 'VIEJA-LAB'"
+        ).fetchone()
+
+
+def _valor_secuencia_stan_lab(ruta) -> int:
+    with sqlite3.connect(ruta) as conexion:
+        return conexion.execute(
+            "SELECT valor FROM secuencias WHERE nombre = 'stan'"
+        ).fetchone()[0]
+
+
+def _destinos_lab(ruta):
+    with sqlite3.connect(ruta) as conexion:
+        conexion.row_factory = sqlite3.Row
+        return [
+            dict(f)
+            for f in conexion.execute("SELECT * FROM destinos ORDER BY destino_id").fetchall()
+        ]
+
+
+#: Independiente de `COLUMNAS_AGREGADAS_TARJETAS`, a proposito: si la lista
+#: de produccion se mutara o se rompiera, esta prueba debe notarlo, no
+#: heredar el mismo error.
+COLUMNAS_LABORATORIO = (
+    "titular", "service_code", "discretionary_data", "cvv", "cvv2", "icvv",
+    "card_sequence_number", "pin_block_laboratorio",
+)
+
+
+async def test_compatibilidad_con_esquema_anterior_a_las_columnas_de_laboratorio(tmp_path):
+    """Criterio de aceptacion del sub-bloque 5: una base con el esquema completo
+    de justo antes de esta iteracion -tarjeta, ejecucion, STAN y destinos ya
+    poblados- migra sin perder ni modificar nada, y las ocho columnas nuevas
+    quedan en `''` para la fila preexistente.
+    """
+    ruta = tmp_path / "anterior_laboratorio.db"
+    _crear_base_anterior_a_laboratorio(ruta)
+
+    await inicializar(ruta)
+
+    # 1. existen las 8 columnas nuevas
+    with sqlite3.connect(ruta) as conexion:
+        columnas = {f[1] for f in conexion.execute("PRAGMA table_info(tarjetas_prueba)")}
+    assert set(COLUMNAS_LABORATORIO) <= columnas
+
+    tarjeta = _fila_tarjeta_lab(ruta)
+    assert tarjeta is not None
+    # 2. las 8 columnas nuevas valen '' para la fila anterior
+    for columna in COLUMNAS_LABORATORIO:
+        assert tarjeta[columna] == "", f"{columna} deberia quedar vacio, no {tarjeta[columna]!r}"
+    # 3-8. el resto de la tarjeta no cambia
+    assert tarjeta["pan"] == "0"
+    assert tarjeta["pan_enmascarado"] == "****8888"
+    assert tarjeta["expiracion"] == "3012"
+    assert tarjeta["descripcion"] == "previa laboratorio"
+    assert tarjeta["sintetica"] == 1
+    assert tarjeta["activa"] == 1
+
+    # 9. la ejecucion historica no cambia
+    ejecucion = _fila_ejecucion_lab(ruta)
+    assert ejecucion is not None
+    assert ejecucion["stan"] == "000456"
+    assert ejecucion["monto"] == "150.00"
+    assert ejecucion["estado"] == "aprobada"
+    assert ejecucion["latencia_ms"] == 55
+
+    # 10. el STAN no cambia
+    assert _valor_secuencia_stan_lab(ruta) == 456
+
+    # 11. los destinos existentes no cambian, y no se duplica la semilla
+    destinos = _destinos_lab(ruta)
+    assert [d["destino_id"] for d in destinos] == ["LOCAL-DEMO", "QA-EXISTENTE"]
+
+    # 12. ninguna fila duplicada (la propia, y la ejecucion que la referencia;
+    # `inicializar()` tambien siembra su propia tarjeta de demostracion, que
+    # es una fila distinta y no cuenta como duplicado de VIEJA-LAB)
+    with sqlite3.connect(ruta) as conexion:
+        assert conexion.execute(
+            "SELECT COUNT(*) FROM tarjetas_prueba WHERE card_id = 'VIEJA-LAB'"
+        ).fetchone()[0] == 1
+        assert conexion.execute(
+            "SELECT COUNT(*) FROM ejecuciones WHERE card_id = 'VIEJA-LAB'"
+        ).fetchone()[0] == 1
+
+    # --- segunda inicializacion: nada de lo anterior debe cambiar ---
+    await inicializar(ruta)
+
+    with sqlite3.connect(ruta) as conexion:
+        columnas_tras_segunda = {f[1] for f in conexion.execute("PRAGMA table_info(tarjetas_prueba)")}
+    assert set(COLUMNAS_LABORATORIO) <= columnas_tras_segunda
+
+    tarjeta_tras_segunda = _fila_tarjeta_lab(ruta)
+    assert dict(tarjeta_tras_segunda) == dict(tarjeta)
+    for columna in COLUMNAS_LABORATORIO:
+        assert tarjeta_tras_segunda[columna] == ""
+
+    ejecucion_tras_segunda = _fila_ejecucion_lab(ruta)
+    assert dict(ejecucion_tras_segunda) == dict(ejecucion)
+
+    assert _valor_secuencia_stan_lab(ruta) == 456
+    assert _destinos_lab(ruta) == destinos
+
+    with sqlite3.connect(ruta) as conexion:
+        assert conexion.execute(
+            "SELECT COUNT(*) FROM tarjetas_prueba WHERE card_id = 'VIEJA-LAB'"
+        ).fetchone()[0] == 1
+        assert conexion.execute(
+            "SELECT COUNT(*) FROM ejecuciones WHERE card_id = 'VIEJA-LAB'"
+        ).fetchone()[0] == 1
+        assert conexion.execute("SELECT COUNT(*) FROM destinos").fetchone()[0] == 2
