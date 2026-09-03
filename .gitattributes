@@ -18,6 +18,12 @@
 .gitignore      text eol=lf
 .gitattributes  text eol=lf
 
+# Excepcion tecnica, no de estilo: los .cmd de Windows requieren CRLF para que
+# el parser de cmd.exe los interprete de forma confiable (comprobado de forma
+# empirica al construir demo.cmd: con solo LF, cmd.exe corrompe el parseo de
+# comandos). Unica excepcion a la regla general de LF de este archivo.
+*.cmd     text eol=crlf
+
 # Binarios: Git no debe intentar normalizarlos.
 *.png     binary
 *.jpg     binary
