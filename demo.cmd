@@ -156,7 +156,7 @@ for /l %%i in (1,1,20) do (
         if not errorlevel 1 (
             set "WEB_LISTO=1"
         ) else (
-            timeout /t 1 /nobreak >nul
+            ".venv\Scripts\python.exe" -c "import time; time.sleep(1)" >nul 2>&1
         )
     )
 )
