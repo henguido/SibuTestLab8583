@@ -4,13 +4,18 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-08-25
+**Última actualización:** 2026-09-03
 
 ## Estado actual
 
-**Fase:** calendario detenido a propósito para auditar y mejorar el prototipo. CI en verde en
-Python 3.11, 3.12 y 3.13. En curso: mejora del producto actual antes de retomar las iteraciones
-funcionales pendientes.
+**Fase:** la Fase 1 (módulo de Configuración) queda **funcionalmente congelada para esta
+entrega** (decisión del 2026-08-26). Los sub-bloques pendientes —exponer los ocho campos de
+laboratorio, la administración visual de catálogos y de destinos, la integración posterior de
+Track 1/Track 2 en el mensaje ISO, los perfiles reales de marca, el isoscopio 2.0 y el motor
+de carga— pasan a trabajo futuro sin fecha, sin haberse eliminado del horizonte del proyecto.
+El trabajo activo pasa al cierre académico: documentación final, documento de negocio,
+arquitectura, presentación y revisión contra la consigna. CI en verde en Python 3.11, 3.12 y
+3.13.
 
 | | |
 |---|---|
@@ -31,9 +36,14 @@ clasifica según el **catálogo persistido en SQLite**, leído en cada compra me
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
 Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
 enmascarado, e historial **navegable**: cada ejecución tiene su detalle en `/historial/{id}`,
-con los campos ISO de la solicitud y de la respuesta. **385 pruebas en verde.** El CI las
-ejecuta en Python 3.11, 3.12 y 3.13, y comprueba además que un clon limpio se instale con el
-metadata declarado.
+con los campos ISO de la solicitud y de la respuesta. **436 pruebas en verde**, incluidas 29
+específicas de RN-1 a RN-4 (`tests/test_reglas_negocio.py`). El CI ejecuta la suite en Python
+3.11, 3.12 y 3.13, corre aparte las cuatro reglas de negocio, y en un job propio
+(`clon-limpio`) comprueba que el repositorio no contenga artefactos locales versionados y que
+se instale respetando el metadata declarado. Aparte de eso, y de forma manual —no es
+evidencia de CI—, el 2026-09-03 se validó en Windows la reproducibilidad completa desde un
+clon separado, sin `.venv` ni base SQLite previa: recorrido manual completo, 436 passed, RN-1
+a RN-4 con 29 passed y guardia de PAN en `passed`.
 
 Persistencia base para la Fase 1 de Configuración (sub-bloque 2, sin interfaz todavía):
 `TarjetaPrueba.activa` (con lectura y escritura reales en `RepositorioTarjetasSQLite`, incluido el
@@ -71,6 +81,13 @@ laboratorio, no uno criptográficamente válido. `application/tarjetas.py`, `Ser
 `TarjetaAdministrada` y la interfaz todavía no exponen estos campos; el perfil genérico y el
 mensaje ISO no cambiaron — nada de esto viaja todavía en el 0100/0110.
 
+Track 1 y Track 2 tienen ya una **derivación pura de dominio** (sub-bloque 6,
+`domain/tracks.py`): dos funciones sin I/O que arman la representación lógica a partir de
+PAN, titular, expiración, service code y discretionary data, con 51 pruebas propias
+(`tests/test_tracks.py`). **Nada las invoca todavía**: el perfil genérico sigue sin DE35 ni
+DE45, el codec no las codifica, y no viajan en ningún `0100` real. `application/tarjetas.py`,
+`ServicioTarjetas`, `TarjetaAdministrada` y la interfaz tampoco las exponen.
+
 La interfaz tiene identidad propia: cinta con la marca `SibuTestLab8583` y el subtítulo
 `Laboratorio de pruebas ISO 8583`, navegación entre `Nueva transacción`, `Historial` y
 `Configuración`, y una hoja de estilos propia en `src/sibutestlab8583/web/estatico/sibu.css`,
@@ -84,8 +101,9 @@ y una prueba lo comprueba en ambos sentidos. Contraste medido: el peor de los si
 **Todavía NO existe:** administración visual de códigos de respuesta ni de destinos, selector de
 destino ni filtro de tarjetas activas en la pantalla de compra, el modo avanzado ISO 8583 para
 editar campos de la solicitud, el isoscopio 2.0 —comparar solicitud contra respuesta y mostrar el
-bitmap—, el motor de carga, los perfiles reales de Visa y Mastercard, `README.md`, Docker, skill
-propio en `.claude/` ni autenticación.
+bitmap—, el motor de carga, los perfiles reales de Visa y Mastercard, Docker ni autenticación.
+**DE35 y DE45 tampoco se transmiten**: Track 1 y Track 2 existen solo como derivación de
+dominio (ver arriba).
 
 ## Decisiones vigentes
 
@@ -103,6 +121,7 @@ Acordadas y, salvo donde se indique, **ya implementadas y probadas**.
 | Perfiles de marca | La arquitectura contempla Visa y Mastercard, pero **no se inventan sus especificaciones**: solo se implementan a partir de documentación de marca disponible y aprobada como fuente. Esa documentación ya existe y **no se versiona**; los perfiles **siguen sin implementarse**. Hoy existe únicamente el perfil genérico |
 | Catálogo de respuestas | Genérico para la demostración: `00`, `05`, `14`, `51`, `54`, `94`. Persistido en SQLite (`codigos_respuesta`) y leído en cada compra vía `RepositorioCatalogosSQLite`, sin caché; `CATALOGO_GENERICO` (en `domain/catalogo.py`) queda solo como semilla de `inicializar()`, no como fuente activa en ejecución. Catálogo activo configurable con `Configuracion.catalogo_activo` / variable `SIBU_CATALOGO`, con el genérico como valor por defecto |
 | Portabilidad | Ejecutable en local, en infraestructura bancaria, en contenedor o como servicio cloud. Docker es distribución posterior, no dependencia para desarrollar |
+| Python soportado | `>=3.13`, no una versión exacta. Comprobado con 3.13.x en la máquina de desarrollo original y con 3.14.7 en una segunda máquina, vía `demo.cmd` |
 
 **`PerfilDeMarca` ≠ `CatalogoDeRespuestas`** — ejes independientes que no deben mezclarse: el
 perfil define formato, codificación, campos y obligatorios por MTI; el catálogo determina qué
@@ -218,19 +237,26 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-08-24 | Fase 1, sub-bloque 2: `TarjetaPrueba.activa` con lectura/escritura reales; tabla `destinos` con `DestinoGuardado`, `RepositorioDestinos` y `RepositorioDestinosSQLite`, semilla `LOCAL-DEMO`; migración aditiva generalizada, probada contra una base anterior real completa. Sin interfaz |
 | 2026-08-25 | Fase 1, sub-bloque 3/4: `GET /configuracion` (tres bloques, solo Tarjetas enlaza a algo real) y administración web completa de tarjetas (`ServicioTarjetas`): crear, editar, activar/desactivar. `card_id` inmutable, PAN completo solo en el formulario administrativo y nunca reexpuesto, validación Luhn con confirmación QA, redirect 303 tras mutaciones, `/estado` con validación estricta de entrada. Sin filtro de tarjetas activas en la compra todavía |
 | 2026-08-25 | Fase 1, sub-bloque 5: `TarjetaPrueba` gana ocho campos de laboratorio (titular, service_code, discretionary_data, cvv, cvv2, icvv, card_sequence_number, pin_block_laboratorio), persistidos en SQLite con migración aditiva. Sin Track1/Track2 completos ni overrides persistentes, sin PIN en claro, sin cambios en `ServicioTarjetas`, la interfaz ni el perfil genérico |
+| 2026-08-26 | Fase 1, sub-bloque 6: derivación pura de Track 1 y Track 2 en `domain/tracks.py`, 51 pruebas nuevas (385→436 en la suite). No transmiten DE35/DE45 todavía; nada del proyecto las invoca. Commit `725d316` |
+| 2026-08-26 | Decisión: se congela el crecimiento funcional —incluida la Fase 1 restante y el motor de carga— para priorizar el cierre de entregables académicos. `PROYECTO.md` no se modifica. Decisión de trabajo, sin commit propio |
+| 2026-09-03 | `README.md` y `demo.cmd`: procedimiento manual y camino rápido de arranque en Windows. Reproducibilidad desde clon limpio validada manualmente en dos máquinas distintas; CRLF ajustado en `.gitattributes` para `.cmd`. Commit `633be24` |
+| 2026-09-03 | Skill de Claude Code `levantar-demo` (`.claude/skills/levantar-demo/SKILL.md`): reutiliza `demo.cmd` y verifica HTTP y TCP de forma independiente, sin remediación automática. Commit `ba07853` |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
 ## Decisiones pendientes
 
+Los ítems 2 y 4 quedan además congelados como trabajo futuro por la decisión del 2026-08-26
+(ver «Fase», arriba): se listan aquí como decisiones de diseño abiertas para cuando se
+retomen, no como trabajo en curso.
+
 1. Formato concreto del framing para un switch QA real. El de demostración existe (prefijo de 2 bytes); el del ambiente real dependerá de su especificación.
 2. Especificaciones reales de Visa y Mastercard, y si los obligatorios por MTI son propios de cada marca. **Ya no está bloqueado por falta de documentación**, que existe y se cita en `BITACORA.md`. Falta el análisis y la implementación: nada de su contenido se ha verificado todavía.
 3. Compatibilidad con Python 3.11 y 3.12. `requires-python` sigue declarando `>=3.13` porque es la única versión comprobada. El CI ya prueba las tres versiones usando `pip install --ignore-requires-python`, que ejecuta el código sin alterar el metadata. **Ampliar el rango solo cuando el CI muestre las tres en verde.**
 4. Si el motor de carga corre dentro del proceso web o aparte.
-5. Estrategia de datos de demostración reproducibles para un clon limpio, sin PAN reales.
-6. Si conviene añadir un trabajo de CI en Windows: hoy el workflow corre en Linux y todo lo verificado localmente fue en Windows.
-7. Otros escenarios de falso positivo (`PROYECTO.md` §7.6). El primero ya está cubierto: una respuesta con código aprobado pero correlación incorrecta se registra `Invalida`. Faltan los demás casos.
-8. Cifrado en reposo del catálogo de tarjetas de QA — fuera del alcance académico, necesario para una evolución comercial.
+5. Si conviene añadir un trabajo de CI en Windows: hoy el workflow corre en Linux y todo lo verificado localmente fue en Windows.
+6. Otros escenarios de falso positivo (`PROYECTO.md` §7.6). El primero ya está cubierto: una respuesta con código aprobado pero correlación incorrecta se registra `Invalida`. Faltan los demás casos.
+7. Cifrado en reposo del catálogo de tarjetas de QA — fuera del alcance académico, necesario para una evolución comercial.
 
 ## Restricciones de alcance
 
@@ -245,24 +271,22 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-Fase 1 (módulo de Configuración) en curso. Cerrados los sub-bloques 1 (**D-1: catálogo
-persistido**), 2 (**persistencia base para tarjetas y destinos**), 3/4 (**`/configuracion` y
-administración de tarjetas**) y 5 (**modelo extendido y persistencia de tarjetas de
-laboratorio**). Pendiente, ya identificado pero no planificado en sub-bloques: exponer los ocho
-campos de laboratorio en `ServicioTarjetas` y en la interfaz, y decidir la generación de
-Track1/Track2 (sin persistirlos completos). Siguen además, en el orden aprobado: administración
-visual de códigos de respuesta, administración visual de destinos, integración con la compra
-(selector de destino, filtro de tarjetas activas), y documentación final de la fase.
+El trabajo activo es el cierre académico: documentación final, documento de negocio,
+arquitectura, presentación y revisión contra la consigna de `PROYECTO.md`. Ya resuelto dentro
+de ese cierre: reproducibilidad desde clon limpio (`README.md`, `demo.cmd`) y el skill de
+Claude Code `levantar-demo`.
 
-Del plan previo de cinco commits para el constructor avanzado y el detalle del historial siguen
-pendientes, después de la Fase 1: declarar campos permitidos y editables en el perfil, y el modo
-avanzado ISO 8583.
+La Fase 1 (módulo de Configuración) quedó cerrada en el sub-bloque 6 (**derivación pura de
+Track 1 y Track 2**) y congelada para esta entrega junto con el motor de carga (ver «Fase»,
+arriba). No hay sub-bloques planificados hasta que se retome ese trabajo: quedan como trabajo
+futuro sin fecha exponer los ocho campos de laboratorio en `ServicioTarjetas` y en la
+interfaz, la integración posterior de Track1/Track2 en el mensaje ISO, la administración
+visual de códigos de respuesta y de destinos, la integración con la compra (selector de
+destino, filtro de tarjetas activas), el constructor avanzado y el modo avanzado ISO 8583,
+y el isoscopio 2.0.
 
-Cerrados P0-1, P0-2 y P0-3, y publicado el rediseño de la interfaz. De los P1 quedan el
-isoscopio 2.0 —dejar de descartar la representación transmitida de la solicitud, el MTI y el
-bitmap, y comparar solicitud contra respuesta— y provocar los seis códigos sin reiniciar el
-host. Pendiente aparte: ampliar `requires-python` a `>=3.11`, para lo que el CI ya aportó
-evidencia.
+Pendiente aparte, sin relación con el congelamiento: ampliar `requires-python` a `>=3.11`,
+para lo que el CI ya aportó evidencia.
 
 ## Archivos importantes
 
@@ -283,11 +307,16 @@ evidencia.
 | `src/sibutestlab8583/web/plantillas/detalle.html` | Detalle de una ejecución histórica: resumen, isoscopios y evidencia persistida |
 | `.github/workflows/tests.yml` | CI: suite en Python 3.11/3.12/3.13 y verificación de clon limpio |
 | `tests/` | Pruebas técnicas de la fundación |
+| `README.md` | Procedimiento manual completo: clonar, instalar, inicializar, levantar y probar |
+| `demo.cmd` | Camino rápido de arranque en Windows; reproduce los mismos pasos operativos que `README.md` |
+| `.claude/skills/levantar-demo/SKILL.md` | Skill de Claude Code: ejecuta `demo.cmd` y verifica HTTP/TCP de forma independiente |
 
 Para levantar el proyecto desde cero: crear un entorno virtual, `pip install -e ".[dev]"`,
 `sibu-init-db` y `pytest`. La demostración usa dos terminales: `sibu-host-demo` levanta el host
 simulado y `uvicorn sibutestlab8583.web.app:app` la interfaz web. La web **no** levanta el host
-simulado: la arquitectura lo mantiene como proceso aparte.
+simulado: la arquitectura lo mantiene como proceso aparte. En Windows, `demo.cmd` automatiza
+esta misma secuencia y agrega su propia verificación de disponibilidad antes de abrir el
+navegador.
 
 ## Instrucciones para retomar en una sesión nueva
 

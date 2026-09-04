@@ -19,13 +19,30 @@ OCT, AFT, refunds, anulaciones, verificaciones de cuenta, catálogos de códigos
 paneles de métricas elaborados. Si una tarea parece requerir algo de esta lista, detenerse y
 preguntar antes de escribir nada.
 
-## Stack acordado — todavía no implementado
+## Stack
 
 Python · FastAPI · HTML con Jinja y JavaScript mínimo · SQLite mediante `aiosqlite` ·
-`pyiso8583` · TCP asíncrono con `asyncio`.
+`pyiso8583` · TCP asíncrono con `asyncio`. **Implementado**, en `src/sibutestlab8583/`.
 
 Sin React, sin frontend independiente, sin paso de compilación. Docker es un mecanismo de
 distribución posterior, nunca una dependencia para desarrollar.
+
+## Arranque y comandos
+
+Camino rápido en Windows: `demo.cmd`, desde la raíz del repositorio, reproduce los mismos
+pasos operativos documentados en `README.md` —nunca es una vía de instalación
+alternativa— y agrega su propia verificación de que la web responde antes de abrir el
+navegador. Procedimiento manual completo, para cualquier sistema operativo, en `README.md`.
+
+Comandos base, ya validados: `pip install -e ".[dev]"` (instalación editable),
+`sibu-init-db` (inicializa SQLite de forma idempotente), `pytest` (suite completa),
+`sibu-host-demo` (host ISO 8583 simulado) y `uvicorn sibutestlab8583.web.app:app` (interfaz
+web, en un proceso aparte: la web no levanta el host).
+
+En Claude Code existe el skill `levantar-demo`
+(`.claude/skills/levantar-demo/SKILL.md`): reutiliza `demo.cmd` sin reimplementar ninguno de
+sus pasos, y agrega una verificación independiente —HTTP y TCP— de que ambos servicios
+respondan antes de dar la demostración por lista.
 
 ## Arquitectura y desacoplamiento
 
