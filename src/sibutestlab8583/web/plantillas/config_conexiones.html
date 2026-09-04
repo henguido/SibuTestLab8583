@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal %}
+{% block titulo %}Conexiones · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>Conexiones</h1>
+  <p class="encabezado__sub">
+    Desactivar una conexión no borra la fila ni el historial de las ejecuciones que la usaron:
+    solo deja de ofrecerse como opción para transacciones nuevas.
+  </p>
+</div>
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise la solicitud</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Catálogo</h2>
+    <span class="panel__nota">
+      {{ conexiones|length }} {{ 'conexión' if conexiones|length == 1 else 'conexiones' }}
+    </span>
+  </div>
+  {% if conexiones %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Conexiones">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Identificador</th>
+          <th>Nombre</th>
+          <th>Host</th>
+          <th>Puerto</th>
+          <th>Timeout</th>
+          <th>Estado</th>
+          <th>Disponibilidad</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for conexion in conexiones %}
+        <tr>
+          <td class="mono">{{ conexion.conexion_id }}</td>
+          <td>{{ conexion.nombre }}</td>
+          <td class="mono">{{ conexion.host }}</td>
+          <td class="mono">{{ conexion.puerto }}</td>
+          <td class="mono">{{ '%g'|format(conexion.timeout) }} s</td>
+          <td>
+            {% if conexion.activa %}
+            <span class="chip chip--activa">Activa</span>
+            {% else %}
+            <span class="chip chip--inactiva">Inactiva</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if resultado_prueba and resultado_prueba.conexion_id == conexion.conexion_id %}
+              {% if resultado_prueba.disponible %}
+              <span class="chip chip--activa">Disponible</span>
+              {% else %}
+              <span class="chip chip--inactiva">No disponible</span>
+              {% endif %}
+            {% else %}
+            <span class="chip chip--sintetica">Sin verificar</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="tabla-acciones">
+              <a href="/configuracion/conexiones/{{ conexion.conexion_id }}/editar">Editar</a>
+              <form method="post" action="/configuracion/conexiones/{{ conexion.conexion_id }}/estado">
+                <input type="hidden" name="activa" value="{{ '0' if conexion.activa else '1' }}">
+                <button class="enlace-boton" type="submit">
+                  {{ 'Desactivar' if conexion.activa else 'Activar' }}
+                </button>
+              </form>
+              <form method="post" action="/configuracion/conexiones/{{ conexion.conexion_id }}/probar">
+                <button class="enlace-boton" type="submit">Probar conexión</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="panel__cuerpo">
+    <p class="vacio">Todavía no hay conexiones registradas.</p>
+  </div>
+  {% endif %}
+  <div class="acciones">
+    <a class="boton" href="/configuracion/conexiones/nueva">Nueva conexión</a>
+  </div>
+</section>
+
+<a class="volver" href="/configuracion">&larr; Volver a Configuración</a>
+{% endblock %}

@@ -193,7 +193,6 @@ async def test_un_fallo_de_codec_queda_como_no_enviada(base):
     )
     from sibutestlab8583.application.orquestador import Orquestador
     from sibutestlab8583.domain.catalogo import CATALOGO_GENERICO
-    from sibutestlab8583.profiles.generico import CODIGO_PROCESO_COMPRA
 
     transporte = TransporteFalso()
     orquestador = Orquestador(
@@ -205,7 +204,6 @@ async def test_un_fallo_de_codec_queda_como_no_enviada(base):
         repositorio_tarjetas=RepositorioTarjetasSQLite(base),
         generador_stan=GeneradorStanSQLite(base),
         destino=DESTINO_IRRESOLUBLE,
-        codigo_proceso=CODIGO_PROCESO_COMPRA,
         reloj=lambda: MOMENTO_FIJO,
     )
 

@@ -22,17 +22,23 @@ from .adapters.persistence.esquema import ruta_base_datos
 from .adapters.persistence.sqlite_repos import (
     GeneradorStanSQLite,
     RepositorioCatalogosSQLite,
+    RepositorioDestinosSQLite,
     RepositorioEjecucionesSQLite,
     RepositorioTarjetasSQLite,
 )
 from .adapters.transporte.framing_demo import FramingDemostracion
-from .adapters.transporte.tcp import TIEMPO_LIMITE_POR_DEFECTO, TransporteTcp
+from .adapters.transporte.tcp import (
+    TIEMPO_LIMITE_POR_DEFECTO,
+    TransporteTcp,
+    VerificadorDeConexionTcp,
+)
 from .application.consultas import ServicioConsultas
+from .application.conexiones import ServicioConexiones
 from .application.orquestador import Orquestador
 from .application.tarjetas import ServicioTarjetas
 from .domain.catalogo import NOMBRE_CATALOGO_GENERICO
 from .domain.modelos import DestinoTcp
-from .profiles.generico import CODIGO_PROCESO_COMPRA, perfil_activo
+from .profiles.generico import perfil_activo
 
 VARIABLE_HOST = "SIBU_HOST_DESTINO"
 VARIABLE_PUERTO = "SIBU_PUERTO_DESTINO"
@@ -81,6 +87,8 @@ class Composicion:
         self._tarjetas = RepositorioTarjetasSQLite(configuracion.ruta_base_datos)
         self._ejecuciones = RepositorioEjecucionesSQLite(configuracion.ruta_base_datos)
         self._catalogos = RepositorioCatalogosSQLite(configuracion.ruta_base_datos)
+        self._destinos = RepositorioDestinosSQLite(configuracion.ruta_base_datos)
+        self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
         self._stan = GeneradorStanSQLite(configuracion.ruta_base_datos)
@@ -92,6 +100,22 @@ class Composicion:
     @property
     def administracion_tarjetas(self) -> ServicioTarjetas:
         return ServicioTarjetas(self._tarjetas)
+
+    @property
+    def administracion_conexiones(self) -> ServicioConexiones:
+        return ServicioConexiones(self._destinos, self._verificador_conexion)
+
+    @property
+    def perfil(self):
+        """Perfil de marca activo, de solo lectura para la web.
+
+        No es una fuga de la infraestructura: la web ya recibía datos
+        derivados del perfil (`descripciones_de_campos`); esto solo extiende
+        esa misma consulta a qué campos son editables, derivados o
+        automáticos para un MTI, que es información de producto, no un
+        detalle de codificación.
+        """
+        return self._perfil
 
     @property
     def descripciones_de_campos(self) -> Mapping[str, str]:
@@ -106,8 +130,16 @@ class Composicion:
             if numero.isdigit()
         }
 
-    async def orquestador(self, destino: DestinoTcp) -> Orquestador:
+    async def orquestador(
+        self, destino: DestinoTcp, *, tiempo_limite: float | None = None
+    ) -> Orquestador:
         """Un orquestador apuntando al destino indicado.
+
+        `tiempo_limite` es el de la conexion administrada elegida (cada una
+        lleva el suyo); si no se indica, se usa el limite global de
+        `Configuracion` -asi las llamadas que todavia no resuelven una
+        conexion (el host simulado de demostracion, por ejemplo) siguen
+        funcionando sin cambios-.
 
         Se construye por peticion porque el destino lo elige el usuario en el
         formulario. Es cableado barato: los repositorios abren su conexion por
@@ -115,20 +147,18 @@ class Composicion:
         construccion, y no se cachea en la instancia: editar la tabla
         `codigos_respuesta` debe reflejarse sin reiniciar la aplicacion.
         """
+        limite = self.configuracion.tiempo_limite if tiempo_limite is None else tiempo_limite
         catalogo = await self._catalogos.catalogo_respuestas(self.configuracion.catalogo_activo)
         return Orquestador(
             codec=self._codec,
             perfil=self._perfil,
             catalogo=catalogo,
-            transporte=TransporteTcp(
-                self._framing, tiempo_limite=self.configuracion.tiempo_limite
-            ),
+            transporte=TransporteTcp(self._framing, tiempo_limite=limite),
             repositorio_ejecuciones=self._ejecuciones,
             repositorio_tarjetas=self._tarjetas,
             generador_stan=self._stan,
             destino=destino,
-            codigo_proceso=CODIGO_PROCESO_COMPRA,
-            tiempo_limite=self.configuracion.tiempo_limite,
+            tiempo_limite=limite,
         )
 
     def host_simulado(self, codigo_respuesta: str = "00") -> HostSimulado:

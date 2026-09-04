@@ -261,7 +261,7 @@ class RepositorioDestinosSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
-                "SELECT destino_id, nombre, host, puerto, activo, creado_en"
+                "SELECT destino_id, nombre, host, puerto, activo, timeout, creado_en"
                 " FROM destinos WHERE destino_id = ?",
                 (destino_id,),
             ) as cursor:
@@ -272,7 +272,7 @@ class RepositorioDestinosSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
-                "SELECT destino_id, nombre, host, puerto, activo, creado_en"
+                "SELECT destino_id, nombre, host, puerto, activo, timeout, creado_en"
                 " FROM destinos ORDER BY destino_id"
             ) as cursor:
                 filas = await cursor.fetchall()
@@ -281,19 +281,21 @@ class RepositorioDestinosSQLite(_RepositorioSQLite):
     async def guardar(self, destino: DestinoGuardado) -> None:
         async with self._conectar() as conexion:
             await conexion.execute(
-                "INSERT INTO destinos (destino_id, nombre, host, puerto, activo, creado_en)"
-                " VALUES (?, ?, ?, ?, ?, ?)"
+                "INSERT INTO destinos (destino_id, nombre, host, puerto, activo, timeout, creado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(destino_id) DO UPDATE SET"
                 "   nombre = excluded.nombre,"
                 "   host = excluded.host,"
                 "   puerto = excluded.puerto,"
-                "   activo = excluded.activo",
+                "   activo = excluded.activo,"
+                "   timeout = excluded.timeout",
                 (
                     destino.destino_id,
                     destino.nombre,
                     destino.host,
                     destino.puerto,
                     int(destino.activo),
+                    destino.timeout,
                     destino.creado_en.isoformat(),
                 ),
             )
@@ -307,6 +309,7 @@ def _a_destino(fila: aiosqlite.Row) -> DestinoGuardado:
         host=fila["host"],
         puerto=fila["puerto"],
         activo=bool(fila["activo"]),
+        timeout=fila["timeout"],
         creado_en=datetime.fromisoformat(fila["creado_en"]),
     )
 

@@ -6,9 +6,9 @@
 <div class="encabezado">
   <h1>Nueva transacción</h1>
   <p class="encabezado__sub">
-    Arma un mensaje <code>0100</code>, lo transmite por TCP al destino indicado e interpreta
-    la respuesta <code>0110</code>. Cada intento queda registrado en el historial, incluidos
-    los que no obtienen respuesta.
+    Construye un mensaje <code>0100</code>, lo transmite por TCP a la conexión elegida e
+    interpreta la respuesta <code>0110</code>. Cada intento queda registrado en el
+    historial, incluidos los que no obtienen respuesta.
   </p>
 </div>
 
@@ -26,106 +26,135 @@
 </div>
 {% endif %}
 
-<form method="post" action="/compra">
+<div class="conexion-barra">
+  {% if conexion_actual %}
+  <span class="chip chip--sintetica">Sin verificar</span>
+  <span class="conexion-barra__texto">
+    <strong>{{ conexion_actual.nombre }}</strong>
+    <span class="mono">{{ conexion_actual.host }}:{{ conexion_actual.puerto }}</span>
+  </span>
+  {% else %}
+  <span class="conexion-barra__texto">
+    Sin conexiones activas. <a href="/configuracion/conexiones">Administrar conexiones</a>.
+  </span>
+  {% endif %}
+
+  {% if conexiones|length > 1 %}
+  <details class="cambiar-conexion">
+    <summary>Cambiar</summary>
+    <div class="tarjetas">
+      {% for conexion in conexiones %}
+      <a class="tarjeta{{ ' tarjeta--seleccionada' if conexion_actual and conexion.conexion_id == conexion_actual.conexion_id }}"
+         href="/?conexion_id={{ conexion.conexion_id }}">
+        <span class="tarjeta__id">{{ conexion.nombre }}</span>
+        <span class="tarjeta__pan">{{ conexion.host }}:{{ conexion.puerto }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+</div>
+
+<form method="post" action="/compra" id="formulario-constructor">
+  <input type="hidden" name="conexion_id" value="{{ conexion_id }}">
+
   <section class="panel">
     <div class="panel__cabecera">
-      <h2 class="panel__titulo">Transacción</h2>
-      <span class="panel__nota">Compra <code>0100</code></span>
+      <h2 class="panel__titulo">Construir transacción · 0100</h2>
+      <span class="panel__nota">gobernado por el perfil</span>
     </div>
     <div class="panel__cuerpo">
-      <fieldset class="grupo">
-        <legend class="grupo__titulo">Tarjeta</legend>
-        <p class="grupo__sub">
-          Se elige por identificador. La interfaz solo recibe el número enmascarado; el número
-          completo permanece restringido al procesamiento transaccional del servidor.
+      <p class="grupo__sub">
+        Se elige por identificador. La interfaz solo recibe el número enmascarado; el número
+        completo permanece restringido al procesamiento transaccional del servidor.
+      </p>
+      <div class="tarjetas">
+        {% for tarjeta in tarjetas %}
+        <label class="tarjeta">
+          <input type="radio" name="card_id" value="{{ tarjeta.card_id }}"
+                 {% if tarjeta.card_id == card_id or (not card_id and loop.first) %}checked{% endif %}>
+          <span class="tarjeta__id">{{ tarjeta.card_id }}</span>
+          <span class="tarjeta__pan">{{ tarjeta.pan_enmascarado }}</span>
+          <span class="tarjeta__tipo">{{ tarjeta.descripcion or 'Sin descripción' }}</span>
+          <span class="tarjeta__desc">
+            {%- if tarjeta.sintetica -%}
+            Datos sintéticos para uso exclusivo con el entorno de demostración.
+            {%- else -%}
+            Tarjeta de un entorno de pruebas.
+            {%- endif -%}
+          </span>
+        </label>
+        {% else %}
+        <p class="vacio">
+          No hay tarjetas activas en el catálogo.
+          <a href="/configuracion/tarjetas">Administrar tarjetas</a>.
         </p>
-        <div class="tarjetas">
-          {% for tarjeta in tarjetas %}
-          <label class="tarjeta">
-            <input type="radio" name="card_id" value="{{ tarjeta.card_id }}"
-                   {% if tarjeta.card_id == card_id or (not card_id and loop.first) %}checked{% endif %}>
-            <span class="tarjeta__id">{{ tarjeta.card_id }}</span>
-            <span class="tarjeta__pan">{{ tarjeta.pan_enmascarado }}</span>
-            <span class="tarjeta__tipo">{{ tarjeta.descripcion or 'Sin descripción' }}</span>
-            <span class="tarjeta__desc">
-              {%- if tarjeta.sintetica -%}
-              Datos sintéticos para uso exclusivo con el entorno de demostración.
-              {%- else -%}
-              Tarjeta de un entorno de pruebas.
-              {%- endif -%}
-            </span>
-          </label>
-          {% else %}
-          <p class="vacio">
-            No hay tarjetas en el catálogo. Inicialice la base con <code>sibu-init-db</code>.
-          </p>
-          {% endfor %}
-        </div>
-      </fieldset>
-
-      <fieldset class="grupo">
-        <legend class="grupo__titulo">Monto</legend>
-        <div class="rejilla rejilla--estrecha">
-          <div class="campo campo--mono">
-            <label class="campo__rotulo" for="monto">Importe</label>
-            <input type="text" id="monto" name="monto" inputmode="decimal" autocomplete="off"
-                   placeholder="150.00" value="{{ monto }}" required>
-            <p class="campo__pista">Use punto decimal. Va al campo 4 del mensaje.</p>
-          </div>
-          <div class="campo">
-            <span class="campo__rotulo">Moneda</span>
-            <div class="informativo">
-              <span class="informativo__valor">188</span>
-              <span>campo 49</span>
-            </div>
-            <p class="campo__pista">Código numérico ISO 4217. Fijo en esta versión.</p>
-          </div>
-        </div>
-      </fieldset>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel__cabecera">
-      <h2 class="panel__titulo">Destino</h2>
-      <span class="panel__nota">TCP</span>
-    </div>
-    <div class="panel__cuerpo">
-      <div class="rejilla">
-        <div class="campo campo--mono">
-          <label class="campo__rotulo" for="host">Host</label>
-          <input type="text" id="host" name="host" autocomplete="off"
-                 value="{{ host }}" required>
-          <p class="campo__pista">Host simulado propio o switch de QA accesible.</p>
-        </div>
-        <div class="campo campo--mono">
-          <label class="campo__rotulo" for="puerto">Puerto</label>
-          <input type="text" id="puerto" name="puerto" inputmode="numeric" autocomplete="off"
-                 value="{{ puerto }}" required>
-          <p class="campo__pista">Entre 1 y 65535.</p>
-        </div>
-        <div class="campo">
-          <span class="campo__rotulo">Tiempo límite</span>
-          <div class="informativo">
-            <span class="informativo__valor">{{ '%g'|format(tiempo_limite) }} s</span>
-            <span>RN-2</span>
-          </div>
-          <p class="campo__pista">
-            Informativo. Se configura en el servidor con <code>SIBU_TIEMPO_LIMITE</code>.
-          </p>
-        </div>
+        {% endfor %}
       </div>
+      <div class="campo campo--mono">
+        <label class="campo__rotulo" for="monto">Monto</label>
+        <input type="text" id="monto" name="monto" inputmode="decimal" autocomplete="off"
+               placeholder="150.00" value="{{ monto }}" required>
+        <p class="campo__pista">Use punto decimal. Va al campo 4 del mensaje.</p>
+      </div>
+      <div class="desplazable" tabindex="0" role="region" aria-label="Campos del constructor">
+        <table class="tabla">
+          <thead>
+            <tr>
+              <th>DE</th>
+              <th>Nombre</th>
+              <th>Valor</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fila in filas_constructor %}
+            <tr>
+              <td><span class="campo-iso">{{ fila.numero }}</span></td>
+              <td>{{ fila.descripcion }}</td>
+              <td>
+                {% if fila.origen == 'editable' %}
+                <input type="text" name="campo_{{ fila.numero }}" class="campo-tabla" autocomplete="off"
+                       value="{{ campos_manuales.get(fila.numero, fila.valor) }}">
+                {% else %}
+                <span class="informativo__valor">
+                  {%- if fila.origen == 'derivado' -%}(de la tarjeta elegida)
+                  {%- else -%}(se genera al enviar)
+                  {%- endif -%}
+                </span>
+                {% endif %}
+              </td>
+              <td>
+                {% if fila.origen == 'derivado' %}
+                <span class="chip chip--qa">Derivado</span>
+                {% elif fila.origen == 'automatico' %}
+                <span class="chip chip--sintetica">Automático</span>
+                {% elif fila.obligatorio %}
+                <span class="chip chip--inactiva">Requerido</span>
+                {% else %}
+                <span class="chip chip--activa">Opcional</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="campo__pista">
+        Los campos derivados y automáticos no se pueden editar aquí: el servidor los ignora y
+        los reemplaza aunque lleguen en el envío.
+      </p>
     </div>
   </section>
 
   <section class="panel">
     <div class="acciones">
-      <button class="boton" type="submit">
+      <button class="boton" type="submit" {{ 'disabled' if not conexion_actual }}>
         {{ senal('transmision', 16) }}
         Ejecutar transacción
       </button>
       <span class="acciones__nota">
-        Requiere un receptor escuchando en el destino. Para la demostración:
+        Requiere un receptor escuchando en la conexión elegida. Para la demostración:
         <code>sibu-host-demo</code>.
       </span>
     </div>

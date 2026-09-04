@@ -35,3 +35,20 @@ class ErrorDeFraming(ErrorDelSimulador):
     se corta antes de completar el mensaje anunciado.
     """
 
+
+class ErrorDeCamposManuales(ErrorDelSimulador, ValueError):
+    """Un campo manual no procede para el MTI que se esta armando.
+
+    Es `ValueError` ademas de `ErrorDelSimulador` para que la capa web lo trate
+    igual que cualquier otro error de entrada (400, sin traza), sin necesitar un
+    manejador nuevo.
+    """
+
+
+class CampoNoPermitido(ErrorDeCamposManuales):
+    """El campo no esta declarado como editable para este MTI."""
+
+
+class CampoProtegido(ErrorDeCamposManuales):
+    """El campo es derivado o automatico: no puede fijarse manualmente."""
+

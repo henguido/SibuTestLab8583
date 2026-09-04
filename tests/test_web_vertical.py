@@ -14,6 +14,7 @@ import httpx2
 import pytest
 
 from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, PAN_DEMO, inicializar
+from sibutestlab8583.application.conexiones import DatosNuevaConexion
 from sibutestlab8583.composicion import Composicion, Configuracion
 from sibutestlab8583.domain.modelos import EstadoEjecucion
 from sibutestlab8583.web.app import crear_app
@@ -30,9 +31,24 @@ async def entorno(tmp_path):
 
 
 async def _ejecutar(composicion, ruta, *, codigo="00", monto="150.00", puerto=None):
-    """Levanta el host, hace el POST HTTP y devuelve (html, estado_http)."""
+    """Levanta el host, hace el POST HTTP y devuelve (html, estado_http).
+
+    El formulario ya no transporta host ni puerto: solo `conexion_id`. Como el
+    host simulado nace en un puerto efimero distinto en cada prueba, se
+    administra una conexion apuntando a ese puerto antes de enviar -asi la
+    resolucion servidor-autoritativa (`_interpretar_formulario`) tiene algo
+    real que resolver.
+    """
     host = composicion.host_simulado(codigo_respuesta=codigo)
     async with host:
+        conexion = await composicion.administracion_conexiones.crear(
+            DatosNuevaConexion(
+                conexion_id="VERTICAL-TEST",
+                nombre="Host simulado de la prueba",
+                host=host.host,
+                puerto=str(puerto if puerto is not None else host.puerto),
+            )
+        )
         app = crear_app(composicion)
         transporte = httpx2.ASGITransport(app=app)
         async with httpx2.AsyncClient(transport=transporte, base_url="http://prueba") as cliente:
@@ -41,8 +57,7 @@ async def _ejecutar(composicion, ruta, *, codigo="00", monto="150.00", puerto=No
                 data={
                     "card_id": CARD_ID_DEMO,
                     "monto": monto,
-                    "host": host.host,
-                    "puerto": str(puerto if puerto is not None else host.puerto),
+                    "conexion_id": conexion.conexion_id,
                 },
             )
     return respuesta.text, respuesta.status_code, host
@@ -112,17 +127,20 @@ async def test_el_historial_muestra_lo_que_el_recorrido_persistio(entorno):
 async def test_un_destino_sin_host_no_rompe_la_interfaz(entorno):
     """Puerto donde no hay nadie: la web informa, no lanza un 500."""
     ruta, composicion = entorno
+    await composicion.administracion_conexiones.crear(
+        DatosNuevaConexion(
+            conexion_id="SIN-HOST",
+            nombre="Sin nada escuchando",
+            host="host-que-no-existe.sibutestlab.invalid",
+            puerto="9",
+        )
+    )
     app = crear_app(composicion)
     transporte = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transporte, base_url="http://prueba") as cliente:
         respuesta = await cliente.post(
             "/compra",
-            data={
-                "card_id": CARD_ID_DEMO,
-                "monto": "10.00",
-                "host": "host-que-no-existe.sibutestlab.invalid",
-                "puerto": "9",
-            },
+            data={"card_id": CARD_ID_DEMO, "monto": "10.00", "conexion_id": "SIN-HOST"},
         )
     assert respuesta.status_code == 200
     assert "No fue posible establecer conexión con el destino" in respuesta.text

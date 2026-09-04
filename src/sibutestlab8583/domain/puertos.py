@@ -138,3 +138,16 @@ class RepositorioDestinos(Protocol):
     async def listar(self) -> Sequence[DestinoGuardado]: ...
 
     async def guardar(self, destino: DestinoGuardado) -> None: ...
+
+
+@runtime_checkable
+class VerificadorDeConexion(Protocol):
+    """Comprobacion TCP puntual de "Probar conexion", ajena al recorrido de compra.
+
+    Deliberadamente mas angosto que `Transporte`: no envia bytes, no conoce
+    framing ni ISO 8583, y no participa de ninguna regla de negocio. Un `bool`
+    alcanza porque lo unico que hay que demostrar es si se pudo abrir un socket
+    dentro del limite dado.
+    """
+
+    async def probar(self, host: str, puerto: int, tiempo_limite: float) -> bool: ...

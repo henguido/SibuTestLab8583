@@ -140,6 +140,32 @@ class TransporteTcp:
             await _cerrar(escritor)
 
 
+async def probar_conexion(host: str, puerto: int, tiempo_limite: float) -> bool:
+    """Abre y cierra un socket TCP crudo, sin ISO 8583 y sin persistir nada.
+
+    Es la comprobacion de "Probar conexion" de una conexion administrada: solo
+    demuestra que hay algo escuchando en `host:puerto` dentro del limite dado,
+    nunca envia un mensaje ni pasa por el orquestador. `True` si se pudo
+    conectar; `False` para cualquier fallo de red o de tiempo -nunca se
+    propaga una excepcion, igual que `TransporteTcp.enviar`-.
+    """
+    try:
+        _, escritor = await asyncio.wait_for(
+            asyncio.open_connection(host, puerto), timeout=tiempo_limite
+        )
+    except (OSError, asyncio.TimeoutError):
+        return False
+    await _cerrar(escritor)
+    return True
+
+
+class VerificadorDeConexionTcp:
+    """Adaptador de `domain.puertos.VerificadorDeConexion` sobre `probar_conexion`."""
+
+    async def probar(self, host: str, puerto: int, tiempo_limite: float) -> bool:
+        return await probar_conexion(host, puerto, tiempo_limite)
+
+
 async def _cerrar(escritor) -> None:
     """Cierra la conexion pase lo que pase, sin enmascarar el resultado."""
     try:

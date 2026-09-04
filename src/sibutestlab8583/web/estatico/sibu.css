@@ -1124,3 +1124,72 @@ select:hover {
     min-width: 0;
   }
 }
+
+/* Constructor de transacciones (0100). */
+.campo-tabla {
+  width: 100%;
+  min-width: 8ch;
+}
+
+/* Barra de contexto de conexion en Nueva transaccion: informacion secundaria,
+   nunca un panel propio. La conexion elegida no se edita aqui -solo se lee y,
+   con "Cambiar", se reemplaza-. Una sola fila; con "Cambiar" abierto, dos como
+   maximo antes de expandir. */
+.conexion-barra {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--e2) var(--e3);
+  margin-bottom: var(--e4);
+  padding-bottom: var(--e3);
+  border-bottom: 1px solid var(--linea);
+  font-size: var(--texto-sm);
+  color: var(--tenue);
+}
+
+.conexion-barra__texto {
+  display: flex;
+  align-items: baseline;
+  gap: var(--e2);
+}
+
+.conexion-barra__texto strong {
+  color: var(--tinta-media);
+  font-weight: var(--peso-fuerte);
+}
+
+/* "Cambiar" es un <details> nativo: sin JavaScript, el navegador ya sabe
+   expandirlo y contraerlo. Al abrirlo, ocupa el ancho completo debajo de la
+   barra: no altera la altura de la fila cerrada. */
+.conexion-barra .cambiar-conexion {
+  flex-basis: 100%;
+}
+
+.cambiar-conexion summary {
+  cursor: pointer;
+  color: var(--acento);
+  font-weight: var(--peso-fuerte);
+  list-style: none;
+}
+
+.cambiar-conexion summary::-webkit-details-marker {
+  display: none;
+}
+
+.cambiar-conexion .tarjetas {
+  margin-top: var(--e3);
+}
+
+/* Los enlaces de conexion reutilizan `.tarjeta` pero no llevan radio: sin esa
+   primera columna, todo el contenido va en una sola. */
+.cambiar-conexion a.tarjeta {
+  grid-template-columns: 1fr;
+  text-decoration: none;
+  color: inherit;
+}
+
+.cambiar-conexion a.tarjeta.tarjeta--seleccionada {
+  border-color: var(--acento);
+  box-shadow: 0 0 0 2px var(--acento-claro), var(--s-1);
+  background: var(--acento-claro);
+}

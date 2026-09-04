@@ -386,7 +386,7 @@ async def test_un_fallo_de_codec_deja_la_columna_de_respuesta_nula(base):
     )
     from sibutestlab8583.application.orquestador import Orquestador
     from sibutestlab8583.domain.catalogo import CATALOGO_GENERICO
-    from sibutestlab8583.profiles.generico import CODIGO_PROCESO_COMPRA, PERFIL_GENERICO
+    from sibutestlab8583.profiles.generico import PERFIL_GENERICO
 
     transporte = TransporteFalso(codigo="00")
     resultado = await Orquestador(
@@ -398,7 +398,6 @@ async def test_un_fallo_de_codec_deja_la_columna_de_respuesta_nula(base):
         repositorio_tarjetas=RepositorioTarjetasSQLite(base),
         generador_stan=GeneradorStanSQLite(base),
         destino=DESTINO_INERTE,
-        codigo_proceso=CODIGO_PROCESO_COMPRA,
         reloj=lambda: MOMENTO_FIJO,
     ).ejecutar_compra(DatosCompra(card_id=CARD_ID_DEMO, monto=Decimal("10.00")))
 
@@ -414,7 +413,12 @@ async def test_un_mensaje_detenido_por_rn4_igual_deja_su_json(base):
     cuando la regla lo bloqueo, no solo que se bloqueo.
     """
     transporte = TransporteFalso(codigo="00")
-    datos = DatosCompra(card_id=CARD_ID_DEMO, monto=Decimal("150.00"), moneda="")
+    # DE49 (moneda) es obligatorio pero editable: forzarlo vacio via
+    # campos_manuales sigue disparando RN-4, ahora por el camino gobernado
+    # por el perfil en vez de una propiedad dedicada de DatosCompra.
+    datos = DatosCompra(
+        card_id=CARD_ID_DEMO, monto=Decimal("150.00"), campos_manuales={"49": ""}
+    )
     resultado = await construir_orquestador(base, transporte).ejecutar_compra(datos)
 
     assert resultado.estado is EstadoEjecucion.NO_ENVIADA

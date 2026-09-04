@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal %}
+{% block titulo %}{{ 'Nueva conexión' if modo == 'nueva' else 'Editar conexión' }} · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>{{ 'Nueva conexión' if modo == 'nueva' else 'Editar conexión' }}</h1>
+  {% if modo == 'editar' %}
+  <p class="encabezado__sub">Editando la conexión <code>{{ conexion_id }}</code>.</p>
+  {% endif %}
+</div>
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise los datos</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+<form method="post"
+      action="{{ '/configuracion/conexiones' if modo == 'nueva' else '/configuracion/conexiones/' ~ conexion_id }}">
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Conexión</h2>
+    </div>
+    <div class="panel__cuerpo">
+      <div class="rejilla">
+        {% if modo == 'nueva' %}
+        <div class="campo campo--mono">
+          <label class="campo__rotulo" for="conexion_id">Identificador</label>
+          <input type="text" id="conexion_id" name="conexion_id" autocomplete="off"
+                 value="{{ conexion_id }}" required>
+          <p class="campo__pista">
+            Letras, números, guiones y guion bajo. No podrá modificarse después de crear
+            la conexión.
+          </p>
+        </div>
+        {% else %}
+        <div class="campo campo--mono">
+          <span class="campo__rotulo">Identificador</span>
+          <div class="informativo">
+            <span class="informativo__valor">{{ conexion_id }}</span>
+            <span>no editable</span>
+          </div>
+        </div>
+        {% endif %}
+        <div class="campo">
+          <label class="campo__rotulo" for="nombre">Nombre</label>
+          <input type="text" id="nombre" name="nombre" autocomplete="off"
+                 value="{{ nombre }}" required>
+        </div>
+        <div class="campo campo--mono">
+          <label class="campo__rotulo" for="host">Host</label>
+          <input type="text" id="host" name="host" autocomplete="off"
+                 value="{{ host }}" required>
+        </div>
+        <div class="campo campo--mono">
+          <label class="campo__rotulo" for="puerto">Puerto</label>
+          <input type="text" id="puerto" name="puerto" inputmode="numeric" autocomplete="off"
+                 value="{{ puerto }}" required>
+          <p class="campo__pista">Entre 1 y 65535.</p>
+        </div>
+        <div class="campo campo--mono">
+          <label class="campo__rotulo" for="timeout">Timeout</label>
+          <input type="text" id="timeout" name="timeout" inputmode="decimal" autocomplete="off"
+                 placeholder="10" value="{{ timeout }}">
+          <p class="campo__pista">En segundos. En blanco usa el valor por defecto (10 s).</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="acciones">
+      <button class="boton" type="submit">Guardar</button>
+      <span class="acciones__nota">Los cambios no alteran el historial de ejecuciones ya registrado.</span>
+    </div>
+  </section>
+</form>
+
+<a class="volver" href="/configuracion/conexiones">&larr; Volver a conexiones</a>
+{% endblock %}

@@ -40,7 +40,6 @@ from sibutestlab8583.domain.validacion import (
     validar_envio,
 )
 from sibutestlab8583.profiles.generico import (
-    CODIGO_PROCESO_COMPRA,
     OBLIGATORIOS_0100,
     PERFIL_GENERICO,
 )
@@ -55,7 +54,7 @@ def _solicitud_valida() -> MensajeIso:
         TarjetaPrueba(card_id=CARD_ID_DEMO, pan=pan_sintetico("6666"), expiracion="3012"),
         stan="000001",
         momento=MOMENTO_FIJO,
-        codigo_proceso=CODIGO_PROCESO_COMPRA,
+        perfil=PERFIL_GENERICO,
     )
 
 

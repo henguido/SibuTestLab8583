@@ -11,12 +11,14 @@ para cubrir tambien estas pantallas nuevas.
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 from test_tarjetas_administracion import _pan_valido_luhn
-from test_web import _cliente
+from test_web import ComposicionFalsa, _cliente
 
-from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, PAN_DEMO
+from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, DESTINO_ID_DEMO, PAN_DEMO
 from sibutestlab8583.domain.datos_sinteticos import pan_sintetico
 from sibutestlab8583.domain.modelos import TarjetaPrueba
+from sibutestlab8583.web.app import crear_app
 
 PAN_SINTETICO_NUEVO = pan_sintetico("7000")
 
@@ -37,14 +39,15 @@ def test_la_portada_muestra_los_tres_modulos():
     assert "Administra las tarjetas disponibles para las pruebas." in html
     assert "Códigos de respuesta" in html
     assert "Configura cómo se interpreta cada código de respuesta recibido." in html
-    assert "Destinos" in html
-    assert "Guarda hosts y puertos de prueba para reutilizarlos." in html
+    assert "Conexiones" in html
+    assert "Administra las conexiones TCP de prueba: host, puerto y timeout." in html
 
 
-def test_la_portada_enlaza_a_tarjetas_pero_no_a_codigos_ni_destinos():
+def test_la_portada_enlaza_a_tarjetas_y_conexiones_pero_no_a_codigos():
     html = _cliente().get("/configuracion").text
     assert 'href="/configuracion/tarjetas"' in html
-    assert html.count("Próximamente") == 2, "codigos y destinos deben marcarse aparte"
+    assert 'href="/configuracion/conexiones"' in html
+    assert html.count("Próximamente") == 1, "solo codigos debe marcarse como pendiente"
 
 
 # ------------------------------------------------------------------ listado ---
@@ -270,3 +273,223 @@ def test_un_valor_de_estado_manipulado_se_rechaza_sin_convertirse_en_booleano(va
 
     listado = cliente.get("/configuracion/tarjetas").text
     assert "Activa" in listado, "la tarjeta de demostracion debe seguir activa, sin cambios"
+
+
+# ============================================================= conexiones ===
+#
+# Mismo patron que las tarjetas: `ComposicionFalsa` con `ServicioConexiones`
+# real sobre un repositorio en memoria, asi que la validacion se ejercita de
+# verdad. La tabla/repositorio siguen llamandose "destinos" -de una fase
+# anterior-, pero rutas, plantillas y textos hablan siempre de "conexion".
+
+FORMULARIO_NUEVA_CONEXION = {
+    "conexion_id": "QA-WEB-01",
+    "nombre": "Switch QA desde la web",
+    "host": "192.0.2.20",
+    "puerto": "9583",
+}
+
+
+# ------------------------------------------------------------------ listado ---
+
+
+def test_el_listado_muestra_la_conexion_de_demostracion():
+    html = _cliente().get("/configuracion/conexiones").text
+    assert DESTINO_ID_DEMO in html
+    assert "Activa" in html
+
+
+def test_el_listado_ofrece_editar_cambiar_estado_y_probar():
+    html = _cliente().get("/configuracion/conexiones").text
+    assert f"/configuracion/conexiones/{DESTINO_ID_DEMO}/editar" in html
+    assert f'action="/configuracion/conexiones/{DESTINO_ID_DEMO}/estado"' in html
+    assert f'action="/configuracion/conexiones/{DESTINO_ID_DEMO}/probar"' in html
+    assert "Desactivar" in html
+    assert "Probar conexión" in html
+
+
+def test_el_listado_muestra_sin_verificar_por_defecto():
+    html = _cliente().get("/configuracion/conexiones").text
+    assert "Sin verificar" in html
+
+
+# -------------------------------------------------------------------- crear ---
+
+
+def test_el_formulario_de_nueva_conexion_no_tiene_identificador_prellenado():
+    html = _cliente().get("/configuracion/conexiones/nueva").text
+    assert 'name="conexion_id"' in html
+    assert 'name="host"' in html
+    assert 'name="puerto"' in html
+    assert 'name="timeout"' in html
+
+
+def test_crear_una_conexion_redirige_y_aparece_en_el_listado():
+    cliente = _cliente()
+    respuesta = cliente.post(
+        "/configuracion/conexiones", data=FORMULARIO_NUEVA_CONEXION, follow_redirects=False
+    )
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/configuracion/conexiones"
+
+    listado = cliente.get("/configuracion/conexiones").text
+    assert "QA-WEB-01" in listado
+    assert "Switch QA desde la web" in listado
+
+
+def test_crear_con_identificador_duplicado_se_rechaza():
+    cliente = _cliente()
+    cliente.post("/configuracion/conexiones", data=FORMULARIO_NUEVA_CONEXION)
+    respuesta = cliente.post("/configuracion/conexiones", data=FORMULARIO_NUEVA_CONEXION)
+    assert respuesta.status_code == 400
+    assert "Ya existe" in respuesta.text
+
+
+def test_crear_con_puerto_invalido_se_rechaza():
+    respuesta = _cliente().post(
+        "/configuracion/conexiones",
+        data={**FORMULARIO_NUEVA_CONEXION, "conexion_id": "QA-MAL-PUERTO", "puerto": "no-numero"},
+    )
+    assert respuesta.status_code == 400
+    assert "Revise los datos" in respuesta.text
+
+
+def test_crear_con_timeout_invalido_se_rechaza():
+    respuesta = _cliente().post(
+        "/configuracion/conexiones",
+        data={**FORMULARIO_NUEVA_CONEXION, "conexion_id": "QA-MAL-TIMEOUT", "timeout": "-5"},
+    )
+    assert respuesta.status_code == 400
+    assert "Revise los datos" in respuesta.text
+
+
+def test_crear_sin_host_se_rechaza():
+    respuesta = _cliente().post(
+        "/configuracion/conexiones",
+        data={**FORMULARIO_NUEVA_CONEXION, "conexion_id": "QA-SIN-HOST", "host": ""},
+    )
+    assert respuesta.status_code == 400
+
+
+# ------------------------------------------------------------------- editar ---
+
+
+def test_el_formulario_de_edicion_muestra_el_identificador_como_solo_lectura():
+    html = _cliente().get(f"/configuracion/conexiones/{DESTINO_ID_DEMO}/editar").text
+    assert DESTINO_ID_DEMO in html
+    assert 'name="conexion_id"' not in html, "el identificador no debe ser un campo editable"
+
+
+def test_editar_una_conexion_inexistente_da_un_404_propio():
+    respuesta = _cliente().get("/configuracion/conexiones/NO-EXISTE/editar")
+    assert respuesta.status_code == 404
+    assert "Conexión no encontrada" in respuesta.text
+    assert "Traceback" not in respuesta.text
+
+
+def test_editar_nombre_host_puerto_y_timeout_redirige_y_persiste():
+    cliente = _cliente()
+    respuesta = cliente.post(
+        f"/configuracion/conexiones/{DESTINO_ID_DEMO}",
+        data={"nombre": "Local renombrado", "host": "127.0.0.9", "puerto": "9000", "timeout": "15"},
+        follow_redirects=False,
+    )
+    assert respuesta.status_code == 303
+    listado = cliente.get("/configuracion/conexiones").text
+    assert "Local renombrado" in listado
+    assert "127.0.0.9" in listado
+    assert "9000" in listado
+    assert "15 s" in listado
+
+
+def test_editar_una_conexion_inexistente_da_404_al_publicar():
+    respuesta = _cliente().post(
+        "/configuracion/conexiones/NO-EXISTE",
+        data={"nombre": "d", "host": "10.0.0.1", "puerto": "9000"},
+    )
+    assert respuesta.status_code == 404
+    assert "Conexión no encontrada" in respuesta.text
+
+
+# ------------------------------------------------------- activar/desactivar --
+
+
+def test_desactivar_una_conexion_cambia_el_estado_en_el_listado():
+    cliente = _cliente()
+    respuesta = cliente.post(
+        f"/configuracion/conexiones/{DESTINO_ID_DEMO}/estado",
+        data={"activa": "0"},
+        follow_redirects=False,
+    )
+    assert respuesta.status_code == 303
+    listado = cliente.get("/configuracion/conexiones").text
+    assert "Inactiva" in listado
+
+
+def test_cambiar_estado_de_una_conexion_inexistente_da_404():
+    respuesta = _cliente().post(
+        "/configuracion/conexiones/NO-EXISTE/estado", data={"activa": "0"}
+    )
+    assert respuesta.status_code == 404
+
+
+@pytest.mark.parametrize("valor", ["si", "2", "true", "-1", "", "on"])
+def test_un_valor_de_estado_manipulado_no_cambia_la_conexion(valor):
+    cliente = _cliente()
+    respuesta = cliente.post(
+        f"/configuracion/conexiones/{DESTINO_ID_DEMO}/estado", data={"activa": valor}
+    )
+    assert respuesta.status_code == 400
+    assert "Traceback" not in respuesta.text
+
+    listado = cliente.get("/configuracion/conexiones").text
+    assert "Activa" in listado, "la conexion de demostracion debe seguir activa, sin cambios"
+
+
+def test_una_conexion_desactivada_no_aparece_como_opcion_en_la_pantalla_de_compra():
+    """Con la unica conexion desactivada, la pantalla debe caer al estado vacio,
+    no ofrecerla de todas formas.
+    """
+    cliente = _cliente()
+    cliente.post(f"/configuracion/conexiones/{DESTINO_ID_DEMO}/estado", data={"activa": "0"})
+    html = cliente.get("/").text
+    assert f'value="{DESTINO_ID_DEMO}"' not in html
+    assert "Sin conexiones activas" in html
+
+
+# ------------------------------------------------------------ probar conexion --
+
+
+class _VerificadorFijo:
+    """Doble de `VerificadorDeConexion`: siempre devuelve el resultado dado."""
+
+    def __init__(self, disponible: bool) -> None:
+        self._disponible = disponible
+
+    async def probar(self, host, puerto, tiempo_limite):
+        return self._disponible
+
+
+def test_probar_una_conexion_disponible():
+    composicion = ComposicionFalsa(verificador_conexion=_VerificadorFijo(True))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(f"/configuracion/conexiones/{DESTINO_ID_DEMO}/probar")
+    assert respuesta.status_code == 200
+    assert "Disponible" in respuesta.text
+    assert "No disponible" not in respuesta.text
+
+
+def test_probar_una_conexion_no_disponible_no_expone_la_excepcion():
+    composicion = ComposicionFalsa(verificador_conexion=_VerificadorFijo(False))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(f"/configuracion/conexiones/{DESTINO_ID_DEMO}/probar")
+    assert respuesta.status_code == 200
+    assert "No disponible" in respuesta.text
+    assert "Traceback" not in respuesta.text
+    assert "Exception" not in respuesta.text
+
+
+def test_probar_una_conexion_inexistente_da_404():
+    respuesta = _cliente().post("/configuracion/conexiones/NO-EXISTE/probar")
+    assert respuesta.status_code == 404
+    assert "Conexión no encontrada" in respuesta.text

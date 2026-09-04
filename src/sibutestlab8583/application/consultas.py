@@ -61,7 +61,10 @@ class ServicioConsultas:
         self._ejecuciones = repositorio_ejecuciones
 
     async def tarjetas(self) -> Sequence[TarjetaListada]:
-        """Tarjetas disponibles, siempre enmascaradas."""
+        """Tarjetas disponibles para una ejecución nueva: siempre enmascaradas,
+        y nunca las desactivadas — desactivar no borra la fila ni su historial,
+        solo la retira de la selección para pruebas nuevas.
+        """
         return [
             TarjetaListada(
                 card_id=t.card_id,
@@ -70,6 +73,7 @@ class ServicioConsultas:
                 sintetica=t.sintetica,
             )
             for t in await self._tarjetas.listar()
+            if t.activa
         ]
 
     async def ejecuciones_recientes(self, limite: int = 20) -> Sequence[Ejecucion]:

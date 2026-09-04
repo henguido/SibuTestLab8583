@@ -90,12 +90,22 @@ class TarjetaPrueba:
 
 @dataclass(frozen=True)
 class DatosCompra:
-    """Lo que se completa para armar una compra."""
+    """Lo que se completa para armar una compra.
+
+    `card_id` y `monto` son de primera clase porque tienen lógica propia: el
+    primero dispara la derivación de los campos 2 y 14 desde la tarjeta: el
+    segundo se formatea a las doce posiciones que exige el campo 4. Todo lo
+    demás que un perfil declare editable para el MTI —moneda, terminal, código
+    de proceso, campos opcionales— vive en `campos_manuales`: agregar un campo
+    editable nuevo al perfil no debe obligar a agregar una propiedad aquí.
+    """
 
     card_id: str
     monto: Decimal
-    moneda: str = "188"
-    terminal: str = "TERM0001"
+    campos_manuales: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
 
 
 @dataclass(frozen=True)
@@ -130,6 +140,10 @@ class DestinoGuardado:
     host: str
     puerto: int
     activo: bool = True
+    #: Limite de tiempo propio de esta conexion. Reemplaza, para las compras
+    #: que la usan, el limite global de `Configuracion.tiempo_limite`: cada
+    #: conexion administrada lleva el suyo.
+    timeout: float = 10.0
     creado_en: datetime = field(default_factory=_ahora)
 
     def a_destino_tcp(self) -> DestinoTcp:

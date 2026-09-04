@@ -13,14 +13,23 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, PAN_DEMO
+from sibutestlab8583.adapters.persistence.esquema import (
+    CARD_ID_DEMO,
+    DESTINO_HOST_DEMO,
+    DESTINO_ID_DEMO,
+    DESTINO_NOMBRE_DEMO,
+    DESTINO_PUERTO_DEMO,
+    PAN_DEMO,
+)
 from sibutestlab8583.application.consultas import TarjetaListada
+from sibutestlab8583.application.conexiones import ServicioConexiones
 from sibutestlab8583.application.tarjetas import ServicioTarjetas
 from sibutestlab8583.domain.datos_sinteticos import monto_iso
 from sibutestlab8583.application.orquestador import TarjetaDesconocida
 from sibutestlab8583.domain.modelos import (
     MTI_RESPUESTA_COMPRA,
     CampoInterpretado,
+    DestinoGuardado,
     Ejecucion,
     EstadoEjecucion,
     MensajeInterpretado,
@@ -28,6 +37,7 @@ from sibutestlab8583.domain.modelos import (
     ResultadoCompra,
     TarjetaPrueba,
 )
+from sibutestlab8583.profiles.generico import PERFIL_GENERICO
 from sibutestlab8583.web.app import crear_app
 
 MOMENTO = datetime(2026, 8, 19, 12, 0, 0, tzinfo=timezone.utc)
@@ -95,12 +105,49 @@ class RepositorioTarjetasFalso:
         self._tarjetas[tarjeta.card_id] = tarjeta
 
 
+class RepositorioDestinosFalso:
+    """Doble en memoria de `RepositorioDestinos`, mismo patron que las tarjetas.
+
+    El nombre sigue siendo "destinos" porque es el puerto de dominio existente
+    (`domain.puertos.RepositorioDestinos`, de una fase anterior); la capa de
+    aplicacion que lo consume presenta el concepto como "conexion".
+    """
+
+    def __init__(self, destinos=()):
+        self._destinos = {d.destino_id: d for d in destinos}
+
+    async def obtener(self, destino_id):
+        return self._destinos.get(destino_id)
+
+    async def listar(self):
+        return sorted(self._destinos.values(), key=lambda d: d.destino_id)
+
+    async def guardar(self, destino):
+        self._destinos[destino.destino_id] = destino
+
+
+#: Conexion de demostracion para los dobles de la capa web, mismo identificador
+#: y valores que siembra `esquema.py`.
+_CONEXION_DEMO_FALSA = DestinoGuardado(
+    destino_id=DESTINO_ID_DEMO,
+    nombre=DESTINO_NOMBRE_DEMO,
+    host=DESTINO_HOST_DEMO,
+    puerto=DESTINO_PUERTO_DEMO,
+    activo=True,
+)
+
+
 class OrquestadorFalso:
     def __init__(self, resultado=None, error=None):
         self._resultado = resultado
         self._error = error
+        #: Ultimos `DatosCompra` recibidos, para que las pruebas de la capa web
+        #: verifiquen lo que `_interpretar_formulario` de verdad construyo, sin
+        #: necesitar un orquestador real ni SQLite.
+        self.ultimos_datos = None
 
     async def ejecutar_compra(self, datos):
+        self.ultimos_datos = datos
         if self._error is not None:
             raise self._error
         return self._resultado
@@ -119,7 +166,15 @@ _TARJETA_DEMO_FALSA = TarjetaPrueba(
 
 
 class ComposicionFalsa:
-    def __init__(self, resultado=None, error=None, ejecuciones=(), tarjetas=None):
+    def __init__(
+        self,
+        resultado=None,
+        error=None,
+        ejecuciones=(),
+        tarjetas=None,
+        destinos=None,
+        verificador_conexion=None,
+    ):
         from sibutestlab8583.composicion import Configuracion
 
         self.configuracion = Configuracion(
@@ -127,14 +182,26 @@ class ComposicionFalsa:
         )
         self.consultas = ConsultasFalsas(ejecuciones)
         self.descripciones_de_campos = {"2": "Número de tarjeta (PAN)", "4": "Monto"}
+        self.perfil = PERFIL_GENERICO
         self._orquestador = OrquestadorFalso(resultado, error)
         self.administracion_tarjetas = ServicioTarjetas(
             RepositorioTarjetasFalso(
                 tarjetas if tarjetas is not None else [_TARJETA_DEMO_FALSA]
             )
         )
+        self.administracion_conexiones = ServicioConexiones(
+            RepositorioDestinosFalso(
+                destinos if destinos is not None else [_CONEXION_DEMO_FALSA]
+            ),
+            verificador_conexion,
+        )
 
-    async def orquestador(self, destino):
+    async def orquestador(self, destino, *, tiempo_limite=None):
+        #: Ultimo `DestinoTcp` y timeout con el que la web pidio un orquestador:
+        #: permite verificar la resolucion servidor-autoritativa de la conexion
+        #: sin montar un transporte real.
+        self.ultimo_destino = destino
+        self.ultimo_tiempo_limite = tiempo_limite
         return self._orquestador
 
 
@@ -184,7 +251,7 @@ def _cliente(**kwargs) -> TestClient:
     return TestClient(crear_app(ComposicionFalsa(**kwargs)))
 
 
-FORMULARIO = {"card_id": CARD_ID_DEMO, "monto": "150.00", "host": "127.0.0.1", "puerto": "8583"}
+FORMULARIO = {"card_id": CARD_ID_DEMO, "monto": "150.00", "conexion_id": DESTINO_ID_DEMO}
 
 
 # ------------------------------------------------------------------ pantalla --
@@ -282,8 +349,8 @@ def test_un_fallo_de_conexion_no_se_presenta_como_rechazo():
 
 @pytest.mark.parametrize(
     "campo,valor",
-    [("monto", "abc"), ("monto", "-5"), ("monto", "0"), ("monto", ""), ("puerto", "99999"),
-     ("puerto", "cero"), ("host", "")],
+    [("monto", "abc"), ("monto", "-5"), ("monto", "0"), ("monto", ""),
+     ("conexion_id", ""), ("conexion_id", "NO-EXISTE")],
 )
 def test_una_entrada_invalida_produce_respuesta_controlada_y_no_500(campo, valor):
     respuesta = _cliente().post("/compra", data={**FORMULARIO, campo: valor})
@@ -344,3 +411,99 @@ def test_el_historial_vacio_no_falla():
     respuesta = _cliente().get("/historial")
     assert respuesta.status_code == 200
     assert "Todavía no hay ejecuciones" in respuesta.text
+
+
+# ------------------------------------------------------------ campos_manuales --
+
+
+def test_un_campo_editable_enviado_llega_a_datos_compra():
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post("/compra", data={**FORMULARIO, "campo_37": "REF-QA-01"})
+    assert respuesta.status_code == 200
+    assert composicion._orquestador.ultimos_datos.campos_manuales == {"37": "REF-QA-01"}
+
+
+def test_un_campo_editable_en_blanco_no_llega_a_datos_compra():
+    """Un campo editable sin tocar no debe pisar el default de la politica: no
+    se incluye en `campos_manuales` cuando llega vacio (ver `_interpretar_formulario`).
+    """
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post("/compra", data=FORMULARIO)
+    assert respuesta.status_code == 200
+    assert composicion._orquestador.ultimos_datos.campos_manuales == {}
+
+
+def test_un_campo_protegido_en_el_post_bruto_se_ignora_sin_llegar_al_dominio():
+    """El servidor no lee `campo_2` (DE2 es derivado) del formulario en absoluto:
+    la ruta solo construye `campos_manuales` a partir de lo que el perfil declare
+    editable. Un `campo_2` manipulado en el POST nunca alcanza `DatosCompra`, asi
+    que ni siquiera hace falta que el dominio lo rechace para que quede sin efecto.
+    """
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post("/compra", data={**FORMULARIO, "campo_2": "9" * 16})
+    assert respuesta.status_code == 200
+    assert "2" not in composicion._orquestador.ultimos_datos.campos_manuales
+
+
+# --------------------------------------------------------------- conexion ----
+#
+# El formulario nunca transporta host, puerto ni timeout: solo `conexion_id`.
+# No existe ningun campo de texto libre para probar un "tamper" de host/puerto
+# porque ese campo ya no existe en el contrato -la version anterior de estas
+# pruebas comprobaba que un host manipulado se ignoraba; ahora ni siquiera hay
+# donde escribirlo, lo cual es la version mas fuerte de la misma garantia-.
+
+
+def test_una_conexion_activa_resuelve_host_puerto_y_timeout_desde_persistencia():
+    conexion_propia = DestinoGuardado(
+        destino_id="QA-01", nombre="QA", host="10.20.30.40", puerto=9583, timeout=25.0
+    )
+    composicion = ComposicionFalsa(
+        resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"),
+        destinos=[conexion_propia],
+    )
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/compra", data={"card_id": CARD_ID_DEMO, "monto": "150.00", "conexion_id": "QA-01"}
+    )
+    assert respuesta.status_code == 200
+    assert composicion.ultimo_destino.host == "10.20.30.40"
+    assert composicion.ultimo_destino.puerto == 9583
+    assert composicion.ultimo_tiempo_limite == 25.0
+
+
+def test_una_conexion_inactiva_se_rechaza_aunque_se_fuerce_su_id():
+    conexion_inactiva = DestinoGuardado(
+        destino_id="INACTIVA", nombre="Inactiva", host="10.0.0.9", puerto=9999, activo=False
+    )
+    composicion = ComposicionFalsa(
+        resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"),
+        destinos=[conexion_inactiva],
+    )
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/compra", data={"card_id": CARD_ID_DEMO, "monto": "150.00", "conexion_id": "INACTIVA"}
+    )
+    assert respuesta.status_code == 400
+    assert "Revise los datos" in respuesta.text
+    assert composicion._orquestador.ultimos_datos is None, "no debio llegar a ejecutarse"
+
+
+def test_una_conexion_inexistente_se_rechaza():
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/compra", data={"card_id": CARD_ID_DEMO, "monto": "150.00", "conexion_id": "NO-EXISTE"}
+    )
+    assert respuesta.status_code == 400
+    assert "Revise los datos" in respuesta.text
+
+
+def test_el_formulario_de_compra_no_ofrece_ningun_campo_de_host_puerto_o_timeout():
+    """La conexion no se configura desde Nueva transaccion: ver Configuración → Conexiones."""
+    texto = _cliente().get("/").text.lower()
+    for prohibido in ('name="host"', 'name="puerto"', 'name="timeout"'):
+        assert prohibido not in texto

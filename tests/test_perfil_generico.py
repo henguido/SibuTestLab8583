@@ -93,3 +93,26 @@ def test_el_perfil_no_se_atribuye_a_ninguna_marca():
     texto = repr(PERFIL_GENERICO.nombre).lower()
     for marca in ("visa", "mastercard", "amex", "american"):
         assert marca not in texto
+
+
+def test_la_politica_de_campos_solo_referencia_campos_de_la_especificacion():
+    """Un numero gobernado por la politica que la especificacion no conoce
+    codificaria un campo que pyiso8583 no sabe empacar: seria un error de
+    configuracion silencioso hasta el primer intento de armar un mensaje.
+    """
+    politica = PERFIL_GENERICO.politica(MTI_COMPRA)
+    numeros_gobernados = politica.derivados | politica.automaticos | politica.editables
+    numeros_de_la_especificacion = set(PERFIL_GENERICO.especificacion) - {"h", "t", "p"}
+    assert numeros_gobernados <= numeros_de_la_especificacion
+
+
+def test_la_politica_de_campos_cubre_todos_los_obligatorios_de_la_compra():
+    """Todo campo obligatorio que la politica no gobierna debe, al menos, ser
+    uno de los que `armar_compra` fija siempre por fuera de ella. DE4 es el
+    unico caso: viene de `DatosCompra.monto` directamente, no de la tarjeta ni
+    del reloj/STAN, asi que `PoliticaCamposMti` no lo clasifica -pero sigue
+    estando siempre presente en el mensaje armado-.
+    """
+    politica = PERFIL_GENERICO.politica(MTI_COMPRA)
+    numeros_gobernados = politica.derivados | politica.automaticos | politica.editables | {"4"}
+    assert PERFIL_GENERICO.obligatorios(MTI_COMPRA) <= numeros_gobernados

@@ -18,7 +18,7 @@ independiente.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -28,8 +28,65 @@ NOMBRE_PERFIL_GENERICO = "generico"
 
 
 @dataclass(frozen=True)
+class PoliticaCamposMti:
+    """Gobierno de un MTI: quien puede fijar cada campo, y con que valor por defecto.
+
+    Tres categorias, mutuamente excluyentes, que cubren todo campo relevante
+    para el MTI:
+
+    - ``derivados``: vienen de otro dato del dominio (la tarjeta elegida), nunca
+      de texto libre. DE2 y DE14 en la compra.
+    - ``automaticos``: los genera el sistema en el momento de armar el mensaje
+      (reloj, secuencia de STAN). DE7, DE11, DE12, DE13 en la compra.
+    - ``editables``: el usuario puede fijarlos. ``valores_por_defecto`` trae un
+      valor razonable para los que no traiga el usuario; un campo editable sin
+      entrada en ese mapa simplemente no tiene default y debe informarse.
+
+    Un numero que no aparece en ninguna de las tres listas no es parte de este
+    MTI segun este perfil: intentar fijarlo manualmente se rechaza igual que un
+    intento de fijar uno derivado o automatico, aunque el motivo se distingue
+    (ver `domain/armado.py`).
+    """
+
+    derivados: frozenset[str] = frozenset()
+    automaticos: frozenset[str] = frozenset()
+    editables: frozenset[str] = frozenset()
+    valores_por_defecto: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "valores_por_defecto", MappingProxyType(dict(self.valores_por_defecto))
+        )
+        solapa = (
+            (self.derivados & self.automaticos)
+            | (self.derivados & self.editables)
+            | (self.automaticos & self.editables)
+        )
+        if solapa:
+            raise ValueError(
+                f"un campo no puede pertenecer a más de una categoría: {sorted(solapa)}"
+            )
+        fuera_de_editables = set(self.valores_por_defecto) - self.editables
+        if fuera_de_editables:
+            raise ValueError(
+                "valores_por_defecto solo aplica a campos editables, no a "
+                f"{sorted(fuera_de_editables)}"
+            )
+
+    def origen(self, numero: str) -> str:
+        """``"derivado"``, ``"automatico"``, ``"editable"`` o ``"no_permitido"``."""
+        if numero in self.derivados:
+            return "derivado"
+        if numero in self.automaticos:
+            return "automatico"
+        if numero in self.editables:
+            return "editable"
+        return "no_permitido"
+
+
+@dataclass(frozen=True)
 class PerfilDeMarca:
-    """Formato ISO y campos obligatorios por MTI.
+    """Formato ISO, campos obligatorios y politica de edicion por MTI.
 
     ``especificacion`` es lo que se le entrega a pyiso8583 tal cual; el codec la
     recibe como parametro y por eso nunca necesita saber a que marca corresponde.
@@ -38,12 +95,14 @@ class PerfilDeMarca:
     nombre: str
     especificacion: Mapping[str, Mapping[str, Any]]
     obligatorios_por_mti: Mapping[str, frozenset[str]]
+    politica_por_mti: Mapping[str, PoliticaCamposMti] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "especificacion", MappingProxyType(dict(self.especificacion)))
         object.__setattr__(
             self, "obligatorios_por_mti", MappingProxyType(dict(self.obligatorios_por_mti))
         )
+        object.__setattr__(self, "politica_por_mti", MappingProxyType(dict(self.politica_por_mti)))
 
     def soporta(self, mti: str) -> bool:
         return mti in self.obligatorios_por_mti
@@ -53,6 +112,12 @@ class PerfilDeMarca:
         if mti not in self.obligatorios_por_mti:
             raise ValueError(f"el perfil {self.nombre!r} no soporta el MTI {mti!r}")
         return self.obligatorios_por_mti[mti]
+
+    def politica(self, mti: str) -> PoliticaCamposMti:
+        """Gobierno de campos manuales para ese MTI. Alimenta el constructor libre."""
+        if mti not in self.politica_por_mti:
+            raise ValueError(f"el perfil {self.nombre!r} no declara politica para el MTI {mti!r}")
+        return self.politica_por_mti[mti]
 
 
 def _fijo(largo: int, descripcion: str) -> dict[str, Any]:
@@ -110,6 +175,36 @@ OBLIGATORIOS_0110 = frozenset({"3", "4", "7", "11", "39", "41"})
 #: Codigo de proceso que identifica una compra en este perfil generico.
 CODIGO_PROCESO_COMPRA = "000000"
 
+#: Captura manual del numero de tarjeta. Ver domain/armado.py: valor del perfil
+#: generico de demostracion, no atribuible a ninguna marca.
+MODO_CAPTURA_DEMOSTRACION = "011"
+
+#: Terminal de demostracion. Un unico valor fijo alcanza para el alcance actual;
+#: administrar varios terminales queda fuera de esta iteracion.
+TERMINAL_DEMOSTRACION = "TERM0001"
+
+#: Politica de campos de la compra (0100). DE2 y DE14 vienen siempre de la
+#: tarjeta elegida (nunca de texto libre); DE7/11/12/13 los genera el sistema al
+#: armar el mensaje. El resto de lo que este perfil declara para el 0100 es
+#: editable, con un default razonable para no obligar a informarlo.
+#:
+#: DE38 (codigo de autorizacion) NO esta en editables, a proposito: es un campo
+#: que el AUTORIZADOR agrega en su respuesta cuando aprueba —lo hace
+#: `HostSimulado._construir_respuesta` en adapters/host_simulado/servidor.py,
+#: usando el STAN como valor—, no algo que el emisor declare en la solicitud.
+#: Habilitarlo en el 0100 seria incorrecto de dominio, no solo innecesario.
+_POLITICA_COMPRA = PoliticaCamposMti(
+    derivados=frozenset({"2", "14"}),
+    automaticos=frozenset({"7", "11", "12", "13"}),
+    editables=frozenset({"3", "22", "37", "41", "49"}),
+    valores_por_defecto={
+        "3": CODIGO_PROCESO_COMPRA,
+        "22": MODO_CAPTURA_DEMOSTRACION,
+        "41": TERMINAL_DEMOSTRACION,
+        "49": "188",
+    },
+)
+
 PERFIL_GENERICO = PerfilDeMarca(
     nombre=NOMBRE_PERFIL_GENERICO,
     especificacion=ESPECIFICACION_GENERICA,
@@ -117,6 +212,7 @@ PERFIL_GENERICO = PerfilDeMarca(
         MTI_COMPRA: OBLIGATORIOS_0100,
         MTI_RESPUESTA_COMPRA: OBLIGATORIOS_0110,
     },
+    politica_por_mti={MTI_COMPRA: _POLITICA_COMPRA},
 )
 
 

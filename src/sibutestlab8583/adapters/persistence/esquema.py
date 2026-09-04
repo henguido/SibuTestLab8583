@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS destinos (
     host        TEXT    NOT NULL,
     puerto      INTEGER NOT NULL,
     activo      INTEGER NOT NULL DEFAULT 1,
+    timeout     REAL    NOT NULL DEFAULT 10.0,
     creado_en   TEXT    NOT NULL
 );
 
@@ -192,6 +193,13 @@ COLUMNAS_AGREGADAS: tuple[tuple[str, str], ...] = (
     ("respuesta_json", "TEXT"),
 )
 
+#: Lo mismo para `destinos`: `timeout` es posterior a bases ya creadas por un
+#: clon anterior de este repositorio (la conexion pasa a llevar su propio
+#: limite de tiempo, en vez de depender solo de la variable de entorno global).
+COLUMNAS_AGREGADAS_DESTINOS: tuple[tuple[str, str], ...] = (
+    ("timeout", "REAL NOT NULL DEFAULT 10.0"),
+)
+
 #: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
 #: (titular en adelante) son posteriores a bases ya creadas por un clon
 #: anterior de este repositorio.
@@ -276,6 +284,7 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await conexion.executescript(DDL)
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS)
         await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
+        await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)
         await _sembrar_secuencias(conexion)
         await _sembrar_catalogo(conexion, CATALOGO_GENERICO)
         await _sembrar_destinos(conexion)

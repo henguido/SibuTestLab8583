@@ -61,7 +61,14 @@ from .serializacion import a_json_respuesta, a_json_solicitud, a_texto
 
 
 class TarjetaDesconocida(Exception):
-    """El `card_id` no existe en el catalogo de tarjetas de prueba."""
+    """El `card_id` no existe en el catalogo de tarjetas de prueba, o esta inactiva.
+
+    Una tarjeta inactiva se trata igual que una inexistente para una ejecucion
+    nueva: no se le revela al llamador la diferencia entre "no existe" y "existe
+    pero esta desactivada", porque para el flujo de compra el efecto es el
+    mismo, y no vale la pena una segunda excepcion para una distincion que nadie
+    consume todavia.
+    """
 
 
 class Orquestador:
@@ -76,7 +83,6 @@ class Orquestador:
         repositorio_tarjetas: RepositorioTarjetas,
         generador_stan: GeneradorStan,
         destino: DestinoTcp,
-        codigo_proceso: str,
         tiempo_limite: float | None = None,
         reloj: Callable[[], datetime] | None = None,
     ) -> None:
@@ -87,14 +93,17 @@ class Orquestador:
         self._ejecuciones = repositorio_ejecuciones
         self._tarjetas = repositorio_tarjetas
         self._destino = destino
-        self._codigo_proceso = codigo_proceso
         self._tiempo_limite = tiempo_limite
         self._stan = generador_stan
         self._reloj = reloj or (lambda: datetime.now(timezone.utc))
 
     async def ejecutar_compra(self, datos: DatosCompra) -> ResultadoCompra:
         tarjeta = await self._tarjetas.obtener(datos.card_id)
-        if tarjeta is None:
+        # Una tarjeta inactiva no debe poder iniciar una ejecucion nueva, sin
+        # importar si la peticion vino del selector de la pantalla de compra o
+        # de un request armado a mano: el servidor no confia en que el cliente
+        # solo haya ofrecido tarjetas activas.
+        if tarjeta is None or not tarjeta.activa:
             raise TarjetaDesconocida(f"no existe la tarjeta {datos.card_id!r}")
 
         momento = self._reloj()
@@ -107,7 +116,7 @@ class Orquestador:
             tarjeta,
             stan=stan,
             momento=momento,
-            codigo_proceso=self._codigo_proceso,
+            perfil=self._perfil,
         )
 
         # --- RN-4: si falta un obligatorio, no se codifica ni se envia ---
@@ -234,7 +243,10 @@ class Orquestador:
         ejecucion = Ejecucion(
             card_id=datos.card_id,
             monto=datos.monto,
-            moneda=datos.moneda,
+            # La moneda ya no es una propiedad de DatosCompra: es el campo 49
+            # efectivamente armado (default del perfil o valor manual), la
+            # misma fuente de verdad que ve el isoscopio.
+            moneda=solicitud.campos.get("49", ""),
             stan=stan,
             estado=estado,
             mti_solicitud=solicitud.mti,

@@ -78,6 +78,46 @@ class FilaIsoscopio:
     sensible: bool
 
 
+@dataclass(frozen=True)
+class FilaConstructor:
+    """Una fila de la tabla del constructor: qué es este campo y quién lo fija.
+
+    `origen` es uno de "derivado", "automatico" o "editable" — nunca
+    "no_permitido", porque esta fila solo existe para campos que la política
+    del perfil sí reconoce para el MTI. `valor` es el default declarado por el
+    perfil cuando es editable; para derivados y automáticos queda vacío, la
+    plantilla muestra en su lugar una nota de dónde sale el valor real.
+    """
+
+    numero: str
+    descripcion: str
+    valor: str
+    origen: str
+    obligatorio: bool
+
+
+def filas_constructor(perfil, mti: str, descripciones: Mapping[str, str]) -> Sequence[FilaConstructor]:
+    """Las filas del constructor para un MTI, gobernadas enteramente por el perfil.
+
+    No hardcodea ningún número de campo: recorre lo que `perfil.politica(mti)`
+    declara. Agregar un campo editable nuevo al perfil lo agrega aquí sin
+    tocar esta función.
+    """
+    politica = perfil.politica(mti)
+    obligatorios = perfil.obligatorios(mti)
+    numeros = politica.derivados | politica.automaticos | politica.editables
+    return [
+        FilaConstructor(
+            numero=numero,
+            descripcion=descripciones.get(numero, f"Campo {numero}"),
+            valor=politica.valores_por_defecto.get(numero, ""),
+            origen=politica.origen(numero),
+            obligatorio=numero in obligatorios,
+        )
+        for numero in sorted(numeros, key=int)
+    ]
+
+
 #: Un aviso por estado, uno por cada miembro de EstadoEjecucion. Los siete
 #: desenlaces se distinguen a simple vista, y en particular un fallo de
 #: infraestructura no se confunde con un rechazo del autorizador ni con una
@@ -199,23 +239,6 @@ def validar_monto(texto: str) -> Decimal:
     if monto > MONTO_MAXIMO:
         raise ValueError(f"El monto no puede superar {MONTO_MAXIMO}.")
     return monto
-
-
-def validar_puerto(texto: str) -> int:
-    try:
-        puerto = int((texto or "").strip())
-    except ValueError as error:
-        raise ValueError("El puerto debe ser un número entero.") from error
-    if not 1 <= puerto <= 65535:
-        raise ValueError("El puerto debe estar entre 1 y 65535.")
-    return puerto
-
-
-def validar_host(texto: str) -> str:
-    host = (texto or "").strip()
-    if not host:
-        raise ValueError("Indique el host de destino.")
-    return host
 
 
 def validar_activa(texto: str) -> bool:

@@ -498,15 +498,36 @@ async def test_la_representacion_persistida_es_plegable_y_llega_cerrada(base):
 # ------------------------------------------------------- 7. REUTILIZACION ----
 
 
+async def _crear_conexion_inalcanzable(composicion, conexion_id="INALCANZABLE"):
+    """Una conexion administrada apuntando a un host que no existe.
+
+    El formulario de compra ya no acepta host/puerto directos: solo
+    `conexion_id`. Estas pruebas necesitan un fallo de conexion real, asi que
+    registran una conexion hacia un host inexistente antes de enviar.
+    """
+    from sibutestlab8583.application.conexiones import DatosNuevaConexion
+
+    await composicion.administracion_conexiones.crear(
+        DatosNuevaConexion(
+            conexion_id=conexion_id,
+            nombre="Inalcanzable",
+            host="no-existe.sibutestlab.invalid",
+            puerto="9",
+        )
+    )
+    return conexion_id
+
+
 async def test_el_resultado_inmediato_sigue_funcionando(base):
     """El macro del isoscopio se movio de archivo: la pantalla no cambia."""
+    composicion = Composicion(Configuracion(ruta_base_datos=base))
+    conexion_id = await _crear_conexion_inalcanzable(composicion)
     async with httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=_app(base)), base_url="http://prueba"
+        transport=httpx2.ASGITransport(app=crear_app(composicion)), base_url="http://prueba"
     ) as cliente:
         respuesta = await cliente.post(
             "/compra",
-            data={"card_id": CARD_ID_DEMO, "monto": "150.00",
-                  "host": "no-existe.sibutestlab.invalid", "puerto": "9"},
+            data={"card_id": CARD_ID_DEMO, "monto": "150.00", "conexion_id": conexion_id},
         )
 
     assert respuesta.status_code == 200
@@ -519,13 +540,14 @@ async def test_las_dos_pantallas_comparten_la_estructura_del_isoscopio(base):
     resultado = await _compra(base)
     detalle = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
 
+    composicion = Composicion(Configuracion(ruta_base_datos=base))
+    conexion_id = await _crear_conexion_inalcanzable(composicion)
     async with httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=_app(base)), base_url="http://prueba"
+        transport=httpx2.ASGITransport(app=crear_app(composicion)), base_url="http://prueba"
     ) as cliente:
         inmediato = (await cliente.post(
             "/compra",
-            data={"card_id": CARD_ID_DEMO, "monto": "150.00",
-                  "host": "no-existe.sibutestlab.invalid", "puerto": "9"},
+            data={"card_id": CARD_ID_DEMO, "monto": "150.00", "conexion_id": conexion_id},
         )).text
 
     for marca in ('class="campo-iso"', 'class="valor-iso"', 'class="desplazable"',
@@ -546,13 +568,22 @@ async def test_vertical_transaccion_real_y_detalle_coherente(base):
     app = crear_app(composicion)
 
     async with host:
+        from sibutestlab8583.application.conexiones import DatosNuevaConexion
+
+        await composicion.administracion_conexiones.crear(
+            DatosNuevaConexion(
+                conexion_id="VERTICAL",
+                nombre="Host simulado de la prueba",
+                host=host.host,
+                puerto=str(host.puerto),
+            )
+        )
         async with httpx2.AsyncClient(
             transport=httpx2.ASGITransport(app=app), base_url="http://prueba"
         ) as cliente:
             ejecucion_web = await cliente.post(
                 "/compra",
-                data={"card_id": CARD_ID_DEMO, "monto": "987.65",
-                      "host": host.host, "puerto": str(host.puerto)},
+                data={"card_id": CARD_ID_DEMO, "monto": "987.65", "conexion_id": "VERTICAL"},
             )
             assert ejecucion_web.status_code == 200
             assert host.solicitudes_recibidas == 1

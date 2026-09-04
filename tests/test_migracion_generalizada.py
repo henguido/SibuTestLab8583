@@ -15,9 +15,70 @@ import aiosqlite
 import pytest
 
 from sibutestlab8583.adapters.persistence.esquema import (
+    COLUMNAS_AGREGADAS_DESTINOS,
     COLUMNAS_AGREGADAS_TARJETAS,
     inicializar,
 )
+
+
+def _crear_base_sin_columna_timeout(ruta) -> None:
+    """Reproduce el esquema de `destinos` tal como era antes de `timeout`."""
+    ddl_anterior = """
+    CREATE TABLE destinos (
+        destino_id  TEXT    PRIMARY KEY,
+        nombre      TEXT    NOT NULL,
+        host        TEXT    NOT NULL,
+        puerto      INTEGER NOT NULL,
+        activo      INTEGER NOT NULL DEFAULT 1,
+        creado_en   TEXT    NOT NULL
+    );
+    """
+    with sqlite3.connect(ruta) as conexion:
+        conexion.executescript(ddl_anterior)
+        conexion.execute(
+            "INSERT INTO destinos (destino_id, nombre, host, puerto, activo, creado_en)"
+            " VALUES ('VIEJO-1', 'previo', '10.0.0.1', 9000, 1, '2026-01-01T00:00:00+00:00')"
+        )
+
+
+async def test_una_base_anterior_sin_timeout_la_recibe_migrada(tmp_path):
+    ruta = tmp_path / "sin_timeout.db"
+    _crear_base_sin_columna_timeout(ruta)
+
+    await inicializar(ruta)
+
+    with sqlite3.connect(ruta) as conexion:
+        conexion.row_factory = sqlite3.Row
+        columnas = {f[1] for f in conexion.execute("PRAGMA table_info(destinos)")}
+        fila = conexion.execute(
+            "SELECT * FROM destinos WHERE destino_id = 'VIEJO-1'"
+        ).fetchone()
+
+    assert "timeout" in columnas
+    assert fila is not None, "la fila anterior se conserva"
+    assert fila["timeout"] == 10.0, "una fila migrada recibe el default de la columna"
+    assert fila["host"] == "10.0.0.1", "ninguna otra columna se modifica"
+
+
+async def test_la_migracion_de_timeout_es_idempotente(tmp_path):
+    ruta = tmp_path / "sin_timeout_repetida.db"
+    _crear_base_sin_columna_timeout(ruta)
+
+    await inicializar(ruta)
+    await inicializar(ruta)  # segunda vez: no debe fallar ni duplicar la columna
+
+    with sqlite3.connect(ruta) as conexion:
+        columnas = [f[1] for f in conexion.execute("PRAGMA table_info(destinos)")]
+    assert columnas.count("timeout") == 1
+
+
+async def test_una_base_nueva_no_necesita_migrar_timeout(base):
+    """El DDL ya trae la columna: `_migrar` sobre una base nueva no agrega nada."""
+    from sibutestlab8583.adapters.persistence.esquema import _migrar
+
+    async with aiosqlite.connect(base) as conexion:
+        agregadas = await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)
+    assert agregadas == ()
 
 
 def _crear_base_sin_columna_activa(ruta) -> None:

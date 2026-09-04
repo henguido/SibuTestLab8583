@@ -31,7 +31,7 @@ from sibutestlab8583.domain.modelos import (
     TiempoAgotado,
 )
 from sibutestlab8583.domain.validacion import CAMPO_CODIGO_RESPUESTA, campos_de_correlacion
-from sibutestlab8583.profiles.generico import CODIGO_PROCESO_COMPRA, PERFIL_GENERICO
+from sibutestlab8583.profiles.generico import PERFIL_GENERICO
 
 MOMENTO_FIJO = datetime(2026, 8, 19, 12, 30, 45, tzinfo=timezone.utc)
 DESTINO_INERTE = DestinoTcp(host="127.0.0.1", puerto=9)
@@ -122,7 +122,6 @@ def construir_orquestador(base, transporte, *, destino=DESTINO_INERTE, tiempo_li
         # iteración corrige.
         generador_stan=GeneradorStanSQLite(base),
         destino=destino,
-        codigo_proceso=CODIGO_PROCESO_COMPRA,
         tiempo_limite=tiempo_limite,
         reloj=lambda: MOMENTO_FIJO,
     )

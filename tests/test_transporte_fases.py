@@ -17,7 +17,7 @@ import asyncio
 import pytest
 
 from sibutestlab8583.adapters.transporte.framing_demo import FramingDemostracion
-from sibutestlab8583.adapters.transporte.tcp import TransporteTcp
+from sibutestlab8583.adapters.transporte.tcp import TransporteTcp, probar_conexion
 from sibutestlab8583.domain.errores import ErrorDeFraming
 from sibutestlab8583.domain.modelos import (
     DestinoTcp,
@@ -254,3 +254,57 @@ async def test_ninguna_excepcion_de_red_cruza_el_contrato(monkeypatch):
         _conexion_falsa(monkeypatch, lector, escritor)
         resultado = await _transporte().enviar(PAYLOAD, DESTINO)
         assert isinstance(resultado, (bytes, TiempoAgotado, FalloDeConexion, FalloDeTransmision))
+
+
+# --------------------------------------------- "probar conexion" (sin ISO) ---
+#
+# `probar_conexion` es deliberadamente mas angosto que `enviar()`: nunca envia
+# bytes, nunca conoce framing, y su unico resultado es un `bool`. Se prueba
+# aqui, junto al resto del transporte TCP, con los mismos dobles de conexion.
+
+
+async def test_probar_conexion_devuelve_true_si_conecta(monkeypatch):
+    async def abrir(host, puerto):
+        return LectorFalso(), EscritorFalso()
+
+    monkeypatch.setattr(asyncio, "open_connection", abrir)
+    assert await probar_conexion("127.0.0.1", 9999, 1.0) is True
+
+
+async def test_probar_conexion_devuelve_false_si_se_rechaza(monkeypatch):
+    async def abrir(host, puerto):
+        raise ConnectionRefusedError("conexion rechazada")
+
+    monkeypatch.setattr(asyncio, "open_connection", abrir)
+    assert await probar_conexion("127.0.0.1", 9999, 1.0) is False
+
+
+async def test_probar_conexion_devuelve_false_si_se_agota_el_tiempo(monkeypatch):
+    async def abrir(host, puerto):
+        await asyncio.sleep(LIMITE * 20)
+
+    monkeypatch.setattr(asyncio, "open_connection", abrir)
+    assert await probar_conexion("127.0.0.1", 9999, LIMITE) is False
+
+
+async def test_probar_conexion_cierra_el_socket_que_abrio(monkeypatch):
+    escritor = EscritorFalso()
+
+    async def abrir(host, puerto):
+        return LectorFalso(), escritor
+
+    monkeypatch.setattr(asyncio, "open_connection", abrir)
+    await probar_conexion("127.0.0.1", 9999, 1.0)
+    assert escritor.cerrado
+
+
+async def test_probar_conexion_no_escribe_nada_en_el_socket(monkeypatch):
+    """Nunca envia un mensaje ISO: es solo abrir y cerrar."""
+    escritor = EscritorFalso()
+
+    async def abrir(host, puerto):
+        return LectorFalso(), escritor
+
+    monkeypatch.setattr(asyncio, "open_connection", abrir)
+    await probar_conexion("127.0.0.1", 9999, 1.0)
+    assert escritor.escrito == b""

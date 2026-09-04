@@ -19,7 +19,11 @@ import re
 import pytest
 from test_web import ComposicionFalsa, _cliente, _resultado, FORMULARIO
 
-from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, PAN_DEMO
+from sibutestlab8583.adapters.persistence.esquema import (
+    CARD_ID_DEMO,
+    DESTINO_ID_DEMO,
+    PAN_DEMO,
+)
 from sibutestlab8583.domain.modelos import Ejecucion, EstadoEjecucion, ResultadoCompra
 from sibutestlab8583.web.app import RUTA_ESTATICA, crear_app
 from sibutestlab8583.web.presentacion import AVISOS, SECCIONES
@@ -57,11 +61,12 @@ def _solo_texto(html: str) -> str:
 PANTALLAS = (
     "compra", "resultado", "historial", "detalle", "no_encontrado",
     "configuracion", "config_tarjetas", "config_tarjeta_nueva", "config_tarjeta_editar",
+    "config_conexiones", "config_conexion_nueva", "config_conexion_editar",
 )
 
 
 def _paginas() -> dict[str, str]:
-    """El HTML de las nueve pantallas, con contenido en todas."""
+    """El HTML de las doce pantallas, con contenido en todas."""
     ejecucion = _resultado(EstadoEjecucion.APROBADA, codigo="00").ejecucion
     cliente = _cliente(
         resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"), ejecuciones=[ejecucion]
@@ -77,6 +82,11 @@ def _paginas() -> dict[str, str]:
         "config_tarjeta_nueva": cliente.get("/configuracion/tarjetas/nueva").text,
         "config_tarjeta_editar": cliente.get(
             f"/configuracion/tarjetas/{CARD_ID_DEMO}/editar"
+        ).text,
+        "config_conexiones": cliente.get("/configuracion/conexiones").text,
+        "config_conexion_nueva": cliente.get("/configuracion/conexiones/nueva").text,
+        "config_conexion_editar": cliente.get(
+            f"/configuracion/conexiones/{DESTINO_ID_DEMO}/editar"
         ).text,
     }
     assert tuple(paginas) == PANTALLAS, "PANTALLAS y _paginas() se desincronizaron"
@@ -197,18 +207,36 @@ def test_un_estado_sin_intento_de_red_lo_dice_en_el_resumen():
 # ------------------------------------------------------------ 3. FORMULARIO ---
 
 
-def test_el_formulario_conserva_sus_cuatro_campos_y_su_destino():
+def test_el_formulario_conserva_sus_campos_y_su_conexion():
     html = _cliente().get("/").text
     assert 'method="post"' in html and 'action="/compra"' in html
-    for campo in ("card_id", "monto", "host", "puerto"):
+    for campo in ("card_id", "monto", "conexion_id"):
         assert f'name="{campo}"' in html, f"falta el campo {campo}"
     assert "Ejecutar transacción" in html
 
 
-def test_el_formulario_separa_transaccion_de_destino():
+def test_el_formulario_no_ofrece_ningun_campo_de_red_editable():
+    """Host, puerto y timeout se administran solo en Configuración → Conexiones."""
     html = _cliente().get("/").text
-    assert "Transacción" in html and "Destino" in html
-    assert "Tiempo límite" in html, "el límite debe informarse"
+    for campo in ("host", "puerto", "timeout"):
+        assert f'name="{campo}"' not in html, f"la compra no debe exponer {campo}"
+
+
+def test_la_conexion_es_una_barra_compacta_sin_panel_propio():
+    """La conexion es contexto secundario: sin encabezado grande, sin panel,
+    sin el texto explicativo largo, y con host:puerto/estado solo de lectura.
+    """
+    html = _cliente().get("/").text
+    assert '<h2 class="panel__titulo">Conexión</h2>' not in html
+    assert "La conexión no se configura aquí" not in html
+    assert "Sin verificar" in html
+    assert "127.0.0.1:8583" in html
+    assert "Cambiar" not in html, "con una sola conexion activa no hace falta el enlace"
+
+
+def test_construir_transaccion_es_lo_primero_despues_de_la_barra_de_conexion():
+    html = _cliente().get("/").text
+    assert html.index("conexion-barra") < html.index("Construir transacción")
 
 
 def test_la_tarjeta_muestra_identificador_numero_enmascarado_y_descripcion():
@@ -220,7 +248,12 @@ def test_la_tarjeta_muestra_identificador_numero_enmascarado_y_descripcion():
 
 
 def test_hay_una_tarjeta_preseleccionada():
-    """Sin preseleccion, el primer envio fallaria sin motivo para el usuario."""
+    """Sin preseleccion, el primer envio fallaria sin motivo para el usuario.
+
+    La conexion ya no es un grupo de radios -es un valor de solo lectura mas
+    un enlace "Cambiar conexion"-, asi que el unico "checked" que debe existir
+    es el de la tarjeta.
+    """
     html = _cliente().get("/").text
     assert html.count("checked") == 1
 
@@ -292,7 +325,14 @@ def test_ninguna_pantalla_expone_el_numero_completo_por_ninguna_via():
 
 
 def test_la_interfaz_no_ejecuta_javascript():
-    """No hay guion que pueda filtrar nada: el rediseno es HTML y CSS."""
+    """No hay guion que pueda filtrar nada: el rediseno es HTML y CSS.
+
+    "Cambiar conexion" se resuelve con `<details>` nativo y enlaces
+    `/?conexion_id=...`: no hace falta JavaScript ni para eso ni para nada mas
+    en esta pantalla. El servidor nunca confio en un guion para la seguridad
+    de la conexion -ver `_interpretar_formulario` en `web/app.py`-, y ahora
+    tampoco existe uno para la UX.
+    """
     for nombre, html in _paginas().items():
         assert "<script" not in html.lower(), f"{nombre} incluye JavaScript"
         assert "onclick" not in html.lower(), f"{nombre} incluye un manejador en linea"
