@@ -1,6 +1,6 @@
 %% SibuTestLab8583 - Componentes, dependencias y limites
 %% Alcance: compra 0100 -> TCP -> respuesta 0110
-%% Nada de esto esta implementado todavia.
+%% Implementado de punta a punta. Motor de carga: fase posterior, no implementado.
 
 flowchart TD
 
@@ -19,6 +19,7 @@ flowchart TD
         PTRANS(["puerto<br/>Transporte"])
         PFRAM(["puerto<br/>FramingStrategy"])
         PREPO(["puerto<br/>Repositorios · async"])
+        TRACKS["Track 1 / Track 2<br/>derivacion pura · no transmitida<br/>(sin DE35/DE45, sin consumidor todavia)"]
     end
 
     subgraph adaptadores["Adaptadores"]

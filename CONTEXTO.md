@@ -168,8 +168,9 @@ rotula cada estado —tono, señal, etiqueta corta, título y explicación— y 
 fuente de la navegación. Las plantillas no duplican ninguna de las dos listas. Solo se declaran
 secciones cuya ruta existe: `Tarjetas de prueba` está prevista y no se muestra todavía.
 
-Cinco pantallas: nueva transacción, resultado, historial, **detalle de una ejecución**
-(`/historial/{id}`) y la página de no encontrado. Los componentes que dos de ellas comparten
+Ocho pantallas: nueva transacción, resultado, historial, **detalle de una ejecución**
+(`/historial/{id}`), no encontrado, y administración de Configuración (portada, listado de
+tarjetas, alta/edición de tarjetas). Los componentes que dos de ellas comparten
 —el isoscopio, el banner de estado y el resumen de métricas— viven como macros en
 `plantillas/_piezas.html`; se extrajo solo lo que ya tenía dos consumidores reales. El detalle
 lee los campos con `application/serializacion.py` y **declara en pantalla cuando una ejecución

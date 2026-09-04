@@ -1,5 +1,5 @@
 %% SibuTestLab8583 - Recorrido de compra 0100 / 0110
-%% Corresponde a PROYECTO.md seccion 3. Nada de esto esta implementado todavia.
+%% Corresponde a PROYECTO.md seccion 3. Implementado de punta a punta.
 %% Orden: armar -> validar RN-4 -> codificar -> enviar.
 
 sequenceDiagram
@@ -50,8 +50,8 @@ sequenceDiagram
             O->>C: decodificar(bytes, perfil)
             C-->>O: mensaje interpretado por campo
 
-            O->>V: evaluar_respuesta(envio, respuesta, catalogo)
-            Note over V: RN-1 campo 39 segun catalogo.<br/>RN-3 los demas campos coinciden.
+            O->>V: evaluar_respuesta(envio, respuesta, catalogo, perfil)
+            Note over V: RN-3 primero: los campos de correlacion deben coincidir.<br/>Solo si RN-3 es valida, RN-1 mira el campo 39 segun catalogo.
             V-->>O: Aprobada, Rechazada o Invalida
             O->>R: guardar envio, respuesta y resultado
         end
