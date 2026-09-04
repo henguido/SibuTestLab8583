@@ -1613,6 +1613,157 @@ de secreto en los cinco archivos tocados: `domain/modelos.py`, `adapters/persist
 `adapters/persistence/sqlite_repos.py`, `tests/test_migracion_generalizada.py`,
 `tests/test_persistencia.py`.
 
+## 2026-08-26 · Fase 1, sub-bloque 6: derivación pura de Track 1 y Track 2
+
+Sexto sub-bloque de la Fase 1. Nuevo módulo `domain/tracks.py`: dos funciones puras —sin
+I/O, sin persistencia, sin conocer SQLite ni web— que derivan la representación lógica de
+Track 1 y Track 2 a partir de PAN, titular, expiración, service code y discretionary data.
+
+**Formato adoptado, propio de SibuTestLab y no un volcado byte a byte de la pista física:**
+
+```
+Track 1:  B{PAN}^{TITULAR}^{YYMM}{SERVICE_CODE}{DISCRETIONARY_DATA}
+Track 2:  {PAN}={YYMM}{SERVICE_CODE}{DISCRETIONARY_DATA}
+```
+
+Ninguna de las dos incluye los sentinels físicos (`%`, `;`, `?`) ni el LRC: son artefactos
+de la codificación física de la pista, no contenido lógico. **Los límites de 76 caracteres
+para Track 1 y 37 para Track 2 son los límites adoptados por SibuTestLab para su
+representación lógica, conforme al diseño aprobado en este sub-bloque. Esta implementación
+no pretende reproducir byte a byte una pista física.**
+
+**Explícitamente fuera de este sub-bloque.** Ninguna otra parte del proyecto invoca todavía
+estas funciones: `profiles/generico.py` sigue sin DE35 ni DE45, el codec no las codifica, y
+no viajan en ningún `0100` real. **Track 1 y Track 2 no son, en este estado, una
+funcionalidad de red**: es derivación de dominio, pura y probada, a la espera de que un
+sub-bloque futuro decida cómo —y si— se exponen en el mensaje ISO. Tampoco deciden política
+de PAN, Luhn ni sintética/QA: eso sigue viviendo, sin cambios, en `application/tarjetas.py`.
+
+**Pruebas:** `tests/test_tracks.py`, 51 pruebas nuevas. **Suite: 385 → 436 pruebas en
+verde.**
+
+**Commit:** `725d316`.
+
+## 2026-08-26 · Decisión de congelar el crecimiento funcional
+
+**Qué se decidió.** Se auditó la consigna completa de `PROYECTO.md` y se decidió priorizar
+los entregables académicos pendientes sobre seguir añadiendo funcionalidad nueva. El motor
+de carga queda fuera de la entrega actual.
+
+**Qué no significa esta decisión.** El motor de carga **no se elimina del horizonte del
+proyecto**: se repriorizó como capacidad futura, no se descartó. `PROYECTO.md` no se
+modificó por esta decisión: sigue siendo la fuente autoritativa de alcance, y el motor de
+carga sigue apareciendo ahí como parte del horizonte del proyecto. Lo que cambió es el orden
+de trabajo, no el alcance aprobado.
+
+## 2026-09-03 · Reproducibilidad: `README.md` y `demo.cmd`
+
+Se agregan `README.md` y `demo.cmd` para que un clon limpio del repositorio pueda instalarse
+y arrancar en Windows sin depender de instrucciones sueltas ni de memoria operativa.
+`demo.cmd` reutiliza exactamente los mismos comandos que documenta `README.md` —no es una
+vía de instalación alternativa—: detección pasiva de un intérprete `python` compatible
+(`>= 3.13`), creación o validación de `.venv`, instalación idempotente
+(`pip install -e ".[dev]"`), inicialización de SQLite (`sibu-init-db`), arranque del host
+ISO8583 simulado y de `uvicorn`, espera activa a que la web responda, y apertura del
+navegador.
+
+### Hallazgo de gobernanza: `py -3.13 --version` no era de solo lectura
+
+Se asumió inicialmente que consultar la versión de un intérprete con
+`py -3.13 --version` era una operación de solo lectura, sin efecto sobre el sistema. En una
+instalación nueva de Python en esta misma máquina, esa consulta **disparó la descarga e
+instalación de Python 3.13** como efecto lateral de solo preguntar por una versión. El
+estudiante detectó el efecto no esperado.
+
+**Corrección aplicada.** Se retiró del camino de arranque de la demostración toda
+dependencia operativa del launcher `py`. `demo.cmd` exige en su lugar el comando `python`
+disponible en `PATH` y verifica compatibilidad consultando
+`sys.version_info` **dentro del propio intérprete**, sin invocar ningún mecanismo capaz de
+provocar una instalación.
+
+**Aprendizaje.** No es lo mismo el comportamiento observado de una herramienta externa —el
+launcher `py`, con un efecto lateral no anticipado— que una decisión propia del proyecto. La
+corrección no es una preferencia de estilo: es la eliminación de una dependencia que puede
+modificar el entorno del usuario sin que este lo pida.
+
+### Inconsistencia de validación de `.venv` y Python 3.14
+
+La primera versión de `demo.cmd` trató `3.13` como versión exacta al validar un `.venv`
+existente. Al revisar `pyproject.toml` se confirmó que el requisito real, ya declarado, es
+`>=3.13`. Se corrigió la validación del `.venv` para aceptar cualquier Python `>= 3.13`
+—incluido Python 3.14—, consistente con lo que el propio `pyproject.toml` ya exigía. Se
+incluye aquí, en la misma entrada, por ser el mismo aprendizaje de fondo que el hallazgo
+anterior: no dar por buena una suposición sobre el entorno sin comprobarla contra la fuente
+que ya la declara.
+
+### Bugs menores de `cmd.exe`
+
+Durante la escritura de `demo.cmd` aparecieron dos archivos espurios en el directorio de
+trabajo: uno llamado `App`, producido por una reinterpretación de `>` como redirección en
+vez de literal, y otro llamado `3.13)`, producido por otro escape incorrecto en un `echo`.
+Ambos se detectaron y se corrigieron en el propio archivo. Quedan registrados como defectos
+menores de sintaxis de `cmd.exe`, no como incidentes de gobernanza.
+
+### CRLF
+
+Se ajustó `.gitattributes` con `*.cmd text eol=crlf` para preservar en Windows el formato
+con el que `demo.cmd` fue validado de forma satisfactoria. Se comprobó el checkout byte a
+byte con CRLF. Git puede mantener una representación normalizada internamente; el control
+relevante para esta entrega es el archivo resultante en el checkout de Windows.
+
+### Prueba real en una computadora distinta
+
+Un `.venv` copiado directamente desde otro equipo resultó inválido: conservaba una
+referencia al Python base de la máquina de origen. Se reconstruyó correctamente en la
+máquina nueva, y `demo.cmd` funcionó de punta a punta con Python 3.14.7. Recorrido manual
+completo: compra aprobada, historial, detalle de una ejecución, configuración y
+administración de tarjetas. Suite: **436 passed**. Guardia de PAN: en verde.
+
+### Prueba definitiva de clon limpio
+
+Sobre un clon separado del repositorio —sin `.venv` previo, sin base SQLite previa, sobre el
+`HEAD` ya publicado, con `demo.cmd` llegando en CRLF— se ejecutó la instalación desde cero:
+recorrido manual completo, **436 passed** en la suite completa, RN-1 a RN-4 verificadas
+aparte con **29 passed**, guardia de PAN en `passed`, working tree limpio al terminar, y los
+archivos generados por la ejecución (base SQLite, entorno virtual) correctamente ignorados
+por Git. Ningún paso del README resultó ambiguo al seguirlo desde cero.
+
+**Commit:** `633be24`.
+
+## 2026-09-03 · Skill de Claude Code `levantar-demo`
+
+Se crea `.claude/skills/levantar-demo/SKILL.md`: un skill que orquesta el arranque de la
+demostración reutilizando `demo.cmd` como única fuente de verdad —no reimplementa `.venv`,
+`pip`, `sibu-init-db`, `sibu-host-demo` ni `uvicorn`— y verifica de forma independiente, con
+la librería estándar de Python, que la web responda por HTTP y que el host ISO8583 acepte
+conexión por TCP antes de dar la demostración por lista.
+
+**Primer intento de descubrimiento, fallido.** En la sesión donde se creó el archivo, el
+catálogo de skills de esa misma sesión ya se había cargado antes de que el archivo
+existiera, así que el skill no apareció como disponible.
+
+**Descubrimiento confirmado en una sesión nueva.** En una sesión de Claude Code iniciada
+después de la creación del archivo, `levantar-demo` apareció en el catálogo de skills
+disponibles y se invocó con normalidad, confirmando que el problema anterior era de orden de
+carga y no del contenido del archivo.
+
+**Verificación de comportamiento.** El skill ejecutó `demo.cmd` sin envolverlo ni
+reimplementar ninguno de sus pasos, y realizó su propia comprobación independiente después:
+HTTP 200 en `http://127.0.0.1:8000/` y conexión TCP aceptada en `127.0.0.1:8583`. No
+intentó ninguna remediación automática ante los problemas que fueron apareciendo durante las
+pruebas.
+
+**Corrección aplicada tras la prueba real.** Ejecutar `demo.cmd` desde una herramienta que
+gestiona o redirige la entrada estándar —incluida esta sesión de Claude Code— producía
+`ERROR: No es compatible la redirección de entradas` en el paso `timeout /t 1 /nobreak` del
+bucle de espera de la web, sin llegar a romper el arranque. Se sustituyó ese `timeout` por
+una pausa de un segundo con `".venv\Scripts\python.exe" -c "import time; time.sleep(1)"`,
+que no depende de un handle de consola interactivo. Prueba final tras el cambio: el error de
+redirección ya no aparece, HTTP 200, conexión TCP a 8583 aceptada, y el host sigue vivo
+—`LISTENING`— después de la comprobación.
+
+**Commit:** `ba078538`.
+
 ---
 
 ## Gobernanza
@@ -1687,3 +1838,21 @@ Git se ejecutó sin mostrar antes el estado verificado.
 **Pendiente de definir.** Los criterios estables de esta sección —qué categorías de cambio
 exigen revisión línea por línea y cuáles admiten revisión por resultado— se irán fijando a
 medida que aparezca código y pruebas. No se anticipan aquí.
+
+**Actualización 2026-09-03 — criterios aplicados en Track 1/Track 2, el congelamiento de
+alcance, la reproducibilidad y el skill de demostración.** Siempre revisado por el
+estudiante antes de confirmar un commit o un push: las decisiones de alcance —como congelar
+el crecimiento funcional—, cualquier cambio funcional, las reglas de negocio, la seguridad
+del PAN, los cambios de persistencia, y toda operación de Git con efecto persistente
+—staging, commit, push o modificación del historial—. También se revisaron en persona la
+reproducibilidad (`README.md`, `demo.cmd`) y el comportamiento real de la demostración
+levantada, y el estudiante revisó y aprobó las correcciones que surgieron de hallazgos del
+agente antes de incorporarlas, incluido el hallazgo de gobernanza sobre
+`py -3.13 --version`.
+
+Delegado principalmente al agente: la inspección inicial de archivos y del estado del
+repositorio, la generación de propuestas técnicas, la búsqueda de documentación o
+configuración desactualizada, la ejecución mecánica de las suites de pruebas, los borradores
+de documentación —incluido este mismo `SKILL.md`— y las auditorías realizadas en paralelo
+mediante subagentes. Ningún resultado delegado se aceptó sin presentarse antes para
+revisión, en particular antes de cualquier `git add`, `commit` o `push`.
