@@ -126,6 +126,22 @@ class RepositorioDestinosFalso:
         self._destinos[destino.destino_id] = destino
 
 
+class RepositorioEscenariosFalso:
+    """Doble en memoria de `RepositorioEscenarios`, mismo patron que las tarjetas."""
+
+    def __init__(self, escenarios=()):
+        self._escenarios = {e.escenario_id: e for e in escenarios}
+
+    async def obtener(self, escenario_id):
+        return self._escenarios.get(escenario_id)
+
+    async def listar(self):
+        return sorted(self._escenarios.values(), key=lambda e: e.nombre)
+
+    async def guardar(self, escenario):
+        self._escenarios[escenario.escenario_id] = escenario
+
+
 #: Conexion de demostracion para los dobles de la capa web, mismo identificador
 #: y valores que siembra `esquema.py`.
 _CONEXION_DEMO_FALSA = DestinoGuardado(
@@ -145,9 +161,15 @@ class OrquestadorFalso:
         #: verifiquen lo que `_interpretar_formulario` de verdad construyo, sin
         #: necesitar un orquestador real ni SQLite.
         self.ultimos_datos = None
+        #: Ultimo escenario asociado (id, nombre) con el que se llamo, o
+        #: (None, None) si la ejecucion no partio de ninguno.
+        self.ultimo_escenario_id = None
+        self.ultimo_escenario_nombre = None
 
-    async def ejecutar_compra(self, datos):
+    async def ejecutar_compra(self, datos, *, escenario_id=None, escenario_nombre=None):
         self.ultimos_datos = datos
+        self.ultimo_escenario_id = escenario_id
+        self.ultimo_escenario_nombre = escenario_nombre
         if self._error is not None:
             raise self._error
         return self._resultado
@@ -173,8 +195,10 @@ class ComposicionFalsa:
         ejecuciones=(),
         tarjetas=None,
         destinos=None,
+        escenarios=None,
         verificador_conexion=None,
     ):
+        from sibutestlab8583.application.escenarios import ServicioEscenarios
         from sibutestlab8583.composicion import Configuracion
 
         self.configuracion = Configuracion(
@@ -184,16 +208,21 @@ class ComposicionFalsa:
         self.descripciones_de_campos = {"2": "Número de tarjeta (PAN)", "4": "Monto"}
         self.perfil = PERFIL_GENERICO
         self._orquestador = OrquestadorFalso(resultado, error)
-        self.administracion_tarjetas = ServicioTarjetas(
-            RepositorioTarjetasFalso(
-                tarjetas if tarjetas is not None else [_TARJETA_DEMO_FALSA]
-            )
+        self._repositorio_tarjetas = RepositorioTarjetasFalso(
+            tarjetas if tarjetas is not None else [_TARJETA_DEMO_FALSA]
         )
+        self._repositorio_destinos = RepositorioDestinosFalso(
+            destinos if destinos is not None else [_CONEXION_DEMO_FALSA]
+        )
+        self.administracion_tarjetas = ServicioTarjetas(self._repositorio_tarjetas)
         self.administracion_conexiones = ServicioConexiones(
-            RepositorioDestinosFalso(
-                destinos if destinos is not None else [_CONEXION_DEMO_FALSA]
-            ),
-            verificador_conexion,
+            self._repositorio_destinos, verificador_conexion
+        )
+        self.administracion_escenarios = ServicioEscenarios(
+            RepositorioEscenariosFalso(escenarios if escenarios is not None else []),
+            self._repositorio_tarjetas,
+            self._repositorio_destinos,
+            PERFIL_GENERICO,
         )
 
     async def orquestador(self, destino, *, tiempo_limite=None):
@@ -205,7 +234,10 @@ class ComposicionFalsa:
         return self._orquestador
 
 
-def _resultado(estado, *, codigo=None, con_respuesta=True, motivos=()):
+def _resultado(
+    estado, *, codigo=None, con_respuesta=True, motivos=(),
+    escenario_id=None, escenario_nombre=None,
+):
     from sibutestlab8583.application.serializacion import (
         a_json_respuesta,
         a_json_solicitud,
@@ -237,6 +269,8 @@ def _resultado(estado, *, codigo=None, con_respuesta=True, motivos=()):
         solicitud_json=a_json_solicitud(solicitud, "generico"),
         respuesta_json=a_json_respuesta(respuesta, "generico") if respuesta else None,
         latencia_ms=7,
+        escenario_id=escenario_id,
+        escenario_nombre=escenario_nombre,
         creada_en=MOMENTO,
     )
     return ResultadoCompra(
@@ -411,6 +445,25 @@ def test_el_historial_vacio_no_falla():
     respuesta = _cliente().get("/historial")
     assert respuesta.status_code == 200
     assert "Todavía no hay ejecuciones" in respuesta.text
+
+
+def test_el_historial_muestra_el_nombre_del_escenario_no_su_id_opaco():
+    ejecucion = _resultado(
+        EstadoEjecucion.APROBADA, codigo="00",
+        escenario_id="ESC-5bb7f2", escenario_nombre="Compra aprobada CRC",
+    ).ejecucion
+    respuesta = _cliente(ejecuciones=[ejecucion]).get("/historial")
+    assert "Compra aprobada CRC" in respuesta.text
+    # El id opaco solo puede aparecer en el href del enlace (para poder
+    # cargarlo), nunca como texto visible.
+    assert ">ESC-5bb7f2<" not in respuesta.text
+    assert "Escenario: ESC-5bb7f2" not in respuesta.text
+
+
+def test_el_historial_sin_escenario_no_muestra_ninguna_referencia():
+    ejecucion = _resultado(EstadoEjecucion.APROBADA, codigo="00").ejecucion
+    respuesta = _cliente(ejecuciones=[ejecucion]).get("/historial")
+    assert "Escenario:" not in respuesta.text
 
 
 # ------------------------------------------------------------ campos_manuales --

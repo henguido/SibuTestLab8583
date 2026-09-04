@@ -26,6 +26,27 @@
 </div>
 {% endif %}
 
+{% if bloqueo_escenario and (bloqueo_escenario.inactivo or bloqueo_escenario.tarjeta_no_disponible or bloqueo_escenario.conexion_no_disponible or bloqueo_escenario.incompatibilidades) %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Este escenario necesita atención</h2>
+  <ul class="aviso__detalle">
+    {% if bloqueo_escenario.inactivo %}
+    <li>Este escenario está inactivo. Reactívelo para poder ejecutarlo, o guarde una copia.</li>
+    {% endif %}
+    {% if bloqueo_escenario.tarjeta_no_disponible %}
+    <li>La tarjeta usada por este escenario ya no está disponible. Seleccione otra tarjeta para continuar.</li>
+    {% endif %}
+    {% if bloqueo_escenario.conexion_no_disponible %}
+    <li>La conexión usada por este escenario ya no está disponible. Seleccione otra conexión para continuar.</li>
+    {% endif %}
+    {% for problema in bloqueo_escenario.incompatibilidades %}
+    <li>Este escenario ya no es compatible con el perfil actual: {{ problema }}.</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <div class="conexion-barra">
   {% if conexion_actual %}
   <span class="chip chip--sintetica">Sin verificar</span>
@@ -45,7 +66,7 @@
     <div class="tarjetas">
       {% for conexion in conexiones %}
       <a class="tarjeta{{ ' tarjeta--seleccionada' if conexion_actual and conexion.conexion_id == conexion_actual.conexion_id }}"
-         href="/?conexion_id={{ conexion.conexion_id }}">
+         href="/?conexion_id={{ conexion.conexion_id }}{{ '&escenario_id=' ~ escenario_actual.escenario_id if escenario_actual }}">
         <span class="tarjeta__id">{{ conexion.nombre }}</span>
         <span class="tarjeta__pan">{{ conexion.host }}:{{ conexion.puerto }}</span>
       </a>
@@ -57,6 +78,7 @@
 
 <form method="post" action="/compra" id="formulario-constructor">
   <input type="hidden" name="conexion_id" value="{{ conexion_id }}">
+  <input type="hidden" name="escenario_id" value="{{ escenario_actual.escenario_id if escenario_actual else '' }}">
 
   <section class="panel">
     <div class="panel__cabecera">
@@ -148,8 +170,34 @@
   </section>
 
   <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Guardar como escenario</h2>
+    </div>
+    <div class="panel__cuerpo">
+      <div class="campo">
+        <label class="campo__rotulo" for="nombre">Nombre del escenario</label>
+        <input type="text" id="nombre" name="nombre" autocomplete="off" value="{{ nombre_escenario }}">
+        <p class="campo__pista">
+          Congela los valores de esta pantalla -tarjeta, conexión, monto y campos editables- para
+          poder recuperarlos y reejecutarlos después, sin construirlos de nuevo a mano.
+        </p>
+      </div>
+      <div class="acciones">
+        {% if escenario_actual %}
+        <button class="boton" type="submit" formaction="/escenarios/{{ escenario_actual.escenario_id }}">
+          Guardar cambios
+        </button>
+        <button class="boton" type="submit" formaction="/escenarios">Guardar como copia</button>
+        {% else %}
+        <button class="boton" type="submit" formaction="/escenarios">Guardar como escenario</button>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
     <div class="acciones">
-      <button class="boton" type="submit" {{ 'disabled' if not conexion_actual }}>
+      <button class="boton" type="submit" formaction="/compra" {{ 'disabled' if not puede_ejecutar }}>
         {{ senal('transmision', 16) }}
         Ejecutar transacción
       </button>

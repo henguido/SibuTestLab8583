@@ -24,6 +24,12 @@
     {%- else %}
     {{ resumen(ejecucion, aviso, none, 'no se intentó transmisión por la red') }}
     {%- endif %}
+    {% if ejecucion.escenario_id %}
+    <p class="campo__pista">
+      Originada en el escenario
+      <a href="/?escenario_id={{ ejecucion.escenario_id }}">{{ ejecucion.escenario_nombre or ejecucion.escenario_id }}</a>.
+    </p>
+    {% endif %}
   </div>
 </section>
 

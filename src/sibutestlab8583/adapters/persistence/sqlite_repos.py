@@ -7,6 +7,7 @@ eso PostgreSQL podria sustituirlo sin tocar la logica de negocio.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -20,10 +21,17 @@ from ...domain.modelos import (
     STAN_MAXIMO,
     DestinoGuardado,
     Ejecucion,
+    Escenario,
     EstadoEjecucion,
     TarjetaPrueba,
 )
 from .esquema import SECUENCIA_STAN, ruta_base_datos
+
+#: Version del formato de `campos_json` en `escenarios`. Separado de
+#: `application.serializacion.VERSION_FORMATO`: ese versiona un mensaje ISO ya
+#: armado y enmascarado; este versiona una plantilla de campos editables sin
+#: armar. Son formatos distintos y evolucionan por separado.
+VERSION_CAMPOS_ESCENARIO = 1
 
 
 class _RepositorioSQLite:
@@ -204,8 +212,9 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                 " (creada_en, card_id, mti_solicitud, mti_respuesta, monto, moneda, stan,"
                 "  destino_host, destino_puerto, estado, codigo_respuesta,"
                 "  solicitud_enmascarada, respuesta_enmascarada,"
-                "  solicitud_json, respuesta_json, latencia_ms)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  solicitud_json, respuesta_json, latencia_ms,"
+                "  escenario_id, escenario_nombre)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ejecucion.creada_en.isoformat(),
                     ejecucion.card_id,
@@ -223,6 +232,8 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                     ejecucion.solicitud_json,
                     ejecucion.respuesta_json,
                     ejecucion.latencia_ms,
+                    ejecucion.escenario_id,
+                    ejecucion.escenario_nombre,
                 ),
             )
             await conexion.commit()
@@ -302,6 +313,94 @@ class RepositorioDestinosSQLite(_RepositorioSQLite):
             await conexion.commit()
 
 
+class RepositorioEscenariosSQLite(_RepositorioSQLite):
+    """Catalogo de escenarios guardados: transacciones reutilizables.
+
+    `campos_json` guarda la version propia de este repositorio (ver
+    `VERSION_CAMPOS_ESCENARIO`), distinta de la de `application.serializacion`:
+    una plantilla de campos editables sin armar, no un mensaje ISO transmitido.
+    """
+
+    async def obtener(self, escenario_id: str) -> Escenario | None:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
+                "       campos_json, activo, creado_en, actualizado_en"
+                " FROM escenarios WHERE escenario_id = ?",
+                (escenario_id,),
+            ) as cursor:
+                fila = await cursor.fetchone()
+        return _a_escenario(fila) if fila else None
+
+    async def listar(self) -> Sequence[Escenario]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
+                "       campos_json, activo, creado_en, actualizado_en"
+                " FROM escenarios ORDER BY nombre"
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_escenario(f) for f in filas]
+
+    async def guardar(self, escenario: Escenario) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute("PRAGMA foreign_keys = ON")
+            await conexion.execute(
+                "INSERT INTO escenarios"
+                " (escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
+                "  campos_json, activo, creado_en, actualizado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(escenario_id) DO UPDATE SET"
+                "   nombre = excluded.nombre,"
+                "   perfil = excluded.perfil,"
+                "   mti = excluded.mti,"
+                "   card_id = excluded.card_id,"
+                "   conexion_id = excluded.conexion_id,"
+                "   monto = excluded.monto,"
+                "   campos_json = excluded.campos_json,"
+                "   activo = excluded.activo,"
+                "   actualizado_en = excluded.actualizado_en",
+                (
+                    escenario.escenario_id,
+                    escenario.nombre,
+                    escenario.perfil,
+                    escenario.mti,
+                    escenario.card_id,
+                    escenario.conexion_id,
+                    str(escenario.monto),
+                    json.dumps(
+                        {"version": VERSION_CAMPOS_ESCENARIO, "campos": dict(escenario.campos_manuales)},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    int(escenario.activo),
+                    escenario.creado_en.isoformat(),
+                    escenario.actualizado_en.isoformat(),
+                ),
+            )
+            await conexion.commit()
+
+
+def _a_escenario(fila: aiosqlite.Row) -> Escenario:
+    bruto = json.loads(fila["campos_json"]) if fila["campos_json"] else {}
+    campos = bruto.get("campos", {}) if isinstance(bruto, dict) else {}
+    return Escenario(
+        escenario_id=fila["escenario_id"],
+        nombre=fila["nombre"],
+        perfil=fila["perfil"],
+        mti=fila["mti"],
+        card_id=fila["card_id"],
+        conexion_id=fila["conexion_id"],
+        monto=Decimal(fila["monto"]),
+        campos_manuales=campos,
+        activo=bool(fila["activo"]),
+        creado_en=datetime.fromisoformat(fila["creado_en"]),
+        actualizado_en=datetime.fromisoformat(fila["actualizado_en"]),
+    )
+
+
 def _a_destino(fila: aiosqlite.Row) -> DestinoGuardado:
     return DestinoGuardado(
         destino_id=fila["destino_id"],
@@ -363,4 +462,6 @@ def _a_ejecucion(fila: aiosqlite.Row) -> Ejecucion:
         solicitud_json=_opcional(fila, "solicitud_json"),
         respuesta_json=_opcional(fila, "respuesta_json"),
         latencia_ms=fila["latencia_ms"],
+        escenario_id=_opcional(fila, "escenario_id"),
+        escenario_nombre=_opcional(fila, "escenario_nombre"),
     )

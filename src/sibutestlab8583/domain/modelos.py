@@ -109,6 +109,45 @@ class DatosCompra:
 
 
 @dataclass(frozen=True)
+class Escenario:
+    """Una transaccion reutilizable: la intencion, no una corrida concreta.
+
+    Congela los valores EFECTIVOS de todos los campos editables del perfil
+    para ese MTI en el momento de guardar -defaults incluidos, no solo lo que
+    el usuario haya tocado-: si mañana el perfil cambia un default, este
+    escenario no debe cambiar de comportamiento en silencio.
+
+    Nunca contiene PAN (referencia la tarjeta por `card_id`, igual que
+    `DatosCompra` y `Ejecucion`) ni host/puerto/timeout (referencia la
+    conexion por `conexion_id`, igual que el constructor). `monto` queda
+    separado de `campos_manuales` a proposito: DE4 no es un campo editable
+    segun `PoliticaCamposMti` -lo arma `armar_compra` en su capa
+    estructural-, asi que nunca podria vivir junto a los campos que si
+    gobierna esa politica.
+    """
+
+    escenario_id: str
+    nombre: str
+    perfil: str
+    mti: str
+    card_id: str
+    conexion_id: str
+    monto: Decimal
+    campos_manuales: Mapping[str, str] = field(default_factory=dict)
+    activo: bool = True
+    creado_en: datetime = field(default_factory=_ahora)
+    actualizado_en: datetime = field(default_factory=_ahora)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
+
+    def a_datos_compra(self) -> DatosCompra:
+        return DatosCompra(
+            card_id=self.card_id, monto=self.monto, campos_manuales=self.campos_manuales
+        )
+
+
+@dataclass(frozen=True)
 class DestinoTcp:
     """Destino configurable del envio. Todavia no se conecta a nada."""
 
@@ -386,6 +425,14 @@ class Ejecucion:
     solicitud_json: str | None = None
     respuesta_json: str | None = None
     latencia_ms: int | None = None
+    #: Si esta ejecucion partio de un escenario guardado, su identificador y su
+    #: nombre en ese momento. El nombre se copia aqui -no se resuelve con un
+    #: join en cada lectura- por la misma razon que `destino_host` copia el
+    #: host de la conexion usada: editar o renombrar el escenario despues no
+    #: debe alterar como luce una ejecucion ya registrada. No es un dato
+    #: sensible, asi que copiarlo no es un riesgo de PAN.
+    escenario_id: str | None = None
+    escenario_nombre: str | None = None
     creada_en: datetime = field(default_factory=_ahora)
     id: int | None = None
 

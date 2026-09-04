@@ -15,6 +15,7 @@ from .modelos import (
     DestinoGuardado,
     DestinoTcp,
     Ejecucion,
+    Escenario,
     FalloDeConexion,
     FalloDeTransmision,
     TarjetaPrueba,
@@ -138,6 +139,17 @@ class RepositorioDestinos(Protocol):
     async def listar(self) -> Sequence[DestinoGuardado]: ...
 
     async def guardar(self, destino: DestinoGuardado) -> None: ...
+
+
+@runtime_checkable
+class RepositorioEscenarios(Protocol):
+    """Catalogo de escenarios guardados: transacciones reutilizables."""
+
+    async def obtener(self, escenario_id: str) -> Escenario | None: ...
+
+    async def listar(self) -> Sequence[Escenario]: ...
+
+    async def guardar(self, escenario: Escenario) -> None: ...
 
 
 @runtime_checkable

@@ -15,7 +15,12 @@ from decimal import Decimal
 import pytest
 
 from sibutestlab8583.domain import armado
-from sibutestlab8583.domain.armado import armar_compra, validar_campos_manuales
+from sibutestlab8583.domain.armado import (
+    armar_compra,
+    incompatibilidades_escenario,
+    valores_efectivos_editables,
+    validar_campos_manuales,
+)
 from sibutestlab8583.domain.datos_sinteticos import pan_sintetico
 from sibutestlab8583.domain.errores import CampoNoPermitido, CampoProtegido
 from sibutestlab8583.domain.modelos import DatosCompra, TarjetaPrueba
@@ -23,6 +28,7 @@ from sibutestlab8583.profiles.generico import (
     CODIGO_PROCESO_COMPRA,
     MODO_CAPTURA_DEMOSTRACION,
     PERFIL_GENERICO,
+    PerfilDeMarca,
     PoliticaCamposMti,
     TERMINAL_DEMOSTRACION,
 )
@@ -142,6 +148,90 @@ def test_armar_compra_rechaza_un_campo_derivado_manual():
             momento=MOMENTO,
             perfil=PERFIL_GENERICO,
         )
+
+
+# ------------------------------------------------- valores_efectivos_editables --
+
+
+def test_sin_overrides_los_efectivos_son_los_defaults_del_perfil():
+    efectivos = valores_efectivos_editables({}, PERFIL_GENERICO, "0100")
+    assert efectivos == {
+        "3": CODIGO_PROCESO_COMPRA,
+        "22": MODO_CAPTURA_DEMOSTRACION,
+        "41": TERMINAL_DEMOSTRACION,
+        "49": "188",
+    }
+
+
+def test_un_override_reemplaza_su_default_y_agrega_un_campo_sin_default():
+    efectivos = valores_efectivos_editables({"37": "REF-QA-01", "49": "840"}, PERFIL_GENERICO, "0100")
+    assert efectivos["37"] == "REF-QA-01"
+    assert efectivos["49"] == "840"
+    # Los que no se tocaron siguen viniendo del default de hoy.
+    assert efectivos["3"] == CODIGO_PROCESO_COMPRA
+
+
+def test_valores_efectivos_editables_rechaza_lo_mismo_que_validar_campos_manuales():
+    """Es la misma puerta: nunca puede congelarse un campo que armar_compra rechazaria."""
+    with pytest.raises(CampoProtegido):
+        valores_efectivos_editables({"2": "9" * 16}, PERFIL_GENERICO, "0100")
+
+
+def test_valores_efectivos_editables_es_lo_que_armar_compra_congelaria():
+    """Confirma que 'congelar los efectivos' y 'lo que armar_compra usaria hoy'
+    son exactamente la misma cosa -las dos primeras capas del merge-.
+    """
+    overrides = {"37": "REF-QA-02"}
+    efectivos = valores_efectivos_editables(overrides, PERFIL_GENERICO, "0100")
+
+    mensaje = armar_compra(
+        DatosCompra(card_id="X", monto=Decimal("10.00"), campos_manuales=overrides),
+        _tarjeta(),
+        stan="000001",
+        momento=MOMENTO,
+        perfil=PERFIL_GENERICO,
+    )
+    for numero, valor in efectivos.items():
+        assert mensaje.campos[numero] == valor
+
+
+# --------------------------------------------------- incompatibilidades_escenario --
+
+
+def test_sin_incompatibilidades_para_un_escenario_recien_congelado():
+    efectivos = valores_efectivos_editables({"37": "REF-QA-01"}, PERFIL_GENERICO, "0100")
+    assert incompatibilidades_escenario(efectivos, PERFIL_GENERICO, "0100") == ()
+
+
+def test_detecta_un_campo_que_dejo_de_ser_editable():
+    """Simula el drift que el Bloque 2 quiere blindar: el perfil cambia y un
+    campo que un escenario congelo como editable ya no lo es.
+    """
+    perfil_futuro = PerfilDeMarca(
+        nombre=PERFIL_GENERICO.nombre,
+        especificacion=PERFIL_GENERICO.especificacion,
+        obligatorios_por_mti=PERFIL_GENERICO.obligatorios_por_mti,
+        politica_por_mti={
+            "0100": PoliticaCamposMti(
+                derivados=frozenset({"2", "14"}),
+                automaticos=frozenset({"7", "11", "12", "13", "37"}),  # 37 cambio de categoria
+                editables=frozenset({"3", "22", "41", "49"}),
+                valores_por_defecto={
+                    "3": CODIGO_PROCESO_COMPRA,
+                    "22": MODO_CAPTURA_DEMOSTRACION,
+                    "41": TERMINAL_DEMOSTRACION,
+                    "49": "188",
+                },
+            )
+        },
+    )
+    campos_congelados = {"3": CODIGO_PROCESO_COMPRA, "37": "REF-QA-01"}
+
+    problemas = incompatibilidades_escenario(campos_congelados, perfil_futuro, "0100")
+
+    assert len(problemas) == 1
+    assert "37" in problemas[0]
+    assert "automatico" in problemas[0]
 
 
 def test_la_capa_estructural_gana_aunque_la_validacion_no_existiera():

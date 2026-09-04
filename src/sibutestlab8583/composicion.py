@@ -24,6 +24,7 @@ from .adapters.persistence.sqlite_repos import (
     RepositorioCatalogosSQLite,
     RepositorioDestinosSQLite,
     RepositorioEjecucionesSQLite,
+    RepositorioEscenariosSQLite,
     RepositorioTarjetasSQLite,
 )
 from .adapters.transporte.framing_demo import FramingDemostracion
@@ -34,6 +35,7 @@ from .adapters.transporte.tcp import (
 )
 from .application.consultas import ServicioConsultas
 from .application.conexiones import ServicioConexiones
+from .application.escenarios import ServicioEscenarios
 from .application.orquestador import Orquestador
 from .application.tarjetas import ServicioTarjetas
 from .domain.catalogo import NOMBRE_CATALOGO_GENERICO
@@ -88,6 +90,7 @@ class Composicion:
         self._ejecuciones = RepositorioEjecucionesSQLite(configuracion.ruta_base_datos)
         self._catalogos = RepositorioCatalogosSQLite(configuracion.ruta_base_datos)
         self._destinos = RepositorioDestinosSQLite(configuracion.ruta_base_datos)
+        self._escenarios = RepositorioEscenariosSQLite(configuracion.ruta_base_datos)
         self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
@@ -104,6 +107,10 @@ class Composicion:
     @property
     def administracion_conexiones(self) -> ServicioConexiones:
         return ServicioConexiones(self._destinos, self._verificador_conexion)
+
+    @property
+    def administracion_escenarios(self) -> ServicioEscenarios:
+        return ServicioEscenarios(self._escenarios, self._tarjetas, self._destinos, self._perfil)
 
     @property
     def perfil(self):

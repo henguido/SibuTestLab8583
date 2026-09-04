@@ -43,7 +43,12 @@
         <tr data-estado="{{ ejecucion.estado.value }}">
           <td class="mono">{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
           <td class="mono">{{ ejecucion.stan }}</td>
-          <td class="mono">{{ ejecucion.card_id }}</td>
+          <td class="mono">
+            {{ ejecucion.card_id }}
+            {%- if ejecucion.escenario_id %}
+            <br><a href="/?escenario_id={{ ejecucion.escenario_id }}">Escenario: {{ ejecucion.escenario_nombre or ejecucion.escenario_id }}</a>
+            {%- endif %}
+          </td>
           {# El importe y su moneda en la misma celda, pero el codigo con
              tratamiento de codigo: si van con el mismo estilo se leen como un
              solo numero. #}

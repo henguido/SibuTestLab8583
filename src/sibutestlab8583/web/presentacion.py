@@ -64,6 +64,7 @@ class Seccion:
 #: que un enlace ausente.
 SECCIONES: tuple[Seccion, ...] = (
     Seccion("compra", "/", "Nueva transacción"),
+    Seccion("escenarios", "/escenarios", "Escenarios"),
     Seccion("historial", "/historial", "Historial"),
     Seccion("configuracion", "/configuracion", "Configuración"),
 )

@@ -62,6 +62,49 @@ def validar_campos_manuales(campos_manuales: Mapping[str, str], perfil, mti: str
             raise CampoNoPermitido(f"el campo {numero} no es editable para el MTI {mti}")
 
 
+def valores_efectivos_editables(
+    campos_manuales: Mapping[str, str], perfil, mti: str
+) -> dict[str, str]:
+    """Defaults del perfil + overrides del usuario, solo para campos editables.
+
+    Es exactamente lo que un escenario debe congelar al guardarse: las dos
+    primeras capas de `armar_compra` (perfil, despues usuario), sin la tercera
+    -la estructural nunca se congela, se regenera en cada ejecucion-. Si
+    manana el perfil cambia un default, un escenario ya guardado no debe
+    cambiar de comportamiento en silencio: por eso se persiste el valor
+    EFECTIVO de hoy, no una referencia a "el default de turno".
+
+    Reutiliza `validar_campos_manuales` para no aceptar de entrada nada que
+    `armar_compra` fuera a rechazar despues.
+    """
+    validar_campos_manuales(campos_manuales, perfil, mti)
+    politica = perfil.politica(mti)
+    efectivos = dict(politica.valores_por_defecto)
+    efectivos.update(campos_manuales)
+    return efectivos
+
+
+def incompatibilidades_escenario(
+    campos: Mapping[str, str], perfil, mti: str
+) -> tuple[str, ...]:
+    """Todo campo guardado que la politica actual ya no trata como editable.
+
+    A diferencia de `validar_campos_manuales` -que revienta ante el primer
+    campo fuera de lugar-, esto junta TODOS los problemas de una vez: un
+    escenario incompatible se explica completo, no se descubre de a uno. Sirve
+    para bloquear la carga/reejecucion de un escenario en vez de reinterpretar
+    en silencio un campo que cambio de categoria (por ejemplo, si un editable
+    pasara a ser automatico).
+    """
+    politica = perfil.politica(mti)
+    problemas: list[str] = []
+    for numero in sorted(campos, key=int):
+        origen = politica.origen(numero)
+        if origen != "editable":
+            problemas.append(f"el campo {numero} ya no es editable en el perfil actual (es {origen})")
+    return tuple(problemas)
+
+
 def armar_compra(
     datos: DatosCompra,
     tarjeta: TarjetaPrueba,

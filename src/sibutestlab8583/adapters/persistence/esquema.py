@@ -76,6 +76,27 @@ CREATE TABLE IF NOT EXISTS destinos (
     creado_en   TEXT    NOT NULL
 );
 
+-- Escenarios: transacciones reutilizables. Congelan los valores EFECTIVOS de
+-- los campos editables (defaults del perfil + overrides del usuario) al
+-- momento de guardar -nunca los derivados/automaticos, que se regeneran en
+-- cada ejecucion-. Referencia tarjeta y conexion por id, nunca PAN ni
+-- host/puerto/timeout, igual que el resto del esquema.
+CREATE TABLE IF NOT EXISTS escenarios (
+    escenario_id   TEXT    PRIMARY KEY,
+    nombre         TEXT    NOT NULL,
+    perfil         TEXT    NOT NULL,
+    mti            TEXT    NOT NULL DEFAULT '0100',
+    card_id        TEXT    NOT NULL REFERENCES tarjetas_prueba(card_id),
+    conexion_id    TEXT    NOT NULL REFERENCES destinos(destino_id),
+    monto          TEXT    NOT NULL,
+    campos_json    TEXT    NOT NULL DEFAULT '{}',
+    activo         INTEGER NOT NULL DEFAULT 1,
+    creado_en      TEXT    NOT NULL,
+    actualizado_en TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_escenarios_nombre ON escenarios(nombre);
+
 -- Sin columna de PAN a proposito: una ejecucion referencia la tarjeta por
 -- card_id y guarda los mensajes ya enmascarados.
 CREATE TABLE IF NOT EXISTS ejecuciones (
@@ -100,7 +121,12 @@ CREATE TABLE IF NOT EXISTS ejecuciones (
     -- reconstruidos, porque reconstruirlos seria inventarlos.
     solicitud_json          TEXT,
     respuesta_json          TEXT,
-    latencia_ms             INTEGER
+    latencia_ms             INTEGER,
+    -- Si esta ejecucion partio de un escenario guardado: su id y su nombre en
+    -- ese momento, copiado y no resuelto con un join -renombrar el escenario
+    -- despues no debe alterar como luce una ejecucion ya registrada-.
+    escenario_id            TEXT    REFERENCES escenarios(escenario_id),
+    escenario_nombre        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_creada_en ON ejecuciones(creada_en);
@@ -200,6 +226,14 @@ COLUMNAS_AGREGADAS_DESTINOS: tuple[tuple[str, str], ...] = (
     ("timeout", "REAL NOT NULL DEFAULT 10.0"),
 )
 
+#: Lo mismo para `ejecuciones`: `escenario_id`/`escenario_nombre` son
+#: posteriores a bases ya creadas por un clon anterior de este repositorio (el
+#: Bloque 2 de escenarios agrega trazabilidad opcional hacia un escenario).
+COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO: tuple[tuple[str, str], ...] = (
+    ("escenario_id", "TEXT"),
+    ("escenario_nombre", "TEXT"),
+)
+
 #: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
 #: (titular en adelante) son posteriores a bases ya creadas por un clon
 #: anterior de este repositorio.
@@ -283,6 +317,7 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await conexion.execute("PRAGMA foreign_keys = ON")
         await conexion.executescript(DDL)
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS)
+        await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO)
         await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
         await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)
         await _sembrar_secuencias(conexion)

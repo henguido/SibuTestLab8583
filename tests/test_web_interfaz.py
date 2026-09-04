@@ -62,11 +62,12 @@ PANTALLAS = (
     "compra", "resultado", "historial", "detalle", "no_encontrado",
     "configuracion", "config_tarjetas", "config_tarjeta_nueva", "config_tarjeta_editar",
     "config_conexiones", "config_conexion_nueva", "config_conexion_editar",
+    "escenarios",
 )
 
 
 def _paginas() -> dict[str, str]:
-    """El HTML de las doce pantallas, con contenido en todas."""
+    """El HTML de las trece pantallas, con contenido en todas."""
     ejecucion = _resultado(EstadoEjecucion.APROBADA, codigo="00").ejecucion
     cliente = _cliente(
         resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"), ejecuciones=[ejecucion]
@@ -88,6 +89,7 @@ def _paginas() -> dict[str, str]:
         "config_conexion_editar": cliente.get(
             f"/configuracion/conexiones/{DESTINO_ID_DEMO}/editar"
         ).text,
+        "escenarios": cliente.get("/escenarios").text,
     }
     assert tuple(paginas) == PANTALLAS, "PANTALLAS y _paginas() se desincronizaron"
     return paginas

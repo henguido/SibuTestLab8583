@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal %}
+{% block titulo %}Escenarios · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>Escenarios</h1>
+  <p class="encabezado__sub">
+    Una transacción construida en Nueva transacción y guardada para reejecutarla después, sin
+    volver a armarla a mano. Desactivar un escenario no borra su historial de ejecuciones.
+  </p>
+</div>
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise la solicitud</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Catálogo</h2>
+    <span class="panel__nota">
+      {{ escenarios|length }} {{ 'escenario' if escenarios|length == 1 else 'escenarios' }}
+    </span>
+  </div>
+  <div class="panel__cuerpo">
+    <form method="get" action="/escenarios" class="rejilla">
+      <div class="campo campo--mono">
+        <label class="campo__rotulo" for="buscar">Buscar por nombre</label>
+        <input type="text" id="buscar" name="buscar" autocomplete="off" value="{{ buscar }}">
+      </div>
+      <div class="acciones">
+        <button class="boton" type="submit">Buscar</button>
+      </div>
+    </form>
+  </div>
+  {% if escenarios %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Escenarios">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Tarjeta</th>
+          <th>Conexión</th>
+          <th>Monto</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for escenario in escenarios %}
+        <tr>
+          <td>{{ escenario.nombre }}</td>
+          <td class="mono">{{ escenario.card_id }}</td>
+          <td class="mono">{{ escenario.conexion_id }}</td>
+          <td class="mono">{{ escenario.monto }}</td>
+          <td>
+            {% if escenario.activo %}
+            <span class="chip chip--activa">Activo</span>
+            {% else %}
+            <span class="chip chip--inactiva">Inactivo</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="tabla-acciones">
+              <a href="/?escenario_id={{ escenario.escenario_id }}">Cargar</a>
+              <form method="post" action="/escenarios/{{ escenario.escenario_id }}/ejecutar">
+                <button class="enlace-boton" type="submit">Ejecutar</button>
+              </form>
+              <form method="post" action="/escenarios/{{ escenario.escenario_id }}/duplicar">
+                <button class="enlace-boton" type="submit">Duplicar</button>
+              </form>
+              <form method="post" action="/escenarios/{{ escenario.escenario_id }}/estado">
+                <input type="hidden" name="activo" value="{{ '0' if escenario.activo else '1' }}">
+                <button class="enlace-boton" type="submit">
+                  {{ 'Desactivar' if escenario.activo else 'Reactivar' }}
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="panel__cuerpo">
+    <p class="vacio">
+      {% if buscar %}
+      Ningún escenario coincide con «{{ buscar }}».
+      {% else %}
+      Todavía no hay escenarios guardados.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+  <div class="acciones">
+    <a class="boton" href="/">Nuevo escenario</a>
+  </div>
+</section>
+{% endblock %}

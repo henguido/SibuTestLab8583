@@ -97,7 +97,21 @@ class Orquestador:
         self._stan = generador_stan
         self._reloj = reloj or (lambda: datetime.now(timezone.utc))
 
-    async def ejecutar_compra(self, datos: DatosCompra) -> ResultadoCompra:
+    async def ejecutar_compra(
+        self,
+        datos: DatosCompra,
+        *,
+        escenario_id: str | None = None,
+        escenario_nombre: str | None = None,
+    ) -> ResultadoCompra:
+        """Arma, valida y ejecuta una compra. `escenario_id`/`escenario_nombre`
+        son puramente informativos: este metodo no sabe que es un escenario ni
+        depende de `application.escenarios` -el llamador ya resolvio esos
+        valores, y aqui solo se copian a la `Ejecucion` para trazabilidad en el
+        historial-. Construccion y ejecucion no se separan: reejecutar un
+        escenario es simplemente volver a llamar esto con el `DatosCompra`
+        equivalente, sin duplicar ninguna logica.
+        """
         tarjeta = await self._tarjetas.obtener(datos.card_id)
         # Una tarjeta inactiva no debe poder iniciar una ejecucion nueva, sin
         # importar si la peticion vino del selector de la pantalla de compra o
@@ -128,6 +142,8 @@ class Orquestador:
                 datos,
                 EstadoEjecucion.NO_ENVIADA,
                 motivos=validacion.motivos,
+                escenario_id=escenario_id,
+                escenario_nombre=escenario_nombre,
             )
 
         # Codificar puede fallar. Si falla, no se llega a intentar transmision
@@ -136,7 +152,8 @@ class Orquestador:
             payload = self._codec.codificar(solicitud, self._perfil)
         except ErrorDeCodec as error:
             return await self._registrar(
-                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),)
+                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),),
+                escenario_id=escenario_id, escenario_nombre=escenario_nombre,
             )
 
         inicio = time.monotonic()
@@ -150,7 +167,8 @@ class Orquestador:
             # despues de conectar no llega por aqui: el transporte lo convierte en
             # FalloDeTransmision, porque entonces ya no se puede afirmar lo mismo.
             return await self._registrar(
-                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),)
+                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),),
+                escenario_id=escenario_id, escenario_nombre=escenario_nombre,
             )
         latencia_ms = int((time.monotonic() - inicio) * 1000)
 
@@ -163,6 +181,8 @@ class Orquestador:
                 EstadoEjecucion.ERROR_CONEXION,
                 motivos=(respuesta_cruda.detalle,),
                 latencia_ms=latencia_ms,
+                escenario_id=escenario_id,
+                escenario_nombre=escenario_nombre,
             )
 
         # --- Hubo sesion y el intercambio quedo indeterminado ---
@@ -174,6 +194,8 @@ class Orquestador:
                 EstadoEjecucion.ERROR_TRANSMISION,
                 motivos=(respuesta_cruda.detalle,),
                 latencia_ms=latencia_ms,
+                escenario_id=escenario_id,
+                escenario_nombre=escenario_nombre,
             )
 
         # --- RN-2: se espero una respuesta y no llego dentro del limite.
@@ -188,6 +210,8 @@ class Orquestador:
                     f"sin respuesta en {respuesta_cruda.limite_segundos:g} s",
                 ),
                 latencia_ms=latencia_ms,
+                escenario_id=escenario_id,
+                escenario_nombre=escenario_nombre,
             )
 
         try:
@@ -200,6 +224,8 @@ class Orquestador:
                 EstadoEjecucion.INVALIDA,
                 motivos=(str(error),),
                 latencia_ms=latencia_ms,
+                escenario_id=escenario_id,
+                escenario_nombre=escenario_nombre,
             )
 
         # --- RN-3 primero, luego RN-1 ---
@@ -214,6 +240,8 @@ class Orquestador:
             motivos=motivos,
             respuesta=interpretada,
             latencia_ms=latencia_ms,
+            escenario_id=escenario_id,
+            escenario_nombre=escenario_nombre,
         )
 
     async def _registrar(
@@ -226,6 +254,8 @@ class Orquestador:
         motivos: tuple[str, ...] = (),
         respuesta: MensajeInterpretado | None = None,
         latencia_ms: int | None = None,
+        escenario_id: str | None = None,
+        escenario_nombre: str | None = None,
     ) -> ResultadoCompra:
         """Construye la Ejecucion, la persiste enmascarada y devuelve el resultado."""
         # Se registra el destino en todo intento que llego a tocar la red, y por
@@ -265,6 +295,8 @@ class Orquestador:
                 else None
             ),
             latencia_ms=latencia_ms,
+            escenario_id=escenario_id,
+            escenario_nombre=escenario_nombre,
             creada_en=self._reloj(),
         )
         await self._ejecuciones.guardar(ejecucion)
