@@ -33,6 +33,7 @@ dev = [
 [project.scripts]
 sibu-init-db = "sibutestlab8583.adapters.persistence.esquema:main"
 sibu-host-demo = "sibutestlab8583.adapters.host_simulado.cli:main"
+sibu-run-suite = "sibutestlab8583.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

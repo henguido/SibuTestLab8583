@@ -42,7 +42,9 @@ _MOTIVO_TARJETA_DESCONOCIDA = "La tarjeta del escenario no existe o está inacti
 _MOTIVO_ERROR_DEL_SIMULADOR = (
     "No se pudo construir o interpretar el mensaje ISO 8583 para este escenario."
 )
-_MOTIVO_FALLO_INESPERADO = "Fallo técnico inesperado durante la ejecución."
+_MOTIVO_FALLO_INESPERADO = (
+    "Fallo técnico inesperado durante la ejecución. Revise el registro del servidor."
+)
 
 
 class SuiteNoEjecutable(Exception):

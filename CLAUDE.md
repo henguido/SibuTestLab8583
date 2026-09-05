@@ -36,8 +36,10 @@ navegador. Procedimiento manual completo, para cualquier sistema operativo, en `
 
 Comandos base, ya validados: `pip install -e ".[dev]"` (instalación editable),
 `sibu-init-db` (inicializa SQLite de forma idempotente), `pytest` (suite completa),
-`sibu-host-demo` (host ISO 8583 simulado) y `uvicorn sibutestlab8583.web.app:app` (interfaz
-web, en un proceso aparte: la web no levanta el host).
+`sibu-host-demo` (host ISO 8583 simulado), `uvicorn sibutestlab8583.web.app:app` (interfaz
+web, en un proceso aparte: la web no levanta el host) y `sibu-run-suite run-suite <suite_id>`
+(ejecuta una suite de regresión sin navegador, código de salida apto para CI — ver README.md
+para la tabla de códigos; nunca levanta `sibu-host-demo` por su cuenta).
 
 En Claude Code existe el skill `levantar-demo`
 (`.claude/skills/levantar-demo/SKILL.md`): reutiliza `demo.cmd` sin reimplementar ninguno de

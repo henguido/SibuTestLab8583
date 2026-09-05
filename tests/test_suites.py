@@ -14,13 +14,16 @@ from decimal import Decimal
 from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, DESTINO_ID_DEMO, inicializar
 from sibutestlab8583.adapters.persistence.sqlite_repos import (
     RepositorioCorridasSuiteSQLite,
+    RepositorioEjecucionesSQLite,
     RepositorioEscenariosSQLite,
     RepositorioSuitesSQLite,
 )
 from sibutestlab8583.domain.modelos import (
     CorridaSuite,
+    Ejecucion,
     Escenario,
     EstadoCorridaSuite,
+    EstadoEjecucion,
     EstadoItemCorrida,
     ItemCorridaSuite,
     ResultadoGlobalSuite,
@@ -229,10 +232,19 @@ async def test_actualizar_item_sobrescribe_solo_ese_item(base):
     ]
     corrida_id = await repo.crear_con_items(corrida, items)
 
+    # `ejecucion_id` es una FK real hacia `ejecuciones`: se inserta una fila
+    # real (no un numero inventado) para que `actualizar_item` -que valida
+    # esa FK- la acepte.
+    ejecucion_id = await RepositorioEjecucionesSQLite(base).guardar(
+        Ejecucion(
+            card_id=CARD_ID_DEMO, monto=Decimal("10.00"), moneda="188", stan="000001",
+            estado=EstadoEjecucion.APROBADA,
+        )
+    )
     await repo.actualizar_item(
         ItemCorridaSuite(
             corrida_id=corrida_id, escenario_id="ESC-A", escenario_nombre="A", orden=1,
-            resultado=EstadoItemCorrida.PASS, ejecucion_id=42,
+            resultado=EstadoItemCorrida.PASS, ejecucion_id=ejecucion_id,
             evaluacion_json='{"version":1,"resultado":"pass"}',
         )
     )
@@ -240,7 +252,7 @@ async def test_actualizar_item_sobrescribe_solo_ese_item(base):
     items_guardados = await repo.obtener_items(corrida_id)
     primero, segundo = items_guardados
     assert primero.resultado == EstadoItemCorrida.PASS
-    assert primero.ejecucion_id == 42
+    assert primero.ejecucion_id == ejecucion_id
     assert primero.evaluacion_json == '{"version":1,"resultado":"pass"}'
     assert segundo.resultado == EstadoItemCorrida.NO_EJECUTADO, "el otro item no debe tocarse"
 

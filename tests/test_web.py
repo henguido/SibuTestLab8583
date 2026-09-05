@@ -203,6 +203,17 @@ class OrquestadorFalso:
         #: Ultimas `Expectativas` recibidas (o None), para que las pruebas
         #: verifiquen que `/compra` lee y reenvia lo que el formulario trae.
         self.ultimas_expectativas = None
+        #: Ruta de la base real de suites (asignada por `ComposicionFalsa`,
+        #: si corresponde). El `Ejecucion` enlatado que este doble devuelve
+        #: nunca pasa por `RepositorioEjecucionesSQLite.guardar` -no hay
+        #: persistencia real detras de este orquestador-, pero
+        #: `RepositorioCorridasSuiteSQLite.actualizar_item` SI exige que
+        #: `ejecucion_id` exista de verdad en `ejecuciones` (FK). Por eso se
+        #: refleja aqui la fila minima que le corresponde, la primera vez que
+        #: se devuelve ese `Ejecucion` enlatado -mismo principio que ya usa
+        #: `RepositorioEscenariosFalso._reflejar` para escenarios.
+        self._ruta_espejo = None
+        self._ejecucion_reflejada = False
 
     async def ejecutar_compra(
         self, datos, *, escenario_id=None, escenario_nombre=None, expectativas=None
@@ -213,7 +224,31 @@ class OrquestadorFalso:
         self.ultimas_expectativas = expectativas
         if self._error is not None:
             raise self._error
+        if (
+            self._resultado is not None
+            and self._ruta_espejo is not None
+            and not self._ejecucion_reflejada
+        ):
+            self._reflejar_ejecucion()
         return self._resultado
+
+    def _reflejar_ejecucion(self) -> None:
+        import sqlite3
+
+        ejecucion = self._resultado.ejecucion
+        with sqlite3.connect(self._ruta_espejo) as conexion:
+            conexion.execute(
+                "INSERT OR IGNORE INTO ejecuciones"
+                " (id, creada_en, card_id, mti_solicitud, monto, moneda, stan, estado)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    ejecucion.id, ejecucion.creada_en.isoformat(), ejecucion.card_id,
+                    ejecucion.mti_solicitud, str(ejecucion.monto), ejecucion.moneda,
+                    ejecucion.stan, ejecucion.estado.value,
+                ),
+            )
+            conexion.commit()
+        self._ejecucion_reflejada = True
 
 
 #: Tarjeta de demostracion para los dobles de la capa web. El PAN es el mismo
@@ -284,6 +319,7 @@ class ComposicionFalsa:
         self._ruta_suites = Path(tempfile.mkstemp(suffix=".db")[1])
         with sqlite3.connect(self._ruta_suites) as conexion:
             conexion.executescript(DDL)
+        self._orquestador._ruta_espejo = self._ruta_suites
 
         self.administracion_escenarios = ServicioEscenarios(
             RepositorioEscenariosFalso(

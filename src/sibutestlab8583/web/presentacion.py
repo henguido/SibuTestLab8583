@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence
 
+from ..application.presentacion_evaluacion import mensaje_de_discrepancia
 from ..application.serializacion import (
     AVISO_HEREDADO,
     ORIGEN_TEXTO,
@@ -333,23 +334,6 @@ class EvaluacionMostrada:
     discrepancias: Sequence[str]
 
 
-def _mensaje_de_discrepancia(discrepancia: Mapping, descripciones: Mapping[str, str]) -> str:
-    if discrepancia["criterio"] == "estado":
-        return (
-            f"Se esperaba el estado «{discrepancia['esperado']}» y se obtuvo "
-            f"«{discrepancia['recibido']}»."
-        )
-    campo = discrepancia["campo"]
-    nombre = descripciones.get(campo, f"Campo {campo}")
-    tipo = discrepancia["tipo"]
-    if tipo == "igual":
-        recibido = discrepancia["recibido"] or "(ausente)"
-        return f"Campo {campo} ({nombre}): se esperaba «{discrepancia['esperado']}» y llegó «{recibido}»."
-    if tipo == "presente":
-        return f"Campo {campo} ({nombre}): se esperaba que estuviera presente y no llegó."
-    return f"Campo {campo} ({nombre}): se esperaba que estuviera ausente y llegó «{discrepancia['recibido']}»."
-
-
 def evaluacion_de_ejecucion(ejecucion, descripciones: Mapping[str, str]) -> EvaluacionMostrada | None:
     """`None` cuando el escenario no tenia expectativas -nunca "PASS" por
     omision-. Lee el snapshot congelado, no vuelve a evaluar nada.
@@ -358,7 +342,7 @@ def evaluacion_de_ejecucion(ejecucion, descripciones: Mapping[str, str]) -> Eval
         return None
     datos = json.loads(ejecucion.evaluacion_json)
     mensajes = [
-        _mensaje_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])
+        mensaje_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])
     ]
     return EvaluacionMostrada(estado=ejecucion.evaluacion_estado, discrepancias=tuple(mensajes))
 
@@ -491,18 +475,39 @@ def filas_seleccion_escenarios(
     """Todos los escenarios del catalogo, marcando cuales ya estan en la suite
     y en que orden -para que el constructor pueda mostrar la tabla completa,
     no solo los ya elegidos, igual criterio que `filas_expectativas`.
+
+    Un escenario ya incluido conserva EXACTAMENTE su orden real dentro de la
+    suite -nunca se toca-. Uno todavia NO incluido se prellena con el menor
+    entero positivo que no colisione con ningun orden real ya ocupado -nunca
+    con su posicion cruda en el catalogo, que si podria coincidir con el
+    orden real de otro escenario cuando `escenarios_incluidos` no sigue el
+    mismo orden que el catalogo (`ORDER BY nombre`)-. Es solo una sugerencia
+    editable -nunca fuerza un orden, ni cambia como el servidor valida
+    duplicados/huecos, ver `_leer_escenarios_de_suite`-, para que marcar
+    varios checkboxes seguidos no obligue a escribir cada numero a mano.
     """
     posicion = {escenario_id: i + 1 for i, escenario_id in enumerate(escenarios_incluidos)}
-    return [
-        FilaSeleccionEscenario(
-            escenario_id=escenario.escenario_id,
-            nombre=escenario.nombre,
-            activo=escenario.activo,
-            incluido=escenario.escenario_id in posicion,
-            orden=str(posicion.get(escenario.escenario_id, "")),
+    ocupados = set(posicion.values())
+    siguiente_libre = 1
+    filas = []
+    for escenario in catalogo:
+        if escenario.escenario_id in posicion:
+            orden = posicion[escenario.escenario_id]
+        else:
+            while siguiente_libre in ocupados:
+                siguiente_libre += 1
+            orden = siguiente_libre
+            ocupados.add(orden)
+        filas.append(
+            FilaSeleccionEscenario(
+                escenario_id=escenario.escenario_id,
+                nombre=escenario.nombre,
+                activo=escenario.activo,
+                incluido=escenario.escenario_id in posicion,
+                orden=str(orden),
+            )
         )
-        for escenario in catalogo
-    ]
+    return filas
 
 
 #: Un aviso por resultado global de suite. INCOMPLETA y SIN_EXPECTATIVAS
@@ -620,5 +625,5 @@ def evaluacion_de_item(item, descripciones: Mapping[str, str]) -> EvaluacionMost
     if not item.evaluacion_json:
         return None
     datos = json.loads(item.evaluacion_json)
-    mensajes = [_mensaje_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])]
+    mensajes = [mensaje_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])]
     return EvaluacionMostrada(estado=datos["resultado"], discrepancias=tuple(mensajes))

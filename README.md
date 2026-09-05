@@ -102,9 +102,70 @@ Abrir en el navegador: **http://127.0.0.1:8000/**
    (el número de tarjeta siempre enmascarado, `************6666`).
 5. Ir a **Historial** — la ejecución queda listada.
 6. Abrir su **detalle** desde el historial.
-7. Entrar a **Configuración**.
-8. Revisar **Tarjetas de prueba** — administración del catálogo (crear, editar,
-   activar/desactivar).
+7. Ir a **Escenarios** — guardar la transacción recién ejecutada como caso reutilizable.
+8. Ir a **Suites** — agrupar escenarios y ejecutar una suite completa desde el navegador
+   (misma ejecución que expone `sibu-run-suite`, ver más abajo); revisar la corrida resultante.
+9. Entrar a **Configuración**.
+10. Revisar **Tarjetas de prueba** — administración del catálogo (crear, editar,
+    activar/desactivar).
+
+## Ejecutar una suite de regresión por línea de comandos (CI)
+
+Una suite guardada (ver "Suites" en la interfaz web) se puede correr sin navegador, con un
+código de salida apto para un pipeline de CI. Usa la misma composición y el mismo
+`CorredorDeSuites` que la web — no hay una segunda implementación de la ejecución.
+
+Requiere la instalación editable ya hecha (`pip install -e ".[dev]"`, ver arriba) y la base
+de datos inicializada (`sibu-init-db`).
+
+Listar las suites guardadas, para obtener su `suite_id`:
+
+```bash
+sibu-run-suite list-suites
+```
+
+Ejecutar una suite por id (forma primaria, sin ambigüedad):
+
+```bash
+sibu-run-suite run-suite SUI-xxxxxxxx
+```
+
+Ejecutar por nombre exacto (conveniencia; falla si el nombre no es único):
+
+```bash
+sibu-run-suite run-suite --nombre "Regresión nocturna"
+```
+
+`suite_id` y `--nombre` son mutuamente excluyentes: indique exactamente uno.
+
+Salida para consumo automático, en vez de texto para lectura humana:
+
+```bash
+sibu-run-suite run-suite SUI-xxxxxxxx --format json
+```
+
+También invocable como módulo, sin depender del script instalado:
+
+```bash
+python -m sibutestlab8583.cli run-suite SUI-xxxxxxxx
+```
+
+**Códigos de salida:**
+
+| Código | Significado |
+|---|---|
+| `0` | Resultado de la corrida: PASS |
+| `1` | Resultado de la corrida: FAIL |
+| `2` | Resultado de la corrida: ERROR (algún escenario no se pudo ejecutar) |
+| `3` | Resultado de la corrida: INCOMPLETA (mezcla de PASS y escenarios sin expectativas) |
+| `4` | Resultado de la corrida: SIN EXPECTATIVAS (ningún escenario definía qué esperaba) |
+| `5` | La suite no se pudo ejecutar: no existe, está inactiva, está vacía, o `--nombre` no resolvió a una única suite |
+| `6` | Fallo técnico o de uso de la propia CLI (argumentos inválidos, base de datos inaccesible) |
+| `130` | Interrumpido con Ctrl+C — la corrida puede haber quedado registrada como en curso |
+
+La CLI nunca levanta `sibu-host-demo` por su cuenta: si la conexión configurada para un
+escenario no responde, eso se registra como el `ERROR` de ese escenario dentro de la
+corrida, igual que en la interfaz web.
 
 ## Ejecutar las pruebas
 

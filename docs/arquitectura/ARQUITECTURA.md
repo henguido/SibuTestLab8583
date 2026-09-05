@@ -10,9 +10,10 @@ Diagramas: [`componentes.mmd`](componentes.mmd) y [`flujo-compra.mmd`](flujo-com
 
 Implementado: web, composición, orquestador, consultas, perfiles, codec ISO 8583, validación,
 framing, transporte TCP, persistencia SQLite, generador de STAN, host simulado, administración
-web de tarjetas, persistencia de destinos —sin pantalla de administración todavía—, y la
-derivación pura de Track 1/Track 2. **Sin implementar:** motor de carga, perfiles reales de
-Visa y Mastercard, modo avanzado ISO 8583, isoscopio 2.0. La
+web de tarjetas y de destinos (Conexiones), la derivación pura de Track 1/Track 2, escenarios
+reutilizables con expected-vs-actual, suites de regresión con su corredor secuencial, y una CLI
+(`sibu-run-suite`) que ejecuta una suite sin navegador, apta para CI. **Sin implementar:** motor
+de carga, perfiles reales de Visa y Mastercard, modo avanzado ISO 8583, isoscopio 2.0. La
 arquitectura está cubierta por pruebas automatizadas y CI; el estado exacto de la suite se
 mantiene en `CONTEXTO.md` y en el pipeline, no aquí.
 
@@ -44,7 +45,7 @@ importa un adaptador. Tres límites que no se cruzan:
 
 | Módulo | Capa | Responsabilidad |
 |---|---|---|
-| **Web** | Interfaz | Ocho pantallas: nueva transacción, resultado, historial, detalle de una ejecución, no encontrado, y administración de Configuración (portada, listado de tarjetas, alta/edición). Delgada: sin lógica de negocio, sin parsing, sin JavaScript |
+| **Web** | Interfaz | Nueva transacción, resultado, historial, detalle de una ejecución, no encontrado, Configuración (tarjetas, conexiones), Escenarios, Suites y Corridas de suite. Delgada: sin lógica de negocio, sin parsing, sin JavaScript |
 | **Composición** | Raíz de composición | Único lugar donde se cablean perfil, catálogo, codec, framing, transporte y repositorios. La web depende de ella y no construye infraestructura en sus endpoints. El catálogo de respuestas se lee de SQLite en cada compra, sin caché |
 | **Orquestador** (application service) | Aplicación | Secuencia el recorrido: armar → validar (RN-4) → codificar → enviar → interpretar → evaluar → persistir. Persiste todo intento, incluidos los que no llegan a la red |
 | **Perfiles** | Dominio | `PerfilDeMarca` activo: formato y campos obligatorios por MTI |
@@ -55,6 +56,9 @@ importa un adaptador. Tres límites que no se cruzan:
 | **Framing** | Puerto + adaptador | Delimita mensajes dentro del stream TCP. Único consumidor: el transporte |
 | **Persistencia** | Puerto + adaptador | Repositorios de ejecuciones, tarjetas de prueba, catálogos y destinos. Puerto asíncrono; adaptador SQLite |
 | **Host simulado** | Proceso aparte | Servidor TCP que recibe `0100` y responde `0110` según el catálogo configurado. Reutiliza codec y framing |
+| **Escenarios** | Aplicación | `ServicioEscenarios`: casos reutilizables (guardar, editar, duplicar, activar/desactivar), con expectativas opcionales (expected-vs-actual) evaluadas por el propio `Orquestador` |
+| **Suites y corredor** | Aplicación | `ServicioSuites` agrupa escenarios en un orden fijo; `CorredorDeSuites` los ejecuta secuencialmente reutilizando `EjecutorDeEscenarios` (la misma resolución que usa la reejecución individual), persiste cada `CorridaSuite`/`ItemCorridaSuite` y calcula el resultado global (PASS/FAIL/ERROR/INCOMPLETA/SIN_EXPECTATIVAS) |
+| **CLI (`sibu-run-suite`)** | Interfaz | Ejecuta una suite sin navegador, apta para CI: mismo `CorredorDeSuites` que la web, códigos de salida por resultado, salida texto o JSON. No depende de `web/` |
 | **Motor de carga** | *Fase posterior* | Repite el recorrido con múltiples tareas concurrentes y agrega métricas. **No implementado** |
 
 ## Contratos principales

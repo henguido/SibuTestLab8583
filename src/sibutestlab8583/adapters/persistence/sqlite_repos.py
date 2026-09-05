@@ -544,6 +544,12 @@ class RepositorioCorridasSuiteSQLite(_RepositorioSQLite):
 
     async def actualizar_item(self, item: ItemCorridaSuite) -> None:
         async with self._conectar() as conexion:
+            # Este UPDATE puede escribir `ejecucion_id` (FK hacia `ejecuciones`):
+            # sin esta pragma, una conexion nueva no hereda `foreign_keys=ON` de
+            # ninguna otra conexion (es una propiedad por conexion, no del
+            # archivo), y un id inexistente quedaria aceptado como referencia
+            # huerfana. Mismo criterio que ya aplican `guardar()`/`crear_con_items()`.
+            await conexion.execute("PRAGMA foreign_keys = ON")
             await conexion.execute(
                 "UPDATE corrida_suite_items"
                 " SET resultado = ?, ejecucion_id = ?, detalle = ?, evaluacion_json = ?"

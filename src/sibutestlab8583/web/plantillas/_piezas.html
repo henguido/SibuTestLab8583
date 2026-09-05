@@ -121,9 +121,9 @@
     {%- if not evaluacion -%}
     Sin expectativas
     {%- elif evaluacion.estado == 'pass' -%}
-    PASS
+    Expectativa: PASS
     {%- else -%}
-    FAIL
+    Expectativa: FAIL
     {%- endif -%}
   </h2>
   {% if not evaluacion %}

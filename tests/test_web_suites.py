@@ -8,12 +8,15 @@ varias pruebas consultan `composicion.administracion_suites`/`corridas_suite`
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import httpx2
 from test_web import ComposicionFalsa, _resultado
 
 from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, DESTINO_ID_DEMO
 from sibutestlab8583.domain.modelos import EstadoEjecucion
 from sibutestlab8583.web.app import crear_app
+from sibutestlab8583.web.presentacion import filas_seleccion_escenarios
 
 FORMULARIO_ESCENARIO = {
     "nombre": "Compra aprobada CRC",
@@ -161,6 +164,112 @@ async def test_cargar_el_formulario_de_edicion_prellena_la_seleccion():
     assert "checked" in html
 
 
+async def test_una_suite_nueva_prellena_el_orden_sugerido_por_posicion_en_el_catalogo():
+    """El campo de orden de un escenario TODAVIA no incluido no debe quedar
+    vacio: se sugiere su posicion en el catalogo, para que marcar varios
+    checkboxes seguidos no obligue a escribir cada numero a mano. Sigue
+    siendo editable -no fuerza nada-, y como los valores sugeridos son unicos,
+    no genera duplicados aunque el usuario no toque ningun campo de orden.
+    """
+    cliente, _ = _cliente()
+    async with cliente:
+        await _crear_escenario(cliente, nombre="E1")
+        await _crear_escenario(cliente, nombre="E2")
+        html = (await cliente.get("/suites/nueva")).text
+    assert 'value="1"' in html
+    assert 'value="2"' in html
+
+
+# -------------------------------- autoorden: filas_seleccion_escenarios ---
+
+
+@dataclass
+class _EscenarioDeCatalogo:
+    """Duck-type minimo de lo que `filas_seleccion_escenarios` necesita leer
+    de cada fila del catalogo (`escenario_id`, `nombre`, `activo`) -no hace
+    falta un `Escenario` de dominio completo para probar la funcion pura."""
+
+    escenario_id: str
+    nombre: str
+    activo: bool = True
+
+
+_CATALOGO_ABCD = [
+    _EscenarioDeCatalogo("A", "A"),
+    _EscenarioDeCatalogo("B", "B"),
+    _EscenarioDeCatalogo("C", "C"),
+    _EscenarioDeCatalogo("D", "D"),
+]
+
+
+def test_el_orden_real_de_un_incluido_se_preserva_exacto_aunque_el_catalogo_no_sea_alfabetico():
+    """El orden interno de la suite (C, A) NO sigue el orden alfabetico del
+    catalogo (A, B, C, D): confirma que un incluido nunca se recalcula -sigue
+    mostrando su posicion real dentro de la suite, no su indice en el
+    catalogo."""
+    filas = filas_seleccion_escenarios(_CATALOGO_ABCD, escenarios_incluidos=("C", "A"))
+    por_id = {fila.escenario_id: fila for fila in filas}
+    assert por_id["C"].orden == "1"
+    assert por_id["A"].orden == "2"
+    assert por_id["C"].incluido and por_id["A"].incluido
+
+
+def test_las_sugerencias_para_no_incluidos_nunca_colisionan_con_un_orden_real():
+    """Caso exacto del bug encontrado en la auditoria: con suite=(C, A) y
+    catalogo alfabetico A,B,C,D, sugerir por indice crudo del catalogo le
+    daria a B el mismo "2" que ya tiene A. El algoritmo de "menor libre" debe
+    saltarselo."""
+    filas = filas_seleccion_escenarios(_CATALOGO_ABCD, escenarios_incluidos=("C", "A"))
+    ordenes = [fila.orden for fila in filas]
+    assert len(ordenes) == len(set(ordenes)), f"ordenes con colision: {ordenes}"
+    por_id = {fila.escenario_id: fila for fila in filas}
+    assert por_id["B"].orden == "3"
+    assert por_id["D"].orden == "4"
+    assert not por_id["B"].incluido and not por_id["D"].incluido
+
+
+def test_las_sugerencias_de_orden_son_deterministas():
+    primera = filas_seleccion_escenarios(_CATALOGO_ABCD, escenarios_incluidos=("C", "A"))
+    segunda = filas_seleccion_escenarios(_CATALOGO_ABCD, escenarios_incluidos=("C", "A"))
+    assert [f.orden for f in primera] == [f.orden for f in segunda]
+
+
+def test_una_suite_sin_ningun_incluido_sugiere_libres_consecutivos_desde_1():
+    """Caso ya cubierto en la web (`test_una_suite_nueva_prellena_...`), aqui
+    a nivel de la funcion pura: sin nada ocupado, el "menor libre" coincide
+    con la posicion en el catalogo."""
+    filas = filas_seleccion_escenarios(_CATALOGO_ABCD, escenarios_incluidos=())
+    assert [f.orden for f in filas] == ["1", "2", "3", "4"]
+
+
+async def test_editar_con_ordenes_repetidos_se_rechaza():
+    """La ruta de EDICION (POST /suites/{id}) nunca se habia probado para
+    ordenes duplicados -solo la de creacion (`test_crear_con_ordenes_repetidos_se_rechaza`)-.
+    Confirma que la validacion del servidor sigue intacta ahi tambien: la
+    mejora de autoorden es solo una sugerencia en el HTML, nunca una
+    relajacion de `_leer_escenarios_de_suite`."""
+    cliente, composicion = _cliente()
+    async with cliente:
+        e1 = await _crear_escenario(cliente, nombre="E1")
+        e2 = await _crear_escenario(cliente, nombre="E2")
+        creada = await cliente.post(
+            "/suites", data={"nombre": "X", f"incluir_{e1}": "1", f"orden_{e1}": "1"}
+        )
+        suite_id = _id_de(creada)
+
+        respuesta = await cliente.post(
+            f"/suites/{suite_id}",
+            data={
+                "nombre": "X",
+                f"incluir_{e1}": "1", f"orden_{e1}": "1",
+                f"incluir_{e2}": "1", f"orden_{e2}": "1",
+            },
+        )
+        suite = await composicion.administracion_suites.obtener(suite_id)
+    assert respuesta.status_code == 400
+    assert suite.escenarios == (e1,), "no debe modificar la membresia si el orden es invalido"
+
+
 # --------------------------------------------------------------- duplicar ---
 
 
@@ -254,7 +363,13 @@ async def test_el_detalle_de_una_corrida_muestra_pass_y_permite_ver_la_ejecucion
         respuesta_ejecutar = await cliente.post(f"/suites/{suite_id}/ejecutar")
         html = (await cliente.get(respuesta_ejecutar.headers["location"])).text
     assert "E1" in html
-    assert "Sin expectativas" in html or "PASS" in html or "FAIL" in html
+    # No basta con `"PASS" in html`/`"FAIL" in html`: el panel "Resumen" de
+    # corrida_detalle.html imprime esos dos rotulos SIEMPRE, como encabezados
+    # de metrica, sin importar el resultado real -esa asercion seria cierta
+    # incluso para una corrida en FAIL puro. El item aqui no tiene
+    # expectativas (el escenario se crea sin `estado_esperado`), asi que el
+    # dato real e inequivoco es el atributo estructural de la fila del item.
+    assert 'data-resultado="sin_expectativas"' in html
 
 
 async def test_las_corridas_aparecen_en_el_listado_general():

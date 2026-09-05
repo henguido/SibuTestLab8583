@@ -9,6 +9,7 @@ copie literal solo para PASS/FAIL.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from decimal import Decimal
@@ -20,6 +21,7 @@ from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, DESTINO_I
 from sibutestlab8583.adapters.persistence.sqlite_repos import (
     RepositorioCorridasSuiteSQLite,
     RepositorioDestinosSQLite,
+    RepositorioEjecucionesSQLite,
     RepositorioEscenariosSQLite,
     RepositorioSuitesSQLite,
     RepositorioTarjetasSQLite,
@@ -35,12 +37,15 @@ from sibutestlab8583.application.escenarios import (
 from sibutestlab8583.application.suites import DatosEdicionSuite, DatosNuevaSuite, ServicioSuites
 from sibutestlab8583.domain.modelos import (
     CAMPOS_SENSIBLES,
+    Ejecucion,
     Escenario,
     EstadoCorridaSuite,
     EstadoEjecucion,
     EstadoItemCorrida,
     ExpectativaCampo,
     Expectativas,
+    MensajeIso,
+    ResultadoCompra,
     ResultadoGlobalSuite,
     Suite,
 )
@@ -233,7 +238,9 @@ async def test_una_excepcion_inesperada_a_mitad_de_la_suite_no_aborta_el_resto(b
     assert corrida.cantidad_pass == 1
     items = await corridas.obtener_items(corrida.corrida_id)
     assert items[0].resultado == EstadoItemCorrida.ERROR
-    assert items[0].detalle == "Fallo técnico inesperado durante la ejecución."
+    assert items[0].detalle == (
+        "Fallo técnico inesperado durante la ejecución. Revise el registro del servidor."
+    )
     assert "boom" not in items[0].detalle
     assert items[1].resultado == EstadoItemCorrida.PASS
 
@@ -408,3 +415,83 @@ async def test_un_campo_sensible_en_las_expectativas_de_un_escenario_de_la_suite
     assert item.resultado == EstadoItemCorrida.ERROR
     assert item.evaluacion_json is None
     assert campo_sensible not in (item.detalle or "")
+
+
+# ------------------------------------------------------------ secuencialidad --
+
+
+class _EjecutorQueDetectaSolapamiento:
+    """Reemplaza a `EjecutorDeEscenarios` para verificar, de forma directa e
+    independiente de la base de datos, que el corredor jamas tiene dos
+    ejecuciones de escenario "en vuelo" al mismo tiempo -la garantia de
+    diseno documentada en el docstring del modulo ("Secuencial a proposito:
+    sin `asyncio.gather`, sin concurrencia")-. Si el corredor alguna vez
+    pasara a disparar los escenarios en paralelo, `en_vuelo` superaria 1 y la
+    prueba fallaria.
+    """
+
+    def __init__(self, base) -> None:
+        self._ejecuciones = RepositorioEjecucionesSQLite(base)
+        self.en_vuelo = 0
+        self.maximo_en_vuelo = 0
+        self.orden_de_llamadas: list[str] = []
+        self._contador = 0
+
+    async def ejecutar(self, escenario_id: str):
+        self.orden_de_llamadas.append(escenario_id)
+        self.en_vuelo += 1
+        self.maximo_en_vuelo = max(self.maximo_en_vuelo, self.en_vuelo)
+        try:
+            # Cede el control deliberadamente: si el corredor usara
+            # `asyncio.gather` en vez de `await` secuencial, este punto es
+            # donde otra corrutina podria colarse y hacer que
+            # `en_vuelo` suba a 2.
+            await asyncio.sleep(0)
+            self._contador += 1
+            # Fila real en `ejecuciones` -no solo un objeto en memoria-: con
+            # `PRAGMA foreign_keys = ON` (ver el fix de Bloque de auditoria en
+            # `actualizar_item`) un `ejecucion_id` inventado seria rechazado.
+            ejecucion_id = await self._ejecuciones.guardar(
+                Ejecucion(
+                    card_id=CARD_ID_DEMO,
+                    monto=Decimal("10.00"),
+                    moneda="188",
+                    stan=f"{self._contador:06d}",
+                    estado=EstadoEjecucion.APROBADA,
+                )
+            )
+            # `evaluacion_estado=None` (por defecto): el corredor lo clasifica
+            # como SIN_EXPECTATIVAS, igual que un escenario sin expectativas.
+            ejecucion = await self._ejecuciones.obtener(ejecucion_id)
+            return ResultadoCompra(ejecucion=ejecucion, solicitud=MensajeIso(mti="0100"))
+        finally:
+            self.en_vuelo -= 1
+
+
+async def test_el_corredor_ejecuta_los_escenarios_uno_a_la_vez_nunca_solapados(base):
+    """Confirma en codigo la garantia "Secuencial a proposito" del docstring
+    del modulo: sustituye `EjecutorDeEscenarios` por un doble que detecta
+    solapamiento, para que un futuro cambio a `asyncio.gather` (u otra forma
+    de concurrencia) rompa esta prueba en vez de pasar inadvertido.
+    """
+    suites = ServicioSuites(RepositorioSuitesSQLite(base), RepositorioEscenariosSQLite(base))
+    escenarios = ServicioEscenarios(
+        RepositorioEscenariosSQLite(base), RepositorioTarjetasSQLite(base),
+        RepositorioDestinosSQLite(base), PERFIL_GENERICO,
+    )
+    corridas = RepositorioCorridasSuiteSQLite(base)
+    e1 = await _crear_escenario(escenarios, "E1")
+    e2 = await _crear_escenario(escenarios, "E2")
+    e3 = await _crear_escenario(escenarios, "E3")
+    suite = await suites.crear(
+        DatosNuevaSuite(nombre="Secuencial", escenarios=(e1.escenario_id, e2.escenario_id, e3.escenario_id))
+    )
+
+    ejecutor_falso = _EjecutorQueDetectaSolapamiento(base)
+    corredor = CorredorDeSuites(suites, escenarios, corridas, ejecutor_falso)
+
+    corrida = await corredor.ejecutar(suite.suite_id)
+
+    assert corrida.resultado_global == ResultadoGlobalSuite.SIN_EXPECTATIVAS
+    assert ejecutor_falso.maximo_en_vuelo == 1
+    assert ejecutor_falso.orden_de_llamadas == [e1.escenario_id, e2.escenario_id, e3.escenario_id]
