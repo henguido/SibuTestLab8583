@@ -109,6 +109,72 @@ class DatosCompra:
 
 
 @dataclass(frozen=True)
+class ExpectativaCampo:
+    """Una condicion sobre un campo de la respuesta.
+
+    `valor` solo aplica a `tipo="igual"`; para `"presente"`/`"ausente"` no hay
+    un valor que comparar, solo si el campo aparecio o no.
+    """
+
+    tipo: str  # "igual" | "presente" | "ausente"
+    valor: str | None = None
+
+
+@dataclass(frozen=True)
+class Expectativas:
+    """Lo que un escenario espera de su ejecucion. Dos criterios independientes.
+
+    `estado` es una expectativa SEMANTICA: compara contra `EstadoEjecucion`,
+    que ya resulto de aplicar RN-1 (catalogo configurado) y RN-3
+    (correlacion) -asi que "aprobada" sigue significando "el catalogo de HOY
+    la acepta", no un codigo fijo. `campos` son expectativas LITERALES sobre
+    valores concretos de la respuesta: un escenario puede pedir
+    `estado=aprobada` y ADEMAS `campo 39 igual a "00"` a la vez, y ambos se
+    evaluan por separado -si el catalogo aprobara tambien el "05", la primera
+    podria pasar mientras la segunda falla, y las dos cosas son correctas.
+    """
+
+    estado: EstadoEjecucion | None = None
+    campos: Mapping[str, ExpectativaCampo] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "campos", MappingProxyType(dict(self.campos)))
+
+
+class EstadoEvaluacion(str, Enum):
+    """Si la ejecucion cumplio la expectativa del escenario. NO es `EstadoEjecucion`:
+    ese dice que paso con la transaccion; este dice si eso era lo esperado.
+    """
+
+    PASS = "pass"
+    FAIL = "fail"
+
+
+@dataclass(frozen=True)
+class DiscrepanciaExpectativa:
+    """Un punto concreto en el que lo recibido no coincidio con lo esperado.
+
+    Estructurada -no un string- para que un bloque futuro (regresion) pueda
+    agrupar y contar fallos sin volver a parsear texto. La capa web la
+    traduce a un mensaje legible; el dominio no redacta prosa.
+    """
+
+    criterio: str          # "estado" | "campo"
+    campo: str | None      # numero de campo; None si criterio="estado"
+    tipo: str | None       # tipo de la expectativa de campo; None si criterio="estado"
+    esperado: str | None
+    recibido: str | None
+
+
+@dataclass(frozen=True)
+class ResultadoEvaluacion:
+    """Resultado de comparar una ejecucion contra las expectativas de su escenario."""
+
+    estado: EstadoEvaluacion
+    discrepancias: tuple[DiscrepanciaExpectativa, ...] = ()
+
+
+@dataclass(frozen=True)
 class Escenario:
     """Una transaccion reutilizable: la intencion, no una corrida concreta.
 
@@ -124,6 +190,10 @@ class Escenario:
     segun `PoliticaCamposMti` -lo arma `armar_compra` en su capa
     estructural-, asi que nunca podria vivir junto a los campos que si
     gobierna esa politica.
+
+    `expectativas` es opcional: un escenario sin expectativas sigue siendo
+    valido -simplemente no hay nada que evaluar, y eso no es lo mismo que
+    "aprobado" (ver `domain.expectativas.evaluar_expectativas`).
     """
 
     escenario_id: str
@@ -134,6 +204,7 @@ class Escenario:
     conexion_id: str
     monto: Decimal
     campos_manuales: Mapping[str, str] = field(default_factory=dict)
+    expectativas: Expectativas | None = None
     activo: bool = True
     creado_en: datetime = field(default_factory=_ahora)
     actualizado_en: datetime = field(default_factory=_ahora)
@@ -433,6 +504,14 @@ class Ejecucion:
     #: sensible, asi que copiarlo no es un riesgo de PAN.
     escenario_id: str | None = None
     escenario_nombre: str | None = None
+    #: Snapshot de la evaluacion expected-vs-actual, congelado al ejecutar.
+    #: `evaluacion_estado` es "pass"/"fail"/`None` -`None` significa que el
+    #: escenario no tenia expectativas, NUNCA "aprobado por omision".
+    #: `evaluacion_json` guarda la expectativa ORIGINAL usada (no una
+    #: referencia al escenario) mas las discrepancias: editar las
+    #: expectativas del escenario despues no puede alterar este snapshot.
+    evaluacion_estado: str | None = None
+    evaluacion_json: str | None = None
     creada_en: datetime = field(default_factory=_ahora)
     id: int | None = None
 

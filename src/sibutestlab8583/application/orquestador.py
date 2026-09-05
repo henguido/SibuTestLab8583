@@ -31,6 +31,7 @@ Los estados se eligen por lo que cada situacion permite **demostrar**:
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -38,11 +39,14 @@ from typing import Callable
 from ..domain.armado import armar_compra
 from ..domain.catalogo import CatalogoDeRespuestas
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
+from ..domain.expectativas import evaluacion_a_dict, evaluar_expectativas, validar_expectativas
 from ..domain.modelos import (
+    MTI_RESPUESTA_COMPRA,
     DatosCompra,
     DestinoTcp,
     Ejecucion,
     EstadoEjecucion,
+    Expectativas,
     FalloDeConexion,
     FalloDeTransmision,
     MensajeInterpretado,
@@ -103,6 +107,7 @@ class Orquestador:
         *,
         escenario_id: str | None = None,
         escenario_nombre: str | None = None,
+        expectativas: Expectativas | None = None,
     ) -> ResultadoCompra:
         """Arma, valida y ejecuta una compra. `escenario_id`/`escenario_nombre`
         son puramente informativos: este metodo no sabe que es un escenario ni
@@ -111,7 +116,29 @@ class Orquestador:
         historial-. Construccion y ejecucion no se separan: reejecutar un
         escenario es simplemente volver a llamar esto con el `DatosCompra`
         equivalente, sin duplicar ninguna logica.
+
+        `expectativas`, en cambio, si es un concepto de dominio que el
+        orquestador evalua el mismo -igual que ya evalua RN-1/RN-3 via
+        `evaluar_respuesta`-, no una integracion con `application.escenarios`:
+        recibe la expectativa ya resuelta y la compara contra el desenlace
+        real dentro de `_registrar`, en el mismo lugar donde se conoce el
+        `EstadoEjecucion` final y la respuesta interpretada.
+
+        La frontera de seguridad de `expectativas` -campos permitidos por
+        perfil, sin campos sensibles- NO es exclusiva de la capa web ni de
+        `ServicioEscenarios`: se revalida aqui, antes de tocar la tarjeta, el
+        STAN o cualquier otra cosa que pudiera terminar persistida. Un
+        `Orquestador` es reutilizable directamente por cualquier llamador
+        interno -un futuro motor de regresion o de carga, por ejemplo-, y ese
+        llamador podria construir un `Expectativas` a mano sin pasar por
+        ninguna validacion previa. Reventar aqui, antes de cualquier
+        persistencia, evita que una expectativa sobre un campo sensible
+        (o sobre uno que el perfil no permite para la respuesta) llegue a
+        evaluarse o a dejar rastro en `evaluacion_json`.
         """
+        if expectativas is not None:
+            validar_expectativas(expectativas, self._perfil, MTI_RESPUESTA_COMPRA)
+
         tarjeta = await self._tarjetas.obtener(datos.card_id)
         # Una tarjeta inactiva no debe poder iniciar una ejecucion nueva, sin
         # importar si la peticion vino del selector de la pantalla de compra o
@@ -144,6 +171,7 @@ class Orquestador:
                 motivos=validacion.motivos,
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
+                expectativas=expectativas,
             )
 
         # Codificar puede fallar. Si falla, no se llega a intentar transmision
@@ -154,6 +182,7 @@ class Orquestador:
             return await self._registrar(
                 solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),),
                 escenario_id=escenario_id, escenario_nombre=escenario_nombre,
+                expectativas=expectativas,
             )
 
         inicio = time.monotonic()
@@ -169,6 +198,7 @@ class Orquestador:
             return await self._registrar(
                 solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),),
                 escenario_id=escenario_id, escenario_nombre=escenario_nombre,
+                expectativas=expectativas,
             )
         latencia_ms = int((time.monotonic() - inicio) * 1000)
 
@@ -183,6 +213,7 @@ class Orquestador:
                 latencia_ms=latencia_ms,
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
+                expectativas=expectativas,
             )
 
         # --- Hubo sesion y el intercambio quedo indeterminado ---
@@ -196,6 +227,7 @@ class Orquestador:
                 latencia_ms=latencia_ms,
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
+                expectativas=expectativas,
             )
 
         # --- RN-2: se espero una respuesta y no llego dentro del limite.
@@ -212,6 +244,7 @@ class Orquestador:
                 latencia_ms=latencia_ms,
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
+                expectativas=expectativas,
             )
 
         try:
@@ -226,6 +259,7 @@ class Orquestador:
                 latencia_ms=latencia_ms,
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
+                expectativas=expectativas,
             )
 
         # --- RN-3 primero, luego RN-1 ---
@@ -242,6 +276,7 @@ class Orquestador:
             latencia_ms=latencia_ms,
             escenario_id=escenario_id,
             escenario_nombre=escenario_nombre,
+            expectativas=expectativas,
         )
 
     async def _registrar(
@@ -256,6 +291,7 @@ class Orquestador:
         latencia_ms: int | None = None,
         escenario_id: str | None = None,
         escenario_nombre: str | None = None,
+        expectativas: Expectativas | None = None,
     ) -> ResultadoCompra:
         """Construye la Ejecucion, la persiste enmascarada y devuelve el resultado."""
         # Se registra el destino en todo intento que llego a tocar la red, y por
@@ -270,6 +306,25 @@ class Orquestador:
         solicitud_enmascarada = solicitud.enmascarado()
         respuesta_enmascarada = respuesta.enmascarado() if respuesta else None
         perfil = self._perfil.nombre
+
+        # Expected vs actual: se evalua sobre la respuesta ya enmascarada -por
+        # prudencia de quien llama, no porque la funcion lo exija-. Sin
+        # expectativas, `resultado_evaluacion` es `None`: nunca un PASS
+        # implicito. El snapshot completo (expectativa original + resultado +
+        # discrepancias) es lo unico que se persiste; editar el escenario
+        # despues no puede alterar esta fila.
+        resultado_evaluacion = evaluar_expectativas(expectativas, estado, respuesta_enmascarada)
+        evaluacion_estado = resultado_evaluacion.estado.value if resultado_evaluacion else None
+        evaluacion_json = (
+            json.dumps(
+                evaluacion_a_dict(expectativas, resultado_evaluacion),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if resultado_evaluacion is not None
+            else None
+        )
+
         ejecucion = Ejecucion(
             card_id=datos.card_id,
             monto=datos.monto,
@@ -297,6 +352,8 @@ class Orquestador:
             latencia_ms=latencia_ms,
             escenario_id=escenario_id,
             escenario_nombre=escenario_nombre,
+            evaluacion_estado=evaluacion_estado,
+            evaluacion_json=evaluacion_json,
             creada_en=self._reloj(),
         )
         await self._ejecuciones.guardar(ejecucion)

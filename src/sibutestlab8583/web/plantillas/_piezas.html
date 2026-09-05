@@ -109,6 +109,36 @@
 {%- endmacro %}
 
 
+{# PASS/FAIL de expectativas. Deliberadamente separado del `estado` de la
+   ejecucion (aprobada/rechazada/...): PASS/FAIL es si el resultado cumplio lo
+   esperado, no que resultado obtuvo. `evaluacion` es None cuando el escenario
+   no definio expectativas -nunca se muestra un PASS implicito en ese caso-. #}
+{% macro evaluacion(evaluacion) -%}
+<div class="aviso {{ 'aprobada' if evaluacion and evaluacion.estado == 'pass' else 'rechazada' if evaluacion else 'indeterminado' }}"
+     {% if evaluacion %}data-evaluacion="{{ evaluacion.estado }}"{% endif %}>
+  <span class="aviso__senal">{{ senal('aprobada' if evaluacion and evaluacion.estado == 'pass' else 'rechazada' if evaluacion else '', 19) }}</span>
+  <h2 class="aviso__titulo">
+    {%- if not evaluacion -%}
+    Sin expectativas
+    {%- elif evaluacion.estado == 'pass' -%}
+    PASS
+    {%- else -%}
+    FAIL
+    {%- endif -%}
+  </h2>
+  {% if not evaluacion %}
+  <p class="aviso__detalle">Este escenario no definió qué resultado esperaba.</p>
+  {% elif evaluacion.discrepancias %}
+  <ul class="aviso__detalle motivos">
+    {% for discrepancia in evaluacion.discrepancias %}<li>{{ discrepancia }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="aviso__detalle">El resultado obtenido cumple con lo esperado.</p>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+
 {# Isoscopio. Vivia dentro de resultado.html; se movio aqui al aparecer el
    segundo consumidor, el detalle historico. En esta iteracion solo cambia de
    lugar: mismas filas y misma estructura. #}

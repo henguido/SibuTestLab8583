@@ -16,6 +16,7 @@ from typing import Sequence
 import aiosqlite
 
 from ...domain.catalogo import CatalogoDeRespuestas, CodigoRespuesta
+from ...domain.expectativas import expectativas_a_dict, expectativas_desde_dict
 from ...domain.modelos import (
     LARGO_STAN,
     STAN_MAXIMO,
@@ -213,8 +214,8 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                 "  destino_host, destino_puerto, estado, codigo_respuesta,"
                 "  solicitud_enmascarada, respuesta_enmascarada,"
                 "  solicitud_json, respuesta_json, latencia_ms,"
-                "  escenario_id, escenario_nombre)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  escenario_id, escenario_nombre, evaluacion_estado, evaluacion_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ejecucion.creada_en.isoformat(),
                     ejecucion.card_id,
@@ -234,6 +235,8 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                     ejecucion.latencia_ms,
                     ejecucion.escenario_id,
                     ejecucion.escenario_nombre,
+                    ejecucion.evaluacion_estado,
+                    ejecucion.evaluacion_json,
                 ),
             )
             await conexion.commit()
@@ -326,7 +329,7 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
                 "SELECT escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
-                "       campos_json, activo, creado_en, actualizado_en"
+                "       campos_json, expected_json, activo, creado_en, actualizado_en"
                 " FROM escenarios WHERE escenario_id = ?",
                 (escenario_id,),
             ) as cursor:
@@ -338,7 +341,7 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
                 "SELECT escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
-                "       campos_json, activo, creado_en, actualizado_en"
+                "       campos_json, expected_json, activo, creado_en, actualizado_en"
                 " FROM escenarios ORDER BY nombre"
             ) as cursor:
                 filas = await cursor.fetchall()
@@ -350,8 +353,8 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
             await conexion.execute(
                 "INSERT INTO escenarios"
                 " (escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
-                "  campos_json, activo, creado_en, actualizado_en)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "  campos_json, expected_json, activo, creado_en, actualizado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(escenario_id) DO UPDATE SET"
                 "   nombre = excluded.nombre,"
                 "   perfil = excluded.perfil,"
@@ -360,6 +363,7 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
                 "   conexion_id = excluded.conexion_id,"
                 "   monto = excluded.monto,"
                 "   campos_json = excluded.campos_json,"
+                "   expected_json = excluded.expected_json,"
                 "   activo = excluded.activo,"
                 "   actualizado_en = excluded.actualizado_en",
                 (
@@ -375,6 +379,15 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
                         ensure_ascii=False,
                         separators=(",", ":"),
                     ),
+                    (
+                        json.dumps(
+                            expectativas_a_dict(escenario.expectativas),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        if escenario.expectativas is not None
+                        else None
+                    ),
                     int(escenario.activo),
                     escenario.creado_en.isoformat(),
                     escenario.actualizado_en.isoformat(),
@@ -386,6 +399,8 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
 def _a_escenario(fila: aiosqlite.Row) -> Escenario:
     bruto = json.loads(fila["campos_json"]) if fila["campos_json"] else {}
     campos = bruto.get("campos", {}) if isinstance(bruto, dict) else {}
+    expected_bruto = _opcional(fila, "expected_json")
+    expectativas = expectativas_desde_dict(json.loads(expected_bruto)) if expected_bruto else None
     return Escenario(
         escenario_id=fila["escenario_id"],
         nombre=fila["nombre"],
@@ -395,6 +410,7 @@ def _a_escenario(fila: aiosqlite.Row) -> Escenario:
         conexion_id=fila["conexion_id"],
         monto=Decimal(fila["monto"]),
         campos_manuales=campos,
+        expectativas=expectativas,
         activo=bool(fila["activo"]),
         creado_en=datetime.fromisoformat(fila["creado_en"]),
         actualizado_en=datetime.fromisoformat(fila["actualizado_en"]),
@@ -464,4 +480,6 @@ def _a_ejecucion(fila: aiosqlite.Row) -> Ejecucion:
         latencia_ms=fila["latencia_ms"],
         escenario_id=_opcional(fila, "escenario_id"),
         escenario_nombre=_opcional(fila, "escenario_nombre"),
+        evaluacion_estado=_opcional(fila, "evaluacion_estado"),
+        evaluacion_json=_opcional(fila, "evaluacion_json"),
     )

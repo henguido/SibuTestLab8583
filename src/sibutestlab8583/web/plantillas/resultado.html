@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_piezas.html" import estado, isoscopio, resumen %}
+{% from "_piezas.html" import estado, evaluacion as pieza_evaluacion, isoscopio, resumen %}
 {% block titulo %}Resultado · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
@@ -37,6 +37,8 @@
   </div>
 </section>
 {% endif %}
+
+{{ pieza_evaluacion(evaluacion) }}
 
 {{ isoscopio('Isoscopio · solicitud 0100', filas_solicitud, false,
              'No se armó ningún mensaje.') }}

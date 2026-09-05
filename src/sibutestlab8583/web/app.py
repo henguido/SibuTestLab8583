@@ -43,7 +43,16 @@ from ..application.tarjetas import (
 )
 from ..composicion import Composicion, Configuracion
 from ..domain.errores import ErrorDelSimulador
-from ..domain.modelos import MTI_COMPRA, DatosCompra, DestinoTcp
+from ..domain.expectativas import campos_permitidos_expectativa, validar_expectativas
+from ..domain.modelos import (
+    MTI_COMPRA,
+    MTI_RESPUESTA_COMPRA,
+    DatosCompra,
+    DestinoTcp,
+    EstadoEjecucion,
+    ExpectativaCampo,
+    Expectativas,
+)
 from . import presentacion
 
 RAIZ_WEB = Path(__file__).parent
@@ -117,11 +126,19 @@ async def ejecutar_compra(
         for numero in editables
         if (valor := (formulario_bruto.get(f"campo_{numero}", "") or "").strip())
     }
+    # Las expectativas se leen del mismo formulario, se hayan guardado o no en
+    # ningun escenario: "Ejecutar transacción" siempre evalua contra lo que
+    # esta escrito en la pantalla en ese momento, igual que ya hace con
+    # card_id/monto/campos_manuales -no contra lo ultimo guardado-. Se leen
+    # antes del try/except para que, si son invalidas, el formulario se
+    # vuelva a mostrar con lo que la persona escribio, no en blanco.
+    try:
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
+    except ValueError:
+        expectativas = None
     enviado = {
-        "card_id": card_id,
-        "monto": monto,
-        "conexion_id": conexion_id,
-        "campos_manuales": campos_manuales,
+        "card_id": card_id, "monto": monto, "conexion_id": conexion_id,
+        "campos_manuales": campos_manuales, "expectativas": expectativas,
     }
 
     # --- entrada del usuario: errores controlados, nunca un 500 ---
@@ -129,6 +146,9 @@ async def ejecutar_compra(
         datos, destino, tiempo_limite = await _interpretar_formulario(
             composicion, card_id, monto, conexion_id, campos_manuales
         )
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
+        if expectativas is not None:
+            validar_expectativas(expectativas, composicion.perfil, MTI_RESPUESTA_COMPRA)
     except ValueError as error:
         return await _formulario(
             request, composicion, escenario_id=escenario_id or None,
@@ -159,7 +179,8 @@ async def ejecutar_compra(
     try:
         orquestador = await composicion.orquestador(destino, tiempo_limite=tiempo_limite)
         resultado = await orquestador.ejecutar_compra(
-            datos, escenario_id=id_escenario_asociado, escenario_nombre=nombre_escenario_asociado
+            datos, escenario_id=id_escenario_asociado, escenario_nombre=nombre_escenario_asociado,
+            expectativas=expectativas,
         )
     except TarjetaDesconocida:
         return await _formulario(
@@ -708,12 +729,18 @@ async def escenario_crear(
         for numero in editables
         if (valor := (formulario_bruto.get(f"campo_{numero}", "") or "").strip())
     }
+    try:
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
+    except ValueError:
+        expectativas = None
     enviado = {
         "card_id": card_id, "monto": monto, "conexion_id": conexion_id,
         "campos_manuales": campos_manuales, "nombre_escenario": nombre,
+        "expectativas": expectativas,
     }
     try:
         monto_decimal = presentacion.validar_monto(monto)
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
         creado = await composicion.administracion_escenarios.crear(
             DatosNuevoEscenario(
                 nombre=nombre,
@@ -721,6 +748,7 @@ async def escenario_crear(
                 conexion_id=conexion_id,
                 monto=monto_decimal,
                 campos_manuales=campos_manuales,
+                expectativas=expectativas,
             )
         )
     except ValueError as error:
@@ -750,12 +778,18 @@ async def escenario_actualizar(
         for numero in editables
         if (valor := (formulario_bruto.get(f"campo_{numero}", "") or "").strip())
     }
+    try:
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
+    except ValueError:
+        expectativas = None
     enviado = {
         "card_id": card_id, "monto": monto, "conexion_id": conexion_id,
         "campos_manuales": campos_manuales, "nombre_escenario": nombre,
+        "expectativas": expectativas,
     }
     try:
         monto_decimal = presentacion.validar_monto(monto)
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
         await composicion.administracion_escenarios.actualizar(
             escenario_id,
             DatosEdicionEscenario(
@@ -764,6 +798,7 @@ async def escenario_actualizar(
                 conexion_id=conexion_id,
                 monto=monto_decimal,
                 campos_manuales=campos_manuales,
+                expectativas=expectativas,
             ),
         )
     except EscenarioNoEncontrado:
@@ -844,7 +879,8 @@ async def escenario_ejecutar(
     try:
         orquestador = await composicion.orquestador(destino, tiempo_limite=conexion.timeout)
         resultado = await orquestador.ejecutar_compra(
-            datos, escenario_id=escenario.escenario_id, escenario_nombre=escenario.nombre
+            datos, escenario_id=escenario.escenario_id, escenario_nombre=escenario.nombre,
+            expectativas=escenario.expectativas,
         )
     except TarjetaDesconocida:
         return await _formulario(
@@ -910,6 +946,53 @@ def _no_encontrado(request: Request):
         },
         status_code=404,
     )
+
+
+def _leer_expectativas(formulario_bruto, perfil) -> Expectativas | None:
+    """Lee `estado_esperado` y `tipo_esperado_{n}`/`valor_esperado_{n}` del
+    formulario, igual que `campos_manuales` se lee de `campo_{n}`.
+
+    A diferencia de `campos_manuales` -donde un `campo_2` forzado a mano
+    simplemente nunca se mira, porque `armar_compra` reconstruye el 0100
+    entero desde cero-, aqui un `tipo_esperado_{n}`/`valor_esperado_{n}` para
+    un `n` que `campos_permitidos_expectativa` NO declara (sensible, o
+    sencillamente no soportado por el perfil/MTI de respuesta) hace fallar la
+    lectura por completo: la UI real jamas emite un control para un numero no
+    permitido, asi que su sola presencia en el formulario es evidencia de una
+    peticion manipulada, no una eleccion legitima que deba ignorarse en
+    silencio ni reinterpretarse como "no se pidio nada". El mensaje de error
+    nunca repite el numero de campo ni ningun valor enviado: alguien
+    forzando el nombre exacto de un DE sensible ya sabe cual DE probo, pero el
+    mensaje no se lo confirma.
+
+    Devuelve `None` solo cuando el formulario, ya sabido limpio, no fijo
+    ninguna expectativa -nunca un `Expectativas` vacio-: la ausencia de
+    expectativa es un estado propio, no un caso particular de "todo vacio", y
+    tampoco debe confundirse con una peticion rechazada.
+    """
+    permitidos = campos_permitidos_expectativa(perfil, MTI_RESPUESTA_COMPRA)
+    for clave in formulario_bruto:
+        for prefijo in ("tipo_esperado_", "valor_esperado_"):
+            if clave.startswith(prefijo) and clave[len(prefijo):] not in permitidos:
+                raise ValueError(
+                    "El formulario incluye una expectativa para un campo que no "
+                    "está permitido."
+                )
+
+    estado_bruto = (formulario_bruto.get("estado_esperado", "") or "").strip()
+    estado = EstadoEjecucion(estado_bruto) if estado_bruto else None
+
+    campos: dict[str, ExpectativaCampo] = {}
+    for numero in permitidos:
+        tipo = (formulario_bruto.get(f"tipo_esperado_{numero}", "") or "").strip()
+        if not tipo:
+            continue
+        valor = (formulario_bruto.get(f"valor_esperado_{numero}", "") or "").strip()
+        campos[numero] = ExpectativaCampo(tipo=tipo, valor=valor if tipo == "igual" else None)
+
+    if estado is None and not campos:
+        return None
+    return Expectativas(estado=estado, campos=campos)
 
 
 async def _interpretar_formulario(
@@ -992,6 +1075,9 @@ async def _formulario(
         nombre_escenario = enviado.get(
             "nombre_escenario", escenario_actual.nombre if escenario_actual else ""
         )
+        expectativas_actuales = enviado.get(
+            "expectativas", escenario_actual.expectativas if escenario_actual else None
+        )
     elif escenario_actual is not None:
         card_id = escenario_actual.card_id
         monto = str(escenario_actual.monto)
@@ -1000,12 +1086,14 @@ async def _formulario(
             conexion_id if conexion_id is not None else escenario_actual.conexion_id
         )
         nombre_escenario = escenario_actual.nombre
+        expectativas_actuales = escenario_actual.expectativas
     else:
         card_id = ""
         monto = ""
         campos_manuales_enviados = {}
         conexion_id_solicitada = conexion_id
         nombre_escenario = ""
+        expectativas_actuales = None
 
     # --- conexion: nunca se sustituye en silencio una pedida explicitamente ---
     conexion_no_disponible = False
@@ -1042,6 +1130,13 @@ async def _formulario(
         )
     )
 
+    campos_esperados = expectativas_actuales.campos if expectativas_actuales else {}
+    estado_esperado_actual = (
+        expectativas_actuales.estado.value
+        if expectativas_actuales and expectativas_actuales.estado
+        else ""
+    )
+
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="compra.html",
@@ -1065,6 +1160,13 @@ async def _formulario(
             "nombre_escenario": nombre_escenario,
             "bloqueo_escenario": bloqueo_escenario,
             "puede_ejecutar": puede_ejecutar,
+            "estados_ejecucion": list(EstadoEjecucion),
+            "avisos": presentacion.AVISOS,
+            "estado_esperado_actual": estado_esperado_actual,
+            "filas_expectativas": presentacion.filas_expectativas(
+                composicion.perfil, MTI_RESPUESTA_COMPRA, composicion.descripciones_de_campos,
+                campos_esperados,
+            ),
         },
         status_code=estado_http,
     )

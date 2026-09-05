@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from conftest import TransporteFalso, construir_orquestador
 
 from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, DESTINO_ID_DEMO
@@ -29,7 +30,14 @@ from sibutestlab8583.application.escenarios import (
     DatosNuevoEscenario,
     ServicioEscenarios,
 )
-from sibutestlab8583.domain.modelos import DatosCompra, Escenario
+from sibutestlab8583.domain.modelos import (
+    CAMPOS_SENSIBLES,
+    DatosCompra,
+    Escenario,
+    EstadoEjecucion,
+    ExpectativaCampo,
+    Expectativas,
+)
 from sibutestlab8583.profiles.generico import PERFIL_GENERICO
 
 
@@ -190,3 +198,224 @@ async def test_renombrar_un_escenario_no_altera_el_nombre_ya_registrado_en_el_hi
     # La primera ejecucion, releida una vez mas, sigue intacta.
     historica_de_nuevo = await RepositorioEjecucionesSQLite(base).obtener(resultado.ejecucion.id)
     assert historica_de_nuevo.escenario_nombre == "Compra aprobada CRC"
+
+
+# --------------------------------------------------------- expectativas ---
+#
+# El orquestador NO conoce escenarios, pero SI evalua expectativas -es una
+# funcion de dominio pura que el orquestador aplica el mismo, igual que ya
+# aplica RN-1/RN-3-. Estas pruebas verifican que la evaluacion se calcule y
+# se persista correctamente en cada rama, y sobre todo que quede congelada:
+# editar el escenario despues NUNCA debe cambiar una evaluacion ya registrada.
+
+
+async def test_sin_expectativas_no_persiste_evaluacion(base, datos_compra):
+    resultado = await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+        datos_compra
+    )
+    assert resultado.ejecucion.evaluacion_estado is None
+    assert resultado.ejecucion.evaluacion_json is None
+
+
+async def test_expectativa_de_estado_cumplida_persiste_pass(base, datos_compra):
+    resultado = await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+        datos_compra, expectativas=Expectativas(estado=EstadoEjecucion.APROBADA)
+    )
+    assert resultado.ejecucion.evaluacion_estado == "pass"
+
+    guardada = await RepositorioEjecucionesSQLite(base).obtener(resultado.ejecucion.id)
+    assert guardada.evaluacion_estado == "pass"
+    assert guardada.evaluacion_json is not None
+
+
+async def test_expectativa_de_estado_incumplida_persiste_fail(base, datos_compra):
+    resultado = await construir_orquestador(base, TransporteFalso(codigo="05")).ejecutar_compra(
+        datos_compra, expectativas=Expectativas(estado=EstadoEjecucion.APROBADA)
+    )
+    assert resultado.ejecucion.evaluacion_estado == "fail"
+
+
+async def test_expectativa_de_campo_igual_cumplida_es_pass(base, datos_compra):
+    resultado = await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+        datos_compra,
+        expectativas=Expectativas(campos={"39": ExpectativaCampo(tipo="igual", valor="00")}),
+    )
+    assert resultado.ejecucion.evaluacion_estado == "pass"
+
+
+async def test_expectativa_de_campo_igual_incumplida_es_fail(base, datos_compra):
+    resultado = await construir_orquestador(base, TransporteFalso(codigo="05")).ejecutar_compra(
+        datos_compra,
+        expectativas=Expectativas(campos={"39": ExpectativaCampo(tipo="igual", valor="00")}),
+    )
+    assert resultado.ejecucion.evaluacion_estado == "fail"
+
+
+async def test_expectativa_de_campo_presente_y_ausente(base, datos_compra):
+    """DE38 (codigo de autorizacion) no forma parte de la correlacion RN-3
+    del perfil generico, asi que el doble de transporte nunca lo incluye en
+    la respuesta: es un campo genuinamente ausente para esta prueba.
+    """
+    resultado_ausente = await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+        datos_compra, expectativas=Expectativas(campos={"38": ExpectativaCampo(tipo="ausente")})
+    )
+    assert resultado_ausente.ejecucion.evaluacion_estado == "pass"
+
+    resultado_presente = await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+        datos_compra, expectativas=Expectativas(campos={"38": ExpectativaCampo(tipo="presente")})
+    )
+    assert resultado_presente.ejecucion.evaluacion_estado == "fail"
+
+
+async def test_timeout_esperado_y_obtenido_persiste_pass(base, datos_compra):
+    from sibutestlab8583.domain.modelos import TiempoAgotado
+
+    resultado = await construir_orquestador(
+        base, TransporteFalso(TiempoAgotado(limite_segundos=0.01)), tiempo_limite=0.01
+    ).ejecutar_compra(datos_compra, expectativas=Expectativas(estado=EstadoEjecucion.TIMEOUT))
+    assert resultado.ejecucion.evaluacion_estado == "pass"
+
+
+async def test_evaluacion_json_no_contiene_ningun_campo_sensible(base, datos_compra):
+    """Defensa en profundidad a nivel de persistencia: aunque alguien lograra
+    construir una `Expectativas` con un campo sensible (bypaseando
+    `validar_expectativas`), el snapshot solo serializa los campos que la
+    propia expectativa declara -nunca "todos los campos que llegaron"-, asi
+    que el PAN nunca podria aparecer aqui de todos modos.
+    """
+    resultado = await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+        datos_compra, expectativas=Expectativas(campos={"39": ExpectativaCampo(tipo="igual", valor="00")})
+    )
+    assert "2" not in resultado.ejecucion.evaluacion_json
+    assert "35" not in resultado.ejecucion.evaluacion_json
+
+
+async def test_editar_las_expectativas_del_escenario_no_altera_la_evaluacion_ya_registrada(base):
+    """El caso critico del Bloque 3: una ejecucion historica es un snapshot.
+    Cambiar las expectativas del escenario despues no debe voltear un PASS a
+    FAIL (ni viceversa) en una ejecucion ya persistida -mismo principio que ya
+    protege `escenario_nombre` frente a un renombre-.
+    """
+    servicio = ServicioEscenarios(
+        RepositorioEscenariosSQLite(base),
+        RepositorioTarjetasSQLite(base),
+        RepositorioDestinosSQLite(base),
+        PERFIL_GENERICO,
+    )
+    creado = await servicio.crear(
+        DatosNuevoEscenario(
+            nombre="Con expectativa de aprobacion",
+            card_id=CARD_ID_DEMO,
+            conexion_id=DESTINO_ID_DEMO,
+            monto=Decimal("10.00"),
+            expectativas=Expectativas(estado=EstadoEjecucion.APROBADA),
+        )
+    )
+
+    orquestador = construir_orquestador(base, TransporteFalso(codigo="00"))
+    resultado = await orquestador.ejecutar_compra(
+        DatosCompra(card_id=creado.card_id, monto=creado.monto),
+        escenario_id=creado.escenario_id,
+        escenario_nombre=creado.nombre,
+        expectativas=creado.expectativas,
+    )
+    assert resultado.ejecucion.evaluacion_estado == "pass"
+
+    # Se edita el escenario para esperar ahora lo opuesto.
+    await servicio.actualizar(
+        creado.escenario_id,
+        DatosEdicionEscenario(
+            nombre=creado.nombre,
+            card_id=creado.card_id,
+            conexion_id=creado.conexion_id,
+            monto=creado.monto,
+            expectativas=Expectativas(estado=EstadoEjecucion.RECHAZADA),
+        ),
+    )
+
+    # La ejecucion historica, releida de la base, conserva su PASS original.
+    historica = await RepositorioEjecucionesSQLite(base).obtener(resultado.ejecucion.id)
+    assert historica.evaluacion_estado == "pass"
+    import json
+
+    assert json.loads(historica.evaluacion_json)["expectativas"]["estado"] == "aprobada"
+
+
+# ----------------------------------------- frontera de seguridad en el orquestador ---
+#
+# La garantia "un campo sensible nunca llega a evaluacion_json" no puede
+# depender solo de que la peticion haya pasado por web/app.py o por
+# ServicioEscenarios: el Orquestador es reutilizable directamente por
+# cualquier llamador interno (un futuro motor de regresion o de carga, por
+# ejemplo), y ese llamador podria construir un `Expectativas` a mano sin pasar
+# por ninguna validacion previa. Estas pruebas llaman a `ejecutar_compra`
+# igual que ese llamador interno lo haria: sin pasar por la web ni por
+# `ServicioEscenarios` en absoluto.
+
+
+async def test_orquestador_directo_con_expectativa_de2_se_rechaza_y_no_persiste_nada(
+    base, datos_compra
+):
+    expectativas = Expectativas(
+        campos={"2": ExpectativaCampo(tipo="igual", valor="VALOR-SINTETICO")}
+    )
+    with pytest.raises(ValueError):
+        await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+            datos_compra, expectativas=expectativas
+        )
+
+    assert await RepositorioEjecucionesSQLite(base).listar() == []
+
+
+async def test_orquestador_directo_con_expectativa_de35_se_rechaza_y_no_persiste_nada(
+    base, datos_compra
+):
+    expectativas = Expectativas(
+        campos={"35": ExpectativaCampo(tipo="presente")}
+    )
+    with pytest.raises(ValueError):
+        await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+            datos_compra, expectativas=expectativas
+        )
+
+    assert await RepositorioEjecucionesSQLite(base).listar() == []
+
+
+async def test_orquestador_directo_con_campo_sensible_generico_se_rechaza(base, datos_compra):
+    """Generaliza la prueba anterior a todo `CAMPOS_SENSIBLES`, no solo DE2/DE35."""
+    for campo_sensible in CAMPOS_SENSIBLES:
+        expectativas = Expectativas(campos={campo_sensible: ExpectativaCampo(tipo="presente")})
+        with pytest.raises(ValueError):
+            await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+                datos_compra, expectativas=expectativas
+            )
+    assert await RepositorioEjecucionesSQLite(base).listar() == []
+
+
+async def test_orquestador_directo_con_campo_no_permitido_por_el_perfil_se_rechaza(
+    base, datos_compra
+):
+    """No solo sensibles: un numero que el perfil ni siquiera declara en su
+    especificacion para el MTI de respuesta tambien debe rechazarse.
+    """
+    expectativas = Expectativas(campos={"999": ExpectativaCampo(tipo="presente")})
+    with pytest.raises(ValueError):
+        await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+            datos_compra, expectativas=expectativas
+        )
+
+    assert await RepositorioEjecucionesSQLite(base).listar() == []
+
+
+async def test_orquestador_directo_con_expectativa_de39_valida_sigue_funcionando(
+    base, datos_compra
+):
+    """El endurecimiento no debe romper el camino feliz: DE39 sigue permitido,
+    y la ejecucion se evalua y persiste con normalidad.
+    """
+    expectativas = Expectativas(campos={"39": ExpectativaCampo(tipo="igual", valor="00")})
+    resultado = await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+        datos_compra, expectativas=expectativas
+    )
+    assert resultado.ejecucion.evaluacion_estado == "pass"
+    assert len(await RepositorioEjecucionesSQLite(base).listar()) == 1

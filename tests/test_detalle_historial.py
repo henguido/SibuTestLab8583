@@ -23,7 +23,14 @@ from sibutestlab8583.adapters.transporte.framing_demo import FramingDemostracion
 from sibutestlab8583.domain.datos_sinteticos import monto_iso
 from sibutestlab8583.application import serializacion as sz
 from sibutestlab8583.composicion import Composicion, Configuracion
-from sibutestlab8583.domain.modelos import DatosCompra, DestinoTcp, EstadoEjecucion, MensajeIso
+from sibutestlab8583.domain.modelos import (
+    DatosCompra,
+    DestinoTcp,
+    EstadoEjecucion,
+    ExpectativaCampo,
+    Expectativas,
+    MensajeIso,
+)
 from sibutestlab8583.profiles.generico import NOMBRE_PERFIL_GENERICO, PERFIL_GENERICO
 from sibutestlab8583.web.app import crear_app
 from sibutestlab8583.web.presentacion import AVISOS
@@ -612,3 +619,85 @@ async def test_vertical_transaccion_real_y_detalle_coherente(base):
 
     assert PAN_DEMO not in html, "el PAN completo no puede llegar al navegador"
     assert "************6666" in html
+
+
+# ---------------------------------------------------------- 9. EXPECTATIVAS ---
+
+
+async def _compra_con_expectativas(base, expectativas, *, codigo="00"):
+    return await construir_orquestador(base, TransporteFalso(codigo=codigo)).ejecutar_compra(
+        DatosCompra(card_id=CARD_ID_DEMO, monto=Decimal("150.00")), expectativas=expectativas
+    )
+
+
+async def test_sin_expectativas_el_historial_no_muestra_pass_ni_fail(base):
+    resultado = await _compra(base)
+    html = (await _obtener(base, "/historial")).text
+
+    fila = html[html.find(f"/historial/{resultado.ejecucion.id}") - 2000 :]
+    assert 'data-evaluacion=""' in fila or 'data-evaluacion' not in fila.split("</tr>")[0]
+
+
+async def test_el_historial_muestra_pass_para_una_ejecucion_que_cumplio(base):
+    resultado = await _compra_con_expectativas(base, Expectativas(estado=EstadoEjecucion.APROBADA))
+    html = (await _obtener(base, "/historial")).text
+
+    assert 'data-evaluacion="pass"' in html
+    assert "PASS" in html
+
+
+async def test_el_historial_muestra_fail_para_una_ejecucion_que_incumplio(base):
+    resultado = await _compra_con_expectativas(
+        base, Expectativas(campos={"39": ExpectativaCampo(tipo="igual", valor="05")}), codigo="00"
+    )
+    html = (await _obtener(base, "/historial")).text
+
+    assert 'data-evaluacion="fail"' in html
+    assert "FAIL" in html
+
+
+async def test_el_detalle_muestra_sin_expectativas_cuando_el_escenario_no_definio_nada(base):
+    resultado = await _compra(base)
+    html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+
+    assert "Sin expectativas" in html
+
+
+async def test_el_detalle_de_una_ejecucion_pass_muestra_el_banner_y_sin_discrepancias(base):
+    resultado = await _compra_con_expectativas(
+        base, Expectativas(estado=EstadoEjecucion.APROBADA, campos={"39": ExpectativaCampo(tipo="igual", valor="00")})
+    )
+    html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+
+    assert 'data-evaluacion="pass"' in html
+    assert "PASS" in html
+    assert "cumple con lo esperado" in html
+
+
+async def test_el_detalle_de_una_ejecucion_fail_explica_la_discrepancia_de_campo(base):
+    resultado = await _compra_con_expectativas(
+        base, Expectativas(campos={"39": ExpectativaCampo(tipo="igual", valor="99")})
+    )
+    html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+
+    assert 'data-evaluacion="fail"' in html
+    assert "Campo 39" in html
+    assert "«99»" in html and "«00»" in html
+
+
+async def test_editar_expectativas_no_altera_una_evaluacion_ya_registrada_en_el_detalle(base):
+    """Vista de extremo a extremo del criterio de inmutabilidad: el detalle de
+    una ejecucion ya registrada sigue mostrando su PASS original, aunque el
+    snapshot que se relee ya no tenga relacion con ningun escenario en vivo
+    -el orquestador ni siquiera conoce escenarios; esto prueba que el
+    snapshot persistido, por si solo, es suficiente-.
+    """
+    resultado = await _compra_con_expectativas(base, Expectativas(estado=EstadoEjecucion.APROBADA))
+    primer_html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+    assert 'data-evaluacion="pass"' in primer_html
+
+    # Una ejecucion posterior, con una expectativa distinta, no debe tocar la anterior.
+    await _compra_con_expectativas(base, Expectativas(estado=EstadoEjecucion.RECHAZADA), codigo="00")
+
+    segundo_html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+    assert 'data-evaluacion="pass"' in segundo_html

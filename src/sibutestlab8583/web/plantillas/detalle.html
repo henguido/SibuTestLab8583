@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_piezas.html" import estado, isoscopio, resumen, senal %}
+{% from "_piezas.html" import estado, evaluacion as pieza_evaluacion, isoscopio, resumen, senal %}
 {% block titulo %}Ejecución #{{ ejecucion.id }} · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
@@ -32,6 +32,8 @@
     {% endif %}
   </div>
 </section>
+
+{{ pieza_evaluacion(evaluacion) }}
 
 {# Un solo aviso por ejecución, antes de las tablas: con qué formato se registró
    es una propiedad de la fila, no de cada mensaje. No se afirma que haya habido

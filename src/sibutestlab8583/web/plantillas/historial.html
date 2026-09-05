@@ -29,6 +29,7 @@
           <th>Tarjeta</th>
           <th class="num">Monto</th>
           <th>Estado</th>
+          <th>Expectativa</th>
           <th>Código</th>
           <th class="num">Latencia</th>
           <th>Destino</th>
@@ -57,6 +58,15 @@
             <span class="moneda" title="Código de moneda ISO 4217">{{ ejecucion.moneda }}</span>
           </td>
           <td>{{ pastilla(avisos[ejecucion.estado]) }}</td>
+          <td data-evaluacion="{{ ejecucion.evaluacion_estado or '' }}">
+            {%- if ejecucion.evaluacion_estado == 'pass' -%}
+            <span class="chip chip--activa">PASS</span>
+            {%- elif ejecucion.evaluacion_estado == 'fail' -%}
+            <span class="chip chip--inactiva">FAIL</span>
+            {%- else -%}
+            <span class="vacio">—</span>
+            {%- endif -%}
+          </td>
           <td class="mono">{{ ejecucion.codigo_respuesta or '—' }}</td>
           <td class="num">
             {%- if ejecucion.latencia_ms is not none %}{{ ejecucion.latencia_ms }} ms{% else %}—{% endif -%}

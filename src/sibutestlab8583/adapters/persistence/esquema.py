@@ -81,6 +81,9 @@ CREATE TABLE IF NOT EXISTS destinos (
 -- momento de guardar -nunca los derivados/automaticos, que se regeneran en
 -- cada ejecucion-. Referencia tarjeta y conexion por id, nunca PAN ni
 -- host/puerto/timeout, igual que el resto del esquema.
+-- expected_json es NULL a proposito -no '{}'-: un escenario sin expectativas
+-- no es lo mismo que uno con una expectativa vacia, y NULL deja esa distincion
+-- explicita en la propia fila en vez de depender de convencion.
 CREATE TABLE IF NOT EXISTS escenarios (
     escenario_id   TEXT    PRIMARY KEY,
     nombre         TEXT    NOT NULL,
@@ -90,6 +93,7 @@ CREATE TABLE IF NOT EXISTS escenarios (
     conexion_id    TEXT    NOT NULL REFERENCES destinos(destino_id),
     monto          TEXT    NOT NULL,
     campos_json    TEXT    NOT NULL DEFAULT '{}',
+    expected_json  TEXT,
     activo         INTEGER NOT NULL DEFAULT 1,
     creado_en      TEXT    NOT NULL,
     actualizado_en TEXT    NOT NULL
@@ -126,7 +130,13 @@ CREATE TABLE IF NOT EXISTS ejecuciones (
     -- ese momento, copiado y no resuelto con un join -renombrar el escenario
     -- despues no debe alterar como luce una ejecucion ya registrada-.
     escenario_id            TEXT    REFERENCES escenarios(escenario_id),
-    escenario_nombre        TEXT
+    escenario_nombre        TEXT,
+    -- Snapshot expected-vs-actual, congelado al ejecutar. `evaluacion_estado`
+    -- NULL significa "el escenario no tenia expectativas" -nunca "aprobado
+    -- por omision"-. `evaluacion_json` guarda la expectativa ORIGINAL usada,
+    -- no una referencia al escenario: editarlo despues no altera esta fila.
+    evaluacion_estado       TEXT,
+    evaluacion_json         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_creada_en ON ejecuciones(creada_en);
@@ -234,6 +244,18 @@ COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO: tuple[tuple[str, str], ...] = (
     ("escenario_nombre", "TEXT"),
 )
 
+#: Lo mismo para `ejecuciones`: `evaluacion_estado`/`evaluacion_json` son
+#: posteriores (Bloque 3, expected vs actual).
+COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION: tuple[tuple[str, str], ...] = (
+    ("evaluacion_estado", "TEXT"),
+    ("evaluacion_json", "TEXT"),
+)
+
+#: Lo mismo para `escenarios`: `expected_json` es posterior (Bloque 3).
+COLUMNAS_AGREGADAS_ESCENARIOS: tuple[tuple[str, str], ...] = (
+    ("expected_json", "TEXT"),
+)
+
 #: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
 #: (titular en adelante) son posteriores a bases ya creadas por un clon
 #: anterior de este repositorio.
@@ -318,6 +340,8 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await conexion.executescript(DDL)
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS)
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO)
+        await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION)
+        await _migrar(conexion, "escenarios", COLUMNAS_AGREGADAS_ESCENARIOS)
         await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
         await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)
         await _sembrar_secuencias(conexion)

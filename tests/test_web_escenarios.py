@@ -18,7 +18,7 @@ import httpx2
 from test_web import ComposicionFalsa, _resultado
 
 from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, DESTINO_ID_DEMO
-from sibutestlab8583.domain.modelos import Escenario, EstadoEjecucion, TarjetaPrueba
+from sibutestlab8583.domain.modelos import CAMPOS_SENSIBLES, Escenario, EstadoEjecucion, TarjetaPrueba
 from sibutestlab8583.web.app import crear_app
 
 FORMULARIO_ESCENARIO = {
@@ -357,6 +357,206 @@ async def test_buscar_filtra_el_listado():
         html = (await cliente.get("/escenarios", params={"buscar": "CRC"})).text
     assert "Compra CRC" in html
     assert "Rechazo USD" not in html
+
+
+# -------------------------------------------------------- expectativas ---
+
+
+async def test_guardar_un_escenario_con_expectativas_las_persiste():
+    cliente, composicion = _cliente()
+    async with cliente:
+        respuesta = await cliente.post(
+            "/escenarios",
+            data={
+                **FORMULARIO_ESCENARIO,
+                "estado_esperado": "aprobada",
+                "tipo_esperado_39": "igual",
+                "valor_esperado_39": "00",
+            },
+        )
+        assert respuesta.status_code == 303
+        nuevo_id = _escenario_id_de(respuesta)
+        escenario = await composicion.administracion_escenarios.obtener(nuevo_id)
+    assert escenario.expectativas is not None
+    assert escenario.expectativas.estado == EstadoEjecucion.APROBADA
+    assert dict(escenario.expectativas.campos)["39"].valor == "00"
+
+
+async def test_guardar_un_escenario_sin_tocar_expectativas_las_deja_en_none():
+    cliente, composicion = _cliente()
+    async with cliente:
+        respuesta = await cliente.post("/escenarios", data=FORMULARIO_ESCENARIO)
+        nuevo_id = _escenario_id_de(respuesta)
+        escenario = await composicion.administracion_escenarios.obtener(nuevo_id)
+    assert escenario.expectativas is None
+
+
+async def test_forzar_de2_como_expectativa_se_rechaza_con_400_y_no_crea_el_escenario():
+    """DE2 (PAN) es el caso mas sensible posible: ni con un valor "aceptable"
+    como `presente` debe colarse. La peticion se rechaza entera -no se crea
+    ningun escenario, ni siquiera uno sin esa expectativa-.
+    """
+    cliente, composicion = _cliente()
+    async with cliente:
+        respuesta = await cliente.post(
+            "/escenarios",
+            data={**FORMULARIO_ESCENARIO, "tipo_esperado_2": "presente"},
+        )
+        listado = await composicion.administracion_escenarios.listar()
+    assert respuesta.status_code == 400
+    assert "no está permitido" in respuesta.text
+    assert listado == []
+
+
+async def test_forzar_de35_como_expectativa_se_rechaza_con_400_y_no_crea_el_escenario():
+    """DE35 (track 2) es el otro campo de tarjeta sensible: mismo tratamiento que DE2."""
+    cliente, composicion = _cliente()
+    async with cliente:
+        respuesta = await cliente.post(
+            "/escenarios",
+            data={**FORMULARIO_ESCENARIO, "valor_esperado_35": "cualquier-cosa"},
+        )
+        listado = await composicion.administracion_escenarios.listar()
+    assert respuesta.status_code == 400
+    assert "no está permitido" in respuesta.text
+    assert listado == []
+
+
+async def test_forzar_cualquier_campo_sensible_como_expectativa_se_rechaza():
+    """Generaliza la prueba anterior a TODO `CAMPOS_SENSIBLES`, no solo a DE2/DE35."""
+    for campo_sensible in CAMPOS_SENSIBLES:
+        cliente, composicion = _cliente()
+        async with cliente:
+            respuesta = await cliente.post(
+                "/escenarios",
+                data={**FORMULARIO_ESCENARIO, f"tipo_esperado_{campo_sensible}": "presente"},
+            )
+            listado = await composicion.administracion_escenarios.listar()
+        assert respuesta.status_code == 400, f"campo {campo_sensible} debio rechazarse"
+        assert listado == [], f"campo {campo_sensible} no debio crear ningun escenario"
+
+
+async def test_forzar_un_de_no_soportado_por_el_perfil_se_rechaza():
+    """No solo los sensibles: cualquier numero que `campos_permitidos_expectativa`
+    no declare -por ejemplo uno que el perfil ni siquiera define en su
+    especificacion- tambien debe rechazarse, no solo ignorarse.
+    """
+    cliente, composicion = _cliente()
+    async with cliente:
+        respuesta = await cliente.post(
+            "/escenarios",
+            data={**FORMULARIO_ESCENARIO, "tipo_esperado_999": "presente"},
+        )
+        listado = await composicion.administracion_escenarios.listar()
+    assert respuesta.status_code == 400
+    assert "no está permitido" in respuesta.text
+    assert listado == []
+
+
+async def test_el_mensaje_de_rechazo_no_repite_el_numero_de_campo_forzado():
+    """El error es seguro: no debe confirmarle al atacante cual DE probo.
+
+    No basta con buscar "2" en toda la pagina -el formulario redibujado trae,
+    legitimamente, filas para el DE22, el DE41, etc-. Lo que importa es que el
+    mensaje de error EN SI, extraido del bloque `aviso error`, no mencione el
+    numero de campo forzado ni el nombre del parametro que lo transportaba.
+    """
+    import re
+
+    cliente, _ = _cliente()
+    async with cliente:
+        respuesta = await cliente.post(
+            "/escenarios",
+            data={**FORMULARIO_ESCENARIO, "tipo_esperado_2": "presente"},
+        )
+    mensaje = re.search(
+        r'<p class="aviso__detalle">(.*?)</p>', respuesta.text, re.DOTALL
+    ).group(1)
+    assert "tipo_esperado_2" not in mensaje
+    assert "2" not in mensaje
+    assert "no está permitido" in mensaje
+
+
+async def test_actualizar_un_escenario_con_de2_forzado_se_rechaza_y_no_lo_modifica():
+    """El mismo ataque contra "Guardar cambios": la peticion se rechaza y el
+    escenario existente queda exactamente como estaba.
+    """
+    cliente, composicion = _cliente()
+    async with cliente:
+        creado = await cliente.post("/escenarios", data=FORMULARIO_ESCENARIO)
+        escenario_id = _escenario_id_de(creado)
+        original = await composicion.administracion_escenarios.obtener(escenario_id)
+
+        respuesta = await cliente.post(
+            f"/escenarios/{escenario_id}",
+            data={
+                **FORMULARIO_ESCENARIO, "monto": "999.99",
+                "tipo_esperado_2": "presente",
+            },
+        )
+        tras_el_intento = await composicion.administracion_escenarios.obtener(escenario_id)
+
+    assert respuesta.status_code == 400
+    assert "no está permitido" in respuesta.text
+    assert tras_el_intento == original, "el escenario original no debe modificarse en nada"
+
+
+async def test_una_expectativa_valida_sigue_funcionando_tras_el_endurecimiento():
+    """El endurecimiento contra campos forzados no debe romper el camino feliz:
+    una expectativa sobre un campo realmente permitido (DE39) se sigue
+    guardando con normalidad.
+    """
+    cliente, composicion = _cliente()
+    async with cliente:
+        respuesta = await cliente.post(
+            "/escenarios",
+            data={
+                **FORMULARIO_ESCENARIO,
+                "estado_esperado": "aprobada",
+                "tipo_esperado_39": "igual",
+                "valor_esperado_39": "00",
+            },
+        )
+        assert respuesta.status_code == 303
+        nuevo_id = _escenario_id_de(respuesta)
+        escenario = await composicion.administracion_escenarios.obtener(nuevo_id)
+    assert escenario.expectativas is not None
+    assert escenario.expectativas.estado == EstadoEjecucion.APROBADA
+    assert dict(escenario.expectativas.campos)["39"].valor == "00"
+
+
+async def test_cargar_un_escenario_con_expectativas_prellena_el_formulario():
+    cliente, composicion = _cliente()
+    async with cliente:
+        respuesta = await cliente.post(
+            "/escenarios",
+            data={
+                **FORMULARIO_ESCENARIO,
+                "estado_esperado": "rechazada",
+                "tipo_esperado_39": "presente",
+            },
+        )
+        escenario_id = _escenario_id_de(respuesta)
+        html = (await cliente.get(f"/?escenario_id={escenario_id}")).text
+    assert 'name="estado_esperado"' in html
+    assert 'name="tipo_esperado_39"' in html
+
+
+async def test_ejecutar_directo_un_escenario_con_expectativas_muestra_pass():
+    cliente, composicion = _cliente(resultado=_resultado(
+        EstadoEjecucion.APROBADA, codigo="00",
+        evaluacion_estado="pass", evaluacion_json='{"version":1,"resultado":"pass","expectativas":{"estado":"aprobada","campos":{}},"discrepancias":[]}',
+    ))
+    async with cliente:
+        respuesta_crear = await cliente.post(
+            "/escenarios", data={**FORMULARIO_ESCENARIO, "estado_esperado": "aprobada"}
+        )
+        escenario_id = _escenario_id_de(respuesta_crear)
+        respuesta = await cliente.post(f"/escenarios/{escenario_id}/ejecutar")
+    assert respuesta.status_code == 200
+    assert "PASS" in respuesta.text
+    assert composicion._orquestador.ultimas_expectativas is not None
+    assert composicion._orquestador.ultimas_expectativas.estado == EstadoEjecucion.APROBADA
 
 
 async def test_no_hay_un_segundo_constructor_en_escenarios():

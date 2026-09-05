@@ -165,11 +165,17 @@ class OrquestadorFalso:
         #: (None, None) si la ejecucion no partio de ninguno.
         self.ultimo_escenario_id = None
         self.ultimo_escenario_nombre = None
+        #: Ultimas `Expectativas` recibidas (o None), para que las pruebas
+        #: verifiquen que `/compra` lee y reenvia lo que el formulario trae.
+        self.ultimas_expectativas = None
 
-    async def ejecutar_compra(self, datos, *, escenario_id=None, escenario_nombre=None):
+    async def ejecutar_compra(
+        self, datos, *, escenario_id=None, escenario_nombre=None, expectativas=None
+    ):
         self.ultimos_datos = datos
         self.ultimo_escenario_id = escenario_id
         self.ultimo_escenario_nombre = escenario_nombre
+        self.ultimas_expectativas = expectativas
         if self._error is not None:
             raise self._error
         return self._resultado
@@ -237,6 +243,7 @@ class ComposicionFalsa:
 def _resultado(
     estado, *, codigo=None, con_respuesta=True, motivos=(),
     escenario_id=None, escenario_nombre=None,
+    evaluacion_estado=None, evaluacion_json=None,
 ):
     from sibutestlab8583.application.serializacion import (
         a_json_respuesta,
@@ -271,6 +278,8 @@ def _resultado(
         latencia_ms=7,
         escenario_id=escenario_id,
         escenario_nombre=escenario_nombre,
+        evaluacion_estado=evaluacion_estado,
+        evaluacion_json=evaluacion_json,
         creada_en=MOMENTO,
     )
     return ResultadoCompra(
@@ -374,6 +383,52 @@ def test_un_fallo_de_conexion_no_se_presenta_como_rechazo():
     assert "No fue posible establecer conexión con el destino" in texto
     assert "Transacción rechazada" not in texto
     assert "Transacción aprobada" not in texto
+
+
+# --------------------------------------------------------- expectativas ---
+
+
+def test_sin_expectativas_el_resultado_no_muestra_pass_ni_fail():
+    """Ausencia de expectativa nunca es un PASS implicito."""
+    texto = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00")).post(
+        "/compra", data=FORMULARIO
+    ).text
+    assert "Sin expectativas" in texto
+    assert 'data-evaluacion="pass"' not in texto
+    assert 'data-evaluacion="fail"' not in texto
+
+
+def test_una_evaluacion_pass_se_muestra_en_el_resultado():
+    texto = _cliente(
+        resultado=_resultado(
+            EstadoEjecucion.APROBADA, codigo="00",
+            evaluacion_estado="pass",
+            evaluacion_json=(
+                '{"version":1,"resultado":"pass",'
+                '"expectativas":{"estado":"aprobada","campos":{}},"discrepancias":[]}'
+            ),
+        )
+    ).post("/compra", data=FORMULARIO).text
+    assert "PASS" in texto
+    assert 'data-evaluacion="pass"' in texto
+
+
+def test_una_evaluacion_fail_muestra_las_discrepancias():
+    texto = _cliente(
+        resultado=_resultado(
+            EstadoEjecucion.RECHAZADA, codigo="05",
+            evaluacion_estado="fail",
+            evaluacion_json=(
+                '{"version":1,"resultado":"fail",'
+                '"expectativas":{"estado":"aprobada","campos":{}},'
+                '"discrepancias":[{"criterio":"estado","campo":null,"tipo":null,'
+                '"esperado":"aprobada","recibido":"rechazada"}]}'
+            ),
+        )
+    ).post("/compra", data=FORMULARIO).text
+    assert "FAIL" in texto
+    assert 'data-evaluacion="fail"' in texto
+    assert "aprobada" in texto and "rechazada" in texto
     assert "Sin respuesta del destino" not in texto, "no debe confundirse con un timeout"
     assert "El intercambio se interrumpió" not in texto, "tampoco con una transmision"
 
@@ -499,6 +554,20 @@ def test_un_campo_protegido_en_el_post_bruto_se_ignora_sin_llegar_al_dominio():
     respuesta = cliente.post("/compra", data={**FORMULARIO, "campo_2": "9" * 16})
     assert respuesta.status_code == 200
     assert "2" not in composicion._orquestador.ultimos_datos.campos_manuales
+
+
+def test_forzar_una_expectativa_de_de2_en_compra_se_rechaza_con_400():
+    """`/compra` lee expectativas del mismo formulario bruto que `/escenarios`:
+    la misma manipulacion (un `tipo_esperado_2` a mano) debe rechazarse aqui
+    tambien, no solo en el alta de escenarios. La ejecucion no debe siquiera
+    llegar al orquestador.
+    """
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post("/compra", data={**FORMULARIO, "tipo_esperado_2": "presente"})
+    assert respuesta.status_code == 400
+    assert "no está permitido" in respuesta.text
+    assert composicion._orquestador.ultimos_datos is None
 
 
 # --------------------------------------------------------------- conexion ----

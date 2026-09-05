@@ -17,6 +17,8 @@ import pytest
 from sibutestlab8583.adapters.persistence.esquema import (
     COLUMNAS_AGREGADAS_DESTINOS,
     COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO,
+    COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION,
+    COLUMNAS_AGREGADAS_ESCENARIOS,
     COLUMNAS_AGREGADAS_TARJETAS,
     inicializar,
 )
@@ -95,6 +97,108 @@ async def test_una_base_nueva_no_necesita_migrar_columnas_de_escenario(base):
             conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO
         )
     assert agregadas == ()
+
+
+# --------------------------------- Bloque 3: expected vs actual (evaluacion) --
+
+
+def _crear_base_sin_columnas_de_evaluacion(ruta) -> None:
+    """Reproduce `ejecuciones`/`escenarios` tal como eran justo antes del
+    Bloque 3: con las columnas de escenario (Bloque 2), pero sin
+    `evaluacion_estado`/`evaluacion_json` en `ejecuciones` ni `expected_json`
+    en `escenarios`.
+    """
+    ddl_anterior = """
+    CREATE TABLE tarjetas_prueba (
+        card_id   TEXT PRIMARY KEY,
+        creada_en TEXT NOT NULL
+    );
+    CREATE TABLE escenarios (
+        escenario_id  TEXT PRIMARY KEY,
+        nombre        TEXT NOT NULL,
+        creado_en     TEXT NOT NULL
+    );
+    CREATE TABLE ejecuciones (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        creada_en       TEXT    NOT NULL,
+        card_id         TEXT    NOT NULL REFERENCES tarjetas_prueba(card_id),
+        mti_solicitud   TEXT    NOT NULL,
+        monto           TEXT    NOT NULL,
+        moneda          TEXT    NOT NULL,
+        stan            TEXT    NOT NULL,
+        estado          TEXT    NOT NULL,
+        escenario_id    TEXT,
+        escenario_nombre TEXT
+    );
+    """
+    with sqlite3.connect(ruta) as conexion:
+        conexion.executescript(ddl_anterior)
+        conexion.execute(
+            "INSERT INTO tarjetas_prueba (card_id, creada_en)"
+            " VALUES ('VIEJA-EVAL', '2026-01-01T00:00:00+00:00')"
+        )
+        conexion.execute(
+            "INSERT INTO escenarios (escenario_id, nombre, creado_en)"
+            " VALUES ('ESC-VIEJO', 'Escenario previo', '2026-01-01T00:00:00+00:00')"
+        )
+        conexion.execute(
+            "INSERT INTO ejecuciones"
+            " (creada_en, card_id, mti_solicitud, monto, moneda, stan, estado,"
+            "  escenario_id, escenario_nombre)"
+            " VALUES ('2026-01-01T00:00:00+00:00', 'VIEJA-EVAL', '0100', '10.00', '188',"
+            "         '000001', 'aprobada', 'ESC-VIEJO', 'Escenario previo')"
+        )
+
+
+async def test_una_base_anterior_sin_columnas_de_evaluacion_las_recibe_migrada(tmp_path):
+    ruta = tmp_path / "sin_evaluacion.db"
+    _crear_base_sin_columnas_de_evaluacion(ruta)
+
+    await inicializar(ruta, con_datos_demo=False)
+
+    with sqlite3.connect(ruta) as conexion:
+        conexion.row_factory = sqlite3.Row
+        columnas_ejecuciones = {f[1] for f in conexion.execute("PRAGMA table_info(ejecuciones)")}
+        columnas_escenarios = {f[1] for f in conexion.execute("PRAGMA table_info(escenarios)")}
+        fila = conexion.execute(
+            "SELECT * FROM ejecuciones WHERE card_id = 'VIEJA-EVAL'"
+        ).fetchone()
+
+    assert {"evaluacion_estado", "evaluacion_json"} <= columnas_ejecuciones
+    assert "expected_json" in columnas_escenarios
+    assert fila is not None, "la fila anterior se conserva"
+    assert fila["evaluacion_estado"] is None, "una fila migrada no inventa una evaluacion"
+    assert fila["escenario_nombre"] == "Escenario previo", "ninguna otra columna se modifica"
+
+
+async def test_la_migracion_de_columnas_de_evaluacion_es_idempotente(tmp_path):
+    ruta = tmp_path / "sin_evaluacion_repetida.db"
+    _crear_base_sin_columnas_de_evaluacion(ruta)
+
+    await inicializar(ruta, con_datos_demo=False)
+    await inicializar(ruta, con_datos_demo=False)  # segunda vez: no debe duplicar la columna
+
+    with sqlite3.connect(ruta) as conexion:
+        columnas_ejecuciones = [f[1] for f in conexion.execute("PRAGMA table_info(ejecuciones)")]
+        columnas_escenarios = [f[1] for f in conexion.execute("PRAGMA table_info(escenarios)")]
+    assert columnas_ejecuciones.count("evaluacion_estado") == 1
+    assert columnas_ejecuciones.count("evaluacion_json") == 1
+    assert columnas_escenarios.count("expected_json") == 1
+
+
+async def test_una_base_nueva_no_necesita_migrar_columnas_de_evaluacion(base):
+    """El DDL ya trae las columnas: `_migrar` sobre una base nueva no agrega nada."""
+    from sibutestlab8583.adapters.persistence.esquema import _migrar
+
+    async with aiosqlite.connect(base) as conexion:
+        agregadas_ejecuciones = await _migrar(
+            conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION
+        )
+        agregadas_escenarios = await _migrar(
+            conexion, "escenarios", COLUMNAS_AGREGADAS_ESCENARIOS
+        )
+    assert agregadas_ejecuciones == ()
+    assert agregadas_escenarios == ()
 
 
 def _crear_base_sin_columna_timeout(ruta) -> None:

@@ -30,6 +30,7 @@ from sibutestlab8583.application.escenarios import (
 )
 from sibutestlab8583.application.tarjetas import DatosNuevaTarjeta, ServicioTarjetas
 from sibutestlab8583.domain.datos_sinteticos import pan_sintetico
+from sibutestlab8583.domain.modelos import CAMPOS_SENSIBLES, EstadoEjecucion, ExpectativaCampo, Expectativas
 from sibutestlab8583.profiles.generico import (
     CODIGO_PROCESO_COMPRA,
     MODO_CAPTURA_DEMOSTRACION,
@@ -380,6 +381,106 @@ async def test_diagnosticar_detecta_conexion_desactivada(base):
     diagnostico = await servicio.diagnosticar(creado)
     assert not diagnostico.conexion_disponible
     assert diagnostico.bloqueado
+
+
+# --------------------------------------------------------- expectativas ---
+
+
+async def test_crear_con_expectativas_validas_las_persiste(base):
+    expectativas = Expectativas(
+        estado=EstadoEjecucion.APROBADA,
+        campos={"39": ExpectativaCampo(tipo="igual", valor="00")},
+    )
+    creado = await _servicio(base).crear(
+        DatosNuevoEscenario(
+            nombre="X", card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO, monto=Decimal("10.00"),
+            expectativas=expectativas,
+        )
+    )
+    assert creado.expectativas.estado == EstadoEjecucion.APROBADA
+    assert dict(creado.expectativas.campos)["39"].valor == "00"
+
+
+async def test_crear_con_expectativa_de_campo_sensible_se_rechaza(base):
+    campo_sensible = next(iter(CAMPOS_SENSIBLES))
+    expectativas = Expectativas(campos={campo_sensible: ExpectativaCampo(tipo="presente")})
+    with pytest.raises(ValueError):
+        await _servicio(base).crear(
+            DatosNuevoEscenario(
+                nombre="X", card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO,
+                monto=Decimal("10.00"), expectativas=expectativas,
+            )
+        )
+
+
+async def test_crear_sin_expectativas_deja_el_campo_en_none(base):
+    creado = await _servicio(base).crear(
+        DatosNuevoEscenario(
+            nombre="X", card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO, monto=Decimal("10.00")
+        )
+    )
+    assert creado.expectativas is None
+
+
+async def test_actualizar_reemplaza_las_expectativas_enteras_no_las_fusiona(base):
+    servicio = _servicio(base)
+    creado = await servicio.crear(
+        DatosNuevoEscenario(
+            nombre="X", card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO, monto=Decimal("10.00"),
+            expectativas=Expectativas(
+                estado=EstadoEjecucion.APROBADA,
+                campos={"39": ExpectativaCampo(tipo="igual", valor="00")},
+            ),
+        )
+    )
+    actualizado = await servicio.actualizar(
+        creado.escenario_id,
+        DatosEdicionEscenario(
+            nombre="X", card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO, monto=Decimal("10.00"),
+            expectativas=Expectativas(estado=EstadoEjecucion.RECHAZADA),
+        ),
+    )
+    assert actualizado.expectativas.estado == EstadoEjecucion.RECHAZADA
+    assert dict(actualizado.expectativas.campos) == {}
+
+
+async def test_actualizar_con_expectativa_de_campo_sensible_se_rechaza(base):
+    servicio = _servicio(base)
+    creado = await servicio.crear(
+        DatosNuevoEscenario(
+            nombre="X", card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO, monto=Decimal("10.00")
+        )
+    )
+    campo_sensible = next(iter(CAMPOS_SENSIBLES))
+    with pytest.raises(ValueError):
+        await servicio.actualizar(
+            creado.escenario_id,
+            DatosEdicionEscenario(
+                nombre="X", card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO,
+                monto=Decimal("10.00"),
+                expectativas=Expectativas(campos={campo_sensible: ExpectativaCampo(tipo="presente")}),
+            ),
+        )
+
+
+async def test_diagnosticar_detecta_un_campo_esperado_que_ya_no_esta_permitido(base):
+    servicio = _servicio(base)
+    campo_sensible = next(iter(CAMPOS_SENSIBLES))
+    creado = await servicio.crear(
+        DatosNuevoEscenario(
+            nombre="X", card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO, monto=Decimal("10.00"),
+            expectativas=Expectativas(estado=EstadoEjecucion.APROBADA),
+        )
+    )
+    # Se fuerza directamente en el objeto de dominio (bypass de la validacion
+    # de `crear`): simula una politica que se volvio mas estricta despues.
+    con_campo_ahora_prohibido = replace(
+        creado,
+        expectativas=Expectativas(campos={campo_sensible: ExpectativaCampo(tipo="presente")}),
+    )
+    diagnostico = await servicio.diagnosticar(con_campo_ahora_prohibido)
+    assert diagnostico.bloqueado
+    assert any(campo_sensible in problema for problema in diagnostico.incompatibilidades)
 
 
 async def test_diagnosticar_detecta_perfil_distinto(base):

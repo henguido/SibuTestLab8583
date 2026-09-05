@@ -7,6 +7,7 @@ hecho desde el dominio.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence
@@ -17,6 +18,7 @@ from ..application.serializacion import (
     MensajeSerializado,
 )
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
+from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
     EstadoEjecucion,
@@ -117,6 +119,47 @@ def filas_constructor(perfil, mti: str, descripciones: Mapping[str, str]) -> Seq
         )
         for numero in sorted(numeros, key=int)
     ]
+
+
+@dataclass(frozen=True)
+class FilaExpectativa:
+    """Una fila de la tabla de expectativas: un campo de la respuesta que se
+    puede verificar, y con que tipo/valor quedo configurado (si alguno).
+    """
+
+    numero: str
+    descripcion: str
+    tipo: str  # "" si no hay expectativa fijada para este campo
+    valor: str
+
+
+def filas_expectativas(
+    perfil, mti_respuesta: str, descripciones: Mapping[str, str], campos_fijados: Mapping[str, object]
+) -> Sequence[FilaExpectativa]:
+    """Las filas de la tabla de expectativas, gobernadas por
+    `campos_permitidos_expectativa` -nunca una lista fija-. `campos_fijados`
+    es `Expectativas.campos` (o un dict equivalente ya enviado en un POST):
+    si un numero no esta ahi, la fila se muestra sin tipo/valor.
+    """
+    permitidos = campos_permitidos_expectativa(perfil, mti_respuesta)
+    filas = []
+    for numero in sorted(permitidos, key=int):
+        fijado = campos_fijados.get(numero)
+        if fijado is None:
+            tipo, valor = "", ""
+        elif isinstance(fijado, Mapping):
+            tipo, valor = fijado.get("tipo", ""), fijado.get("valor") or ""
+        else:  # ExpectativaCampo
+            tipo, valor = fijado.tipo, fijado.valor or ""
+        filas.append(
+            FilaExpectativa(
+                numero=numero,
+                descripcion=descripciones.get(numero, f"Campo {numero}"),
+                tipo=tipo,
+                valor=valor,
+            )
+        )
+    return filas
 
 
 #: Un aviso por estado, uno por cada miembro de EstadoEjecucion. Los siete
@@ -276,6 +319,49 @@ def filas_de_solicitud(
     ]
 
 
+@dataclass(frozen=True)
+class EvaluacionMostrada:
+    """PASS/FAIL de un escenario, ya traducido a mensajes legibles.
+
+    Se arma a partir del snapshot (`Ejecucion.evaluacion_json`), nunca del
+    escenario en vivo: si el escenario se edito despues, esto sigue mostrando
+    exactamente lo que se evaluo en su momento.
+    """
+
+    estado: str  # "pass" | "fail"
+    discrepancias: Sequence[str]
+
+
+def _mensaje_de_discrepancia(discrepancia: Mapping, descripciones: Mapping[str, str]) -> str:
+    if discrepancia["criterio"] == "estado":
+        return (
+            f"Se esperaba el estado «{discrepancia['esperado']}» y se obtuvo "
+            f"«{discrepancia['recibido']}»."
+        )
+    campo = discrepancia["campo"]
+    nombre = descripciones.get(campo, f"Campo {campo}")
+    tipo = discrepancia["tipo"]
+    if tipo == "igual":
+        recibido = discrepancia["recibido"] or "(ausente)"
+        return f"Campo {campo} ({nombre}): se esperaba «{discrepancia['esperado']}» y llegó «{recibido}»."
+    if tipo == "presente":
+        return f"Campo {campo} ({nombre}): se esperaba que estuviera presente y no llegó."
+    return f"Campo {campo} ({nombre}): se esperaba que estuviera ausente y llegó «{discrepancia['recibido']}»."
+
+
+def evaluacion_de_ejecucion(ejecucion, descripciones: Mapping[str, str]) -> EvaluacionMostrada | None:
+    """`None` cuando el escenario no tenia expectativas -nunca "PASS" por
+    omision-. Lee el snapshot congelado, no vuelve a evaluar nada.
+    """
+    if ejecucion.evaluacion_estado is None or not ejecucion.evaluacion_json:
+        return None
+    datos = json.loads(ejecucion.evaluacion_json)
+    mensajes = [
+        _mensaje_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])
+    ]
+    return EvaluacionMostrada(estado=ejecucion.evaluacion_estado, discrepancias=tuple(mensajes))
+
+
 def contexto_de_resultado(
     resultado: ResultadoCompra, destino, descripciones: Mapping[str, str]
 ) -> dict:
@@ -295,6 +381,7 @@ def contexto_de_resultado(
         "filas_respuesta": (
             filas_de_respuesta(resultado.respuesta) if resultado.respuesta else []
         ),
+        "evaluacion": evaluacion_de_ejecucion(resultado.ejecucion, descripciones),
     }
 
 
@@ -348,6 +435,7 @@ def contexto_de_detalle(detalle, descripciones: Mapping[str, str]) -> dict:
         "desde_formato_anterior": ORIGEN_TEXTO
         in (detalle.solicitud.origen, detalle.respuesta.origen),
         "avisos_tecnicos": _avisos_tecnicos(detalle.solicitud, detalle.respuesta),
+        "evaluacion": evaluacion_de_ejecucion(ejecucion, descripciones),
     }
 
 

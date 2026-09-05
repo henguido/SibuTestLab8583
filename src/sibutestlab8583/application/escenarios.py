@@ -25,7 +25,8 @@ from decimal import Decimal
 from typing import Mapping, Sequence
 
 from ..domain.armado import incompatibilidades_escenario, valores_efectivos_editables
-from ..domain.modelos import MTI_COMPRA, Escenario
+from ..domain.expectativas import incompatibilidades_expectativas, validar_expectativas
+from ..domain.modelos import MTI_COMPRA, MTI_RESPUESTA_COMPRA, Escenario, Expectativas
 from ..domain.puertos import RepositorioDestinos, RepositorioEscenarios, RepositorioTarjetas
 
 #: Prefijo legible del id autogenerado; el sufijo aleatorio lo hace unico sin
@@ -73,6 +74,7 @@ class EscenarioAdministrado:
     conexion_id: str
     monto: Decimal
     campos_manuales: Mapping[str, str] = field(default_factory=dict)
+    expectativas: Expectativas | None = None
     activo: bool = True
 
 
@@ -83,6 +85,7 @@ class DatosNuevoEscenario:
     conexion_id: str
     monto: Decimal
     campos_manuales: Mapping[str, str] = field(default_factory=dict)
+    expectativas: Expectativas | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,7 @@ class DatosEdicionEscenario:
     conexion_id: str
     monto: Decimal
     campos_manuales: Mapping[str, str] = field(default_factory=dict)
+    expectativas: Expectativas | None = None
 
 
 def _validar_nombre(nombre: str) -> str:
@@ -151,6 +155,8 @@ class ServicioEscenarios:
             raise ValueError(f"No existe la tarjeta {datos.card_id!r}.")
         if await self._conexiones.obtener(datos.conexion_id) is None:
             raise ValueError(f"No existe la conexión {datos.conexion_id!r}.")
+        if datos.expectativas is not None:
+            validar_expectativas(datos.expectativas, self._perfil, MTI_RESPUESTA_COMPRA)
 
         efectivos = valores_efectivos_editables(datos.campos_manuales, self._perfil, self._mti)
         escenario = Escenario(
@@ -162,6 +168,7 @@ class ServicioEscenarios:
             conexion_id=datos.conexion_id,
             monto=datos.monto,
             campos_manuales=efectivos,
+            expectativas=datos.expectativas,
         )
         await self._escenarios.guardar(escenario)
         return _a_administrado(escenario)
@@ -178,9 +185,13 @@ class ServicioEscenarios:
             raise ValueError(f"No existe la tarjeta {datos.card_id!r}.")
         if await self._conexiones.obtener(datos.conexion_id) is None:
             raise ValueError(f"No existe la conexión {datos.conexion_id!r}.")
+        if datos.expectativas is not None:
+            validar_expectativas(datos.expectativas, self._perfil, MTI_RESPUESTA_COMPRA)
 
         # "Guardar cambios" vuelve a congelar los valores EFECTIVOS de hoy, no
-        # un parche sobre lo guardado antes: mismo criterio que crear().
+        # un parche sobre lo guardado antes: mismo criterio que crear(). Lo
+        # mismo aplica a las expectativas: se reemplazan enteras, no se
+        # fusionan con las anteriores.
         efectivos = valores_efectivos_editables(datos.campos_manuales, self._perfil, self._mti)
         actualizado = replace(
             actual,
@@ -189,6 +200,7 @@ class ServicioEscenarios:
             conexion_id=datos.conexion_id,
             monto=datos.monto,
             campos_manuales=efectivos,
+            expectativas=datos.expectativas,
             perfil=self._perfil.nombre,
         )
         await self._escenarios.guardar(actualizado)
@@ -235,6 +247,10 @@ class ServicioEscenarios:
             incompatibilidades = incompatibilidades_escenario(
                 escenario.campos_manuales, self._perfil, escenario.mti
             )
+            if escenario.expectativas is not None:
+                incompatibilidades += incompatibilidades_expectativas(
+                    escenario.expectativas, self._perfil, MTI_RESPUESTA_COMPRA
+                )
 
         return DiagnosticoEscenario(
             tarjeta_disponible=tarjeta is not None and tarjeta.activa,
@@ -253,5 +269,6 @@ def _a_administrado(escenario: Escenario) -> EscenarioAdministrado:
         conexion_id=escenario.conexion_id,
         monto=escenario.monto,
         campos_manuales=escenario.campos_manuales,
+        expectativas=escenario.expectativas,
         activo=escenario.activo,
     )

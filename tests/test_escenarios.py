@@ -16,7 +16,7 @@ from sibutestlab8583.adapters.persistence.esquema import (
     inicializar,
 )
 from sibutestlab8583.adapters.persistence.sqlite_repos import RepositorioEscenariosSQLite
-from sibutestlab8583.domain.modelos import Escenario
+from sibutestlab8583.domain.modelos import EstadoEjecucion, Escenario, ExpectativaCampo, Expectativas
 
 
 def _escenario(escenario_id: str, **overrides) -> Escenario:
@@ -120,6 +120,57 @@ async def test_campos_json_guarda_la_version_y_los_campos(base):
         ).fetchone()
     bruto = json.loads(fila["campos_json"])
     assert bruto == {"version": 1, "campos": {"49": "188"}}
+
+
+async def test_un_escenario_sin_expectativas_persiste_expected_json_nulo(base):
+    repo = RepositorioEscenariosSQLite(base)
+    await repo.guardar(_escenario("ESC-06"))
+
+    with sqlite3.connect(base) as conexion:
+        conexion.row_factory = sqlite3.Row
+        fila = conexion.execute(
+            "SELECT expected_json FROM escenarios WHERE escenario_id = ?", ("ESC-06",)
+        ).fetchone()
+    assert fila["expected_json"] is None
+
+    recuperado = await repo.obtener("ESC-06")
+    assert recuperado.expectativas is None
+
+
+async def test_un_escenario_con_expectativas_persiste_y_recupera_igual(base):
+    expectativas = Expectativas(
+        estado=EstadoEjecucion.APROBADA,
+        campos={"39": ExpectativaCampo(tipo="igual", valor="00"), "41": ExpectativaCampo(tipo="presente")},
+    )
+    repo = RepositorioEscenariosSQLite(base)
+    await repo.guardar(_escenario("ESC-07", expectativas=expectativas))
+
+    recuperado = await repo.obtener("ESC-07")
+    assert recuperado.expectativas.estado == EstadoEjecucion.APROBADA
+    assert dict(recuperado.expectativas.campos) == dict(expectativas.campos)
+
+
+async def test_expected_json_guarda_la_version_y_el_formato_documentado(base):
+    import json
+
+    expectativas = Expectativas(
+        estado=EstadoEjecucion.RECHAZADA,
+        campos={"39": ExpectativaCampo(tipo="igual", valor="05")},
+    )
+    repo = RepositorioEscenariosSQLite(base)
+    await repo.guardar(_escenario("ESC-08", expectativas=expectativas))
+
+    with sqlite3.connect(base) as conexion:
+        conexion.row_factory = sqlite3.Row
+        fila = conexion.execute(
+            "SELECT expected_json FROM escenarios WHERE escenario_id = ?", ("ESC-08",)
+        ).fetchone()
+    bruto = json.loads(fila["expected_json"])
+    assert bruto == {
+        "version": 1,
+        "estado": "rechazada",
+        "campos": {"39": {"tipo": "igual", "valor": "05"}},
+    }
 
 
 async def test_inicializar_es_idempotente_sobre_escenarios(tmp_path):

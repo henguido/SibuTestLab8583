@@ -170,6 +170,70 @@
   </section>
 
   <section class="panel">
+    <details class="cambiar-conexion" {{ 'open' if estado_esperado_actual or filas_expectativas|selectattr('tipo')|list }}>
+      <summary>Expectativas (opcional)</summary>
+      <div class="panel__cuerpo">
+        <p class="grupo__sub">
+          Defina qué resultado espera de esta transacción. Al ejecutar, SibuTestLab compara lo
+          recibido contra lo indicado aquí e informa PASS o FAIL. Dejar todo en blanco significa
+          sin expectativas: la ejecución no se evalúa.
+        </p>
+        <div class="campo">
+          <label class="campo__rotulo" for="estado_esperado">Estado esperado</label>
+          <select id="estado_esperado" name="estado_esperado">
+            <option value="" {{ 'selected' if not estado_esperado_actual }}>No especificar</option>
+            {% for estado_valor in estados_ejecucion %}
+            <option value="{{ estado_valor.value }}" {{ 'selected' if estado_valor.value == estado_esperado_actual }}>
+              {{ avisos[estado_valor].etiqueta }}
+            </option>
+            {% endfor %}
+          </select>
+          <p class="campo__pista">
+            Compara contra el resultado semántico de la transacción (RN-1/RN-3), no contra un
+            valor literal del campo 39.
+          </p>
+        </div>
+        <div class="desplazable" tabindex="0" role="region" aria-label="Campos con expectativa">
+          <table class="tabla">
+            <thead>
+              <tr>
+                <th>DE</th>
+                <th>Nombre</th>
+                <th>Tipo de expectativa</th>
+                <th>Valor esperado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for fila in filas_expectativas %}
+              <tr>
+                <td><span class="campo-iso">{{ fila.numero }}</span></td>
+                <td>{{ fila.descripcion }}</td>
+                <td>
+                  <select name="tipo_esperado_{{ fila.numero }}">
+                    <option value="" {{ 'selected' if not fila.tipo }}>No especificar</option>
+                    <option value="igual" {{ 'selected' if fila.tipo == 'igual' }}>Igual a</option>
+                    <option value="presente" {{ 'selected' if fila.tipo == 'presente' }}>Presente</option>
+                    <option value="ausente" {{ 'selected' if fila.tipo == 'ausente' }}>Ausente</option>
+                  </select>
+                </td>
+                <td>
+                  <input type="text" name="valor_esperado_{{ fila.numero }}" class="campo-tabla"
+                         autocomplete="off" value="{{ fila.valor or '' }}">
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="campo__pista">
+          El valor esperado solo se usa cuando el tipo es "Igual a"; se ignora para "Presente" y
+          "Ausente".
+        </p>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel">
     <div class="panel__cabecera">
       <h2 class="panel__titulo">Guardar como escenario</h2>
     </div>
