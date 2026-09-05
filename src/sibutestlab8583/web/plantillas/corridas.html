@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block titulo %}Corridas · SibuTestLab8583{% endblock %}
+{% set etiquetas_resultado_global = {
+  'pass': 'PASS', 'fail': 'FAIL', 'error': 'ERROR',
+  'incompleta': 'Incompleta', 'sin_expectativas': 'Sin expectativas',
+} %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>Corridas de suite</h1>
+  <p class="encabezado__sub">
+    Cada corrida es una ejecución histórica de una suite: editar la suite o sus escenarios
+    después no altera una corrida ya registrada.
+  </p>
+</div>
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Corridas recientes</h2>
+    <span class="panel__nota">
+      {{ filas|length }} registro{{ 's' if filas|length != 1 }}
+    </span>
+  </div>
+  {% if filas %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Corridas recientes">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Fecha y hora (UTC)</th>
+          <th>Suite</th>
+          <th>Resultado</th>
+          <th class="num">Total</th>
+          <th class="num">PASS</th>
+          <th class="num">FAIL</th>
+          <th class="num">ERROR</th>
+          <th class="num">Sin expect.</th>
+          <th>Duración</th>
+          <th>Detalle</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr data-resultado-global="{{ fila.resultado_global or '' }}">
+          <td class="mono">{{ fila.iniciada_en }}</td>
+          <td>{{ fila.suite_nombre }}</td>
+          <td>
+            {% if fila.resultado_global %}
+            <span class="chip chip--{{ 'activa' if fila.resultado_global == 'pass' else 'inactiva' }}">
+              {{ etiquetas_resultado_global.get(fila.resultado_global, fila.resultado_global) }}
+            </span>
+            {% else %}
+            <span class="vacio">en curso</span>
+            {% endif %}
+          </td>
+          <td class="num">{{ fila.total }}</td>
+          <td class="num">{{ fila.cantidad_pass }}</td>
+          <td class="num">{{ fila.cantidad_fail }}</td>
+          <td class="num">{{ fila.cantidad_error }}</td>
+          <td class="num">{{ fila.cantidad_sin_expectativas }}</td>
+          <td class="mono">{{ fila.duracion }}</td>
+          <td><a href="/suites/corridas/{{ fila.corrida_id }}">Ver detalle</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="panel__cuerpo">
+    <p class="vacio">Todavía no hay corridas registradas. Ejecute una suite para ver el registro.</p>
+  </div>
+  {% endif %}
+</section>
+
+<a class="volver" href="/suites">&larr; Suites</a>
+{% endblock %}

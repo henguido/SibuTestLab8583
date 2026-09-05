@@ -739,3 +739,84 @@ async def test_compatibilidad_con_esquema_anterior_a_las_columnas_de_laboratorio
             "SELECT COUNT(*) FROM ejecuciones WHERE card_id = 'VIEJA-LAB'"
         ).fetchone()[0] == 1
         assert conexion.execute("SELECT COUNT(*) FROM destinos").fetchone()[0] == 2
+
+
+# --------------------------------------- Bloque 4: tablas nuevas de suites ----
+
+
+def _crear_base_anterior_a_suites(ruta) -> None:
+    """Reproduce el esquema completo de justo antes del Bloque 4: con todo lo
+    de Bloques 1-3, pero sin ninguna de las 4 tablas de suites/corridas.
+    """
+    ddl_anterior = """
+    CREATE TABLE tarjetas_prueba (
+        card_id   TEXT PRIMARY KEY,
+        creada_en TEXT NOT NULL
+    );
+    CREATE TABLE destinos (
+        destino_id TEXT PRIMARY KEY,
+        nombre     TEXT NOT NULL,
+        host       TEXT NOT NULL,
+        puerto     INTEGER NOT NULL,
+        activo     INTEGER NOT NULL DEFAULT 1,
+        timeout    REAL NOT NULL DEFAULT 10.0,
+        creado_en  TEXT NOT NULL
+    );
+    CREATE TABLE escenarios (
+        escenario_id TEXT PRIMARY KEY,
+        nombre       TEXT NOT NULL,
+        creado_en    TEXT NOT NULL,
+        actualizado_en TEXT NOT NULL
+    );
+    CREATE TABLE ejecuciones (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        creada_en TEXT NOT NULL,
+        card_id   TEXT NOT NULL REFERENCES tarjetas_prueba(card_id),
+        mti_solicitud TEXT NOT NULL,
+        monto     TEXT NOT NULL,
+        moneda    TEXT NOT NULL,
+        stan      TEXT NOT NULL,
+        estado    TEXT NOT NULL
+    );
+    """
+    with sqlite3.connect(ruta) as conexion:
+        conexion.executescript(ddl_anterior)
+        conexion.execute(
+            "INSERT INTO tarjetas_prueba (card_id, creada_en)"
+            " VALUES ('VIEJA-SUITE', '2026-01-01T00:00:00+00:00')"
+        )
+
+
+async def test_una_base_anterior_a_suites_recibe_las_cuatro_tablas_nuevas(tmp_path):
+    ruta = tmp_path / "sin_suites.db"
+    _crear_base_anterior_a_suites(ruta)
+
+    await inicializar(ruta, con_datos_demo=False)
+
+    with sqlite3.connect(ruta) as conexion:
+        tablas = {
+            f[0] for f in conexion.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert {"suites", "suite_escenarios", "corridas_suite", "corrida_suite_items"} <= tablas
+
+    # La fila anterior (de una tabla que SI existia) se conserva intacta.
+    with sqlite3.connect(ruta) as conexion:
+        conexion.row_factory = sqlite3.Row
+        fila = conexion.execute(
+            "SELECT * FROM tarjetas_prueba WHERE card_id = 'VIEJA-SUITE'"
+        ).fetchone()
+    assert fila is not None
+
+
+async def test_la_migracion_de_tablas_de_suites_es_idempotente(tmp_path):
+    ruta = tmp_path / "sin_suites_repetida.db"
+    _crear_base_anterior_a_suites(ruta)
+
+    await inicializar(ruta, con_datos_demo=False)
+    await inicializar(ruta, con_datos_demo=False)  # segunda vez: no debe fallar
+
+    with sqlite3.connect(ruta) as conexion:
+        tablas = {
+            f[0] for f in conexion.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert {"suites", "suite_escenarios", "corridas_suite", "corrida_suite_items"} <= tablas

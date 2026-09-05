@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -127,10 +128,20 @@ class RepositorioDestinosFalso:
 
 
 class RepositorioEscenariosFalso:
-    """Doble en memoria de `RepositorioEscenarios`, mismo patron que las tarjetas."""
+    """Doble en memoria de `RepositorioEscenarios`, mismo patron que las tarjetas.
 
-    def __init__(self, escenarios=()):
+    `ruta_espejo`, si se pasa, es la base SQLite real que usan las suites de
+    este mismo archivo (`ComposicionFalsa`): esa base SI aplica la FK de
+    `suite_escenarios.escenario_id -> escenarios.escenario_id`, asi que cada
+    escenario que se guarda aqui (en memoria) se refleja tambien alli, con
+    una fila minima -mismo criterio que un espejo de solo lo indispensable
+    para que la restriccion de integridad no falle en un doble que nunca
+    pretendio ser la base real de escenarios.
+    """
+
+    def __init__(self, escenarios=(), *, ruta_espejo=None):
         self._escenarios = {e.escenario_id: e for e in escenarios}
+        self._ruta_espejo = ruta_espejo
 
     async def obtener(self, escenario_id):
         return self._escenarios.get(escenario_id)
@@ -140,6 +151,30 @@ class RepositorioEscenariosFalso:
 
     async def guardar(self, escenario):
         self._escenarios[escenario.escenario_id] = escenario
+        if self._ruta_espejo is not None:
+            self._reflejar(escenario)
+
+    def _reflejar(self, escenario) -> None:
+        import json
+        import sqlite3
+
+        with sqlite3.connect(self._ruta_espejo) as conexion:
+            conexion.execute(
+                "INSERT INTO escenarios"
+                " (escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
+                "  campos_json, expected_json, activo, creado_en, actualizado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(escenario_id) DO UPDATE SET"
+                "   nombre = excluded.nombre, activo = excluded.activo",
+                (
+                    escenario.escenario_id, escenario.nombre, escenario.perfil, escenario.mti,
+                    escenario.card_id, escenario.conexion_id, str(escenario.monto),
+                    json.dumps({"version": 1, "campos": dict(escenario.campos_manuales)}),
+                    None, int(escenario.activo),
+                    escenario.creado_en.isoformat(), escenario.actualizado_en.isoformat(),
+                ),
+            )
+            conexion.commit()
 
 
 #: Conexion de demostracion para los dobles de la capa web, mismo identificador
@@ -224,11 +259,52 @@ class ComposicionFalsa:
         self.administracion_conexiones = ServicioConexiones(
             self._repositorio_destinos, verificador_conexion
         )
+
+        from sibutestlab8583.adapters.persistence.sqlite_repos import (
+            RepositorioCorridasSuiteSQLite,
+            RepositorioSuitesSQLite,
+        )
+        from sibutestlab8583.application.corredor_suites import CorredorDeSuites
+        from sibutestlab8583.application.suites import ServicioSuites
+
+        # Las suites usan SQLite real -no hay un doble en memoria para ellas-
+        # porque su repositorio necesita una base real (tablas + FKs) y este
+        # archivo ya construye `ComposicionFalsa` sin ninguna: se abre una
+        # base temporal propia, invisible para el resto de las pruebas de
+        # este archivo, que no la tocan. El DDL se aplica sincronicamente
+        # (sqlite3, no aiosqlite) porque `__init__` no es async. Se crea ANTES
+        # que `RepositorioEscenariosFalso` para poder pasarle su ruta como
+        # espejo: la FK real de `suite_escenarios` exige que el escenario
+        # exista tambien en la tabla `escenarios` de esta base.
+        import sqlite3
+        import tempfile
+
+        from sibutestlab8583.adapters.persistence.esquema import DDL
+
+        self._ruta_suites = Path(tempfile.mkstemp(suffix=".db")[1])
+        with sqlite3.connect(self._ruta_suites) as conexion:
+            conexion.executescript(DDL)
+
         self.administracion_escenarios = ServicioEscenarios(
-            RepositorioEscenariosFalso(escenarios if escenarios is not None else []),
+            RepositorioEscenariosFalso(
+                escenarios if escenarios is not None else [], ruta_espejo=self._ruta_suites
+            ),
             self._repositorio_tarjetas,
             self._repositorio_destinos,
             PERFIL_GENERICO,
+        )
+
+        self._repositorio_suites = RepositorioSuitesSQLite(self._ruta_suites)
+        self._repositorio_corridas_suite = RepositorioCorridasSuiteSQLite(self._ruta_suites)
+        self.administracion_suites = ServicioSuites(
+            self._repositorio_suites, self.administracion_escenarios._escenarios
+        )
+        self.corridas_suite = self._repositorio_corridas_suite
+        self.corredor_suites = CorredorDeSuites(
+            self.administracion_suites,
+            self.administracion_escenarios,
+            self._repositorio_corridas_suite,
+            self.ejecutor_escenarios,
         )
 
     async def orquestador(self, destino, *, tiempo_limite=None):
@@ -238,6 +314,16 @@ class ComposicionFalsa:
         self.ultimo_destino = destino
         self.ultimo_tiempo_limite = tiempo_limite
         return self._orquestador
+
+    @property
+    def ejecutor_escenarios(self):
+        from sibutestlab8583.application.ejecutor_escenarios import EjecutorDeEscenarios
+
+        return EjecutorDeEscenarios(
+            self.administracion_escenarios,
+            self.administracion_conexiones,
+            lambda destino, tiempo_limite: self.orquestador(destino, tiempo_limite=tiempo_limite),
+        )
 
 
 def _resultado(

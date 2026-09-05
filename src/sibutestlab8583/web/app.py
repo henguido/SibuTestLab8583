@@ -30,12 +30,15 @@ from ..application.conexiones import (
     DatosEdicionConexion,
     DatosNuevaConexion,
 )
+from ..application.corredor_suites import SuiteNoEjecutable
+from ..application.ejecutor_escenarios import EscenarioNoEjecutable
 from ..application.escenarios import (
     DatosEdicionEscenario,
     DatosNuevoEscenario,
     EscenarioNoEncontrado,
 )
 from ..application.orquestador import TarjetaDesconocida
+from ..application.suites import DatosEdicionSuite, DatosNuevaSuite, SuiteNoEncontrada
 from ..application.tarjetas import (
     DatosEdicionTarjeta,
     DatosNuevaTarjeta,
@@ -860,29 +863,14 @@ async def escenario_ejecutar(
     mismo diagnostico que "cargar" ya calcula (`_formulario`), reutilizado
     aqui en vez de duplicado.
     """
-    escenario = await composicion.administracion_escenarios.obtener(escenario_id)
-    if escenario is None:
-        return _escenario_no_encontrado(request)
-
-    if not escenario.activo:
-        return await _formulario(request, composicion, escenario_id=escenario_id, estado_http=400)
-
-    diagnostico = await composicion.administracion_escenarios.diagnosticar(escenario)
-    if diagnostico.bloqueado:
-        return await _formulario(request, composicion, escenario_id=escenario_id, estado_http=400)
-
-    conexion = await composicion.administracion_conexiones.obtener_activa(escenario.conexion_id)
-    destino = DestinoTcp(host=conexion.host, puerto=conexion.puerto)
-    datos = DatosCompra(
-        card_id=escenario.card_id, monto=escenario.monto, campos_manuales=escenario.campos_manuales
-    )
     try:
-        orquestador = await composicion.orquestador(destino, tiempo_limite=conexion.timeout)
-        resultado = await orquestador.ejecutar_compra(
-            datos, escenario_id=escenario.escenario_id, escenario_nombre=escenario.nombre,
-            expectativas=escenario.expectativas,
-        )
+        resultado = await composicion.ejecutor_escenarios.ejecutar(escenario_id)
+    except EscenarioNoEncontrado:
+        return _escenario_no_encontrado(request)
+    except EscenarioNoEjecutable:
+        return await _formulario(request, composicion, escenario_id=escenario_id, estado_http=400)
     except TarjetaDesconocida:
+        escenario = await composicion.administracion_escenarios.obtener(escenario_id)
         return await _formulario(
             request, composicion, escenario_id=escenario_id,
             error=f"No existe la tarjeta {escenario.card_id!r} en el catálogo, o está inactiva.",
@@ -894,6 +882,12 @@ async def escenario_ejecutar(
             aviso=presentacion.aviso_de_error(error),
         )
 
+    # El destino que se muestra aqui es el SOLICITADO -de la conexion elegida-,
+    # no el persistido: mismo criterio que ya distingue el resultado inmediato
+    # del detalle historico (ver presentacion.resumen).
+    escenario = await composicion.administracion_escenarios.obtener(escenario_id)
+    conexion = await composicion.administracion_conexiones.obtener_activa(escenario.conexion_id)
+    destino = DestinoTcp(host=conexion.host, puerto=conexion.puerto)
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="resultado.html",
@@ -927,6 +921,305 @@ def _escenario_no_encontrado(request: Request):
             "detalle": "El escenario solicitado no existe o ya no está disponible.",
             "ruta_vuelta": "/escenarios",
             "texto_vuelta": "Volver a escenarios",
+        },
+        status_code=404,
+    )
+
+
+# ============================================================== SUITES =====
+#
+# Bloque 4: agrupaciones reutilizables de escenarios, con ejecucion secuencial
+# y agregado PASS/FAIL/ERROR/INCOMPLETA/SIN_EXPECTATIVAS. `suite_ejecutar`
+# delega enteramente en `composicion.corredor_suites`, que a su vez reutiliza
+# `EjecutorDeEscenarios` -la misma capacidad que ya usa "Ejecutar" en la
+# pantalla de escenarios-: no hay una segunda implementacion de RN-1..RN-4 ni
+# de Expected vs Actual en esta seccion.
+
+
+@enrutador.get("/suites", response_class=HTMLResponse)
+async def suites_lista(
+    request: Request,
+    buscar: str = Query(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="suites.html",
+        context={
+            "seccion": "suites",
+            "suites": await composicion.administracion_suites.listar(buscar=buscar),
+            "buscar": buscar,
+        },
+    )
+
+
+@enrutador.get("/suites/nueva", response_class=HTMLResponse)
+async def suite_nueva_formulario(
+    request: Request, composicion: Composicion = Depends(obtener_composicion)
+):
+    return await _formulario_suite(request, composicion)
+
+
+@enrutador.get("/suites/{suite_id}/editar", response_class=HTMLResponse)
+async def suite_editar_formulario(
+    request: Request, suite_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    suite = await composicion.administracion_suites.obtener(suite_id)
+    if suite is None:
+        return _suite_no_encontrada(request)
+    return await _formulario_suite(request, composicion, suite=suite)
+
+
+@enrutador.post("/suites", response_class=HTMLResponse)
+async def suite_crear(
+    request: Request,
+    nombre: str = Form(""),
+    descripcion: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """Crea una suite. `suite_id` es autogenerado y opaco -el QA solo escribe
+    nombre y descripcion, igual criterio que ya aplica `escenario_id`.
+    """
+    formulario_bruto = await request.form()
+    catalogo = await composicion.administracion_escenarios.listar()
+    try:
+        escenarios = _leer_escenarios_de_suite(formulario_bruto, catalogo)
+        creada = await composicion.administracion_suites.crear(
+            DatosNuevaSuite(nombre=nombre, descripcion=descripcion, escenarios=escenarios)
+        )
+    except ValueError as error:
+        return await _formulario_suite(
+            request, composicion, error=str(error),
+            enviado={"nombre": nombre, "descripcion": descripcion}, estado_http=400,
+        )
+    return RedirectResponse(f"/suites/{creada.suite_id}/editar", status_code=303)
+
+
+@enrutador.post("/suites/{suite_id}", response_class=HTMLResponse)
+async def suite_actualizar(
+    request: Request,
+    suite_id: str,
+    nombre: str = Form(""),
+    descripcion: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """"Guardar cambios": reemplaza entera la membresia -no la fusiona con la
+    anterior-, mismo criterio que ya aplica `escenario_actualizar`.
+    """
+    formulario_bruto = await request.form()
+    catalogo = await composicion.administracion_escenarios.listar()
+    try:
+        escenarios = _leer_escenarios_de_suite(formulario_bruto, catalogo)
+        await composicion.administracion_suites.actualizar(
+            suite_id,
+            DatosEdicionSuite(nombre=nombre, descripcion=descripcion, escenarios=escenarios),
+        )
+    except SuiteNoEncontrada:
+        return _suite_no_encontrada(request)
+    except ValueError as error:
+        return await _formulario_suite(
+            request, composicion, suite_id=suite_id, error=str(error),
+            enviado={"nombre": nombre, "descripcion": descripcion}, estado_http=400,
+        )
+    return RedirectResponse(f"/suites/{suite_id}/editar", status_code=303)
+
+
+@enrutador.post("/suites/{suite_id}/estado", response_class=HTMLResponse)
+async def suite_estado(
+    request: Request,
+    suite_id: str,
+    activa: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    try:
+        activa_bool = presentacion.validar_activa(activa)
+    except ValueError as error:
+        return await _suites_con_error(request, composicion, str(error))
+    try:
+        await composicion.administracion_suites.cambiar_estado(suite_id, activa=activa_bool)
+    except SuiteNoEncontrada:
+        return _suite_no_encontrada(request)
+    return RedirectResponse("/suites", status_code=303)
+
+
+@enrutador.post("/suites/{suite_id}/duplicar", response_class=HTMLResponse)
+async def suite_duplicar(
+    request: Request, suite_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    try:
+        copia = await composicion.administracion_suites.duplicar(suite_id)
+    except SuiteNoEncontrada:
+        return _suite_no_encontrada(request)
+    return RedirectResponse(f"/suites/{copia.suite_id}/editar", status_code=303)
+
+
+@enrutador.post("/suites/{suite_id}/ejecutar", response_class=HTMLResponse)
+async def suite_ejecutar(
+    request: Request, suite_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    """Corre la suite completa, secuencialmente, en esta misma peticion -sin
+    progreso en vivo: limitacion consciente de este bloque, ver diseno-.
+    """
+    try:
+        corrida = await composicion.corredor_suites.ejecutar(suite_id)
+    except SuiteNoEjecutable as error:
+        return await _suites_con_error(request, composicion, str(error))
+    return RedirectResponse(f"/suites/corridas/{corrida.corrida_id}", status_code=303)
+
+
+@enrutador.get("/suites/corridas", response_class=HTMLResponse)
+async def corridas_lista(
+    request: Request, composicion: Composicion = Depends(obtener_composicion)
+):
+    corridas = await composicion.corridas_suite.listar()
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="corridas.html",
+        context={
+            "seccion": "suites",
+            "filas": [presentacion.fila_de_corrida(c) for c in corridas],
+        },
+    )
+
+
+@enrutador.get("/suites/corridas/{corrida_id}", response_class=HTMLResponse)
+async def corrida_detalle(
+    request: Request, corrida_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    """`corrida_id` llega como `str`, no `int`: mismo motivo que
+    `detalle_ejecucion` -controlar el formato del 404 en vez del 422 de
+    FastAPI para un identificador que no es numerico.
+    """
+    try:
+        numero = int(corrida_id)
+    except ValueError:
+        return _corrida_no_encontrada(request)
+
+    corrida = await composicion.corridas_suite.obtener(numero)
+    if corrida is None:
+        return _corrida_no_encontrada(request)
+
+    items = await composicion.corridas_suite.obtener_items(numero)
+    fila_corrida = presentacion.fila_de_corrida(corrida)
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="corrida_detalle.html",
+        context={
+            "seccion": "suites",
+            "corrida": fila_corrida,
+            "filas_items": presentacion.filas_de_corrida(items, composicion.descripciones_de_campos),
+            "aviso_resultado": presentacion.AVISOS_RESULTADO_GLOBAL_SUITE.get(
+                fila_corrida.resultado_global
+            ),
+        },
+    )
+
+
+async def _formulario_suite(
+    request: Request,
+    composicion: Composicion,
+    *,
+    suite=None,
+    suite_id: str | None = None,
+    error: str | None = None,
+    enviado: dict | None = None,
+    estado_http: int = 200,
+):
+    enviado = enviado or {}
+    nombre = enviado.get("nombre", suite.nombre if suite else "")
+    descripcion = enviado.get("descripcion", suite.descripcion if suite else "")
+    escenarios_incluidos = suite.escenarios if suite else ()
+    catalogo = await composicion.administracion_escenarios.listar()
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="suite_form.html",
+        context={
+            "seccion": "suites",
+            "suite_actual": suite,
+            "suite_id": suite_id or (suite.suite_id if suite else None),
+            "nombre": nombre,
+            "descripcion": descripcion,
+            "error": error,
+            "filas_seleccion": presentacion.filas_seleccion_escenarios(
+                catalogo, escenarios_incluidos
+            ),
+        },
+        status_code=estado_http,
+    )
+
+
+def _leer_escenarios_de_suite(formulario_bruto, catalogo) -> tuple[str, ...]:
+    """Lee `incluir_{id}`/`orden_{id}` del formulario, solo para los
+    `escenario_id` que el CATALOGO REAL declara -mismo principio de
+    seguridad que `_leer_expectativas`: un `incluir_{id}` para un escenario
+    que no esta en el catalogo real nunca se mira, asi que no hace falta
+    rechazarlo explicitamente: no hay forma de que se cuele-.
+
+    El orden debe ser un entero positivo y distinto por cada escenario
+    incluido; cualquier otra cosa es un 400 explicado, nunca una
+    reinterpretacion silenciosa (por ejemplo, ordenar por el orden en que
+    llegaron los campos del formulario).
+    """
+    seleccionados: list[tuple[int, str]] = []
+    for escenario in catalogo:
+        if not (formulario_bruto.get(f"incluir_{escenario.escenario_id}") or ""):
+            continue
+        orden_bruto = (formulario_bruto.get(f"orden_{escenario.escenario_id}", "") or "").strip()
+        try:
+            orden = int(orden_bruto)
+        except ValueError:
+            raise ValueError(f"El orden de «{escenario.nombre}» debe ser un número entero.")
+        if orden <= 0:
+            raise ValueError(f"El orden de «{escenario.nombre}» debe ser mayor que cero.")
+        seleccionados.append((orden, escenario.escenario_id))
+
+    ordenes = [orden for orden, _ in seleccionados]
+    if len(ordenes) != len(set(ordenes)):
+        raise ValueError("Dos escenarios no pueden compartir el mismo número de orden.")
+
+    seleccionados.sort(key=lambda par: par[0])
+    return tuple(escenario_id for _, escenario_id in seleccionados)
+
+
+async def _suites_con_error(request: Request, composicion: Composicion, error: str):
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="suites.html",
+        context={
+            "seccion": "suites",
+            "suites": await composicion.administracion_suites.listar(),
+            "buscar": "",
+            "error": error,
+        },
+        status_code=400,
+    )
+
+
+def _suite_no_encontrada(request: Request):
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="no_encontrado.html",
+        context={
+            "seccion": "suites",
+            "titulo": "Suite no encontrada",
+            "detalle": "La suite solicitada no existe o ya no está disponible.",
+            "ruta_vuelta": "/suites",
+            "texto_vuelta": "Volver a suites",
+        },
+        status_code=404,
+    )
+
+
+def _corrida_no_encontrada(request: Request):
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="no_encontrado.html",
+        context={
+            "seccion": "suites",
+            "titulo": "Corrida no encontrada",
+            "detalle": "La corrida solicitada no existe o ya no está disponible.",
+            "ruta_vuelta": "/suites/corridas",
+            "texto_vuelta": "Volver a corridas",
         },
         status_code=404,
     )

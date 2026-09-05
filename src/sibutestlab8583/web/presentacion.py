@@ -67,6 +67,7 @@ class Seccion:
 SECCIONES: tuple[Seccion, ...] = (
     Seccion("compra", "/", "Nueva transacción"),
     Seccion("escenarios", "/escenarios", "Escenarios"),
+    Seccion("suites", "/suites", "Suites"),
     Seccion("historial", "/historial", "Historial"),
     Seccion("configuracion", "/configuracion", "Configuración"),
 )
@@ -466,3 +467,158 @@ def filas_de_respuesta(mensaje: MensajeInterpretado) -> Sequence[FilaIsoscopio]:
         )
         for _, campo in sorted(mensaje.campos.items(), key=lambda par: int(par[0]))
     ]
+
+
+# --------------------------------------------------------- Bloque 4: suites --
+
+
+@dataclass(frozen=True)
+class FilaSeleccionEscenario:
+    """Una fila del constructor de suites: un escenario del catalogo, con si
+    esta incluido en ESTA suite y en que orden -vacio si no esta incluido-.
+    """
+
+    escenario_id: str
+    nombre: str
+    activo: bool
+    incluido: bool
+    orden: str
+
+
+def filas_seleccion_escenarios(
+    catalogo: Sequence, escenarios_incluidos: Sequence[str]
+) -> Sequence[FilaSeleccionEscenario]:
+    """Todos los escenarios del catalogo, marcando cuales ya estan en la suite
+    y en que orden -para que el constructor pueda mostrar la tabla completa,
+    no solo los ya elegidos, igual criterio que `filas_expectativas`.
+    """
+    posicion = {escenario_id: i + 1 for i, escenario_id in enumerate(escenarios_incluidos)}
+    return [
+        FilaSeleccionEscenario(
+            escenario_id=escenario.escenario_id,
+            nombre=escenario.nombre,
+            activo=escenario.activo,
+            incluido=escenario.escenario_id in posicion,
+            orden=str(posicion.get(escenario.escenario_id, "")),
+        )
+        for escenario in catalogo
+    ]
+
+
+#: Un aviso por resultado global de suite. INCOMPLETA y SIN_EXPECTATIVAS
+#: reutilizan tonos ya existentes (`indeterminado`/`no-enviada`) en vez de
+#: inventar clases CSS nuevas: no son un octavo y noveno desenlace de
+#: ejecucion, son un resultado agregado con su propio significado.
+AVISOS_RESULTADO_GLOBAL_SUITE: Mapping[str, Aviso] = {
+    "pass": Aviso(
+        "aprobada", "Suite en PASS",
+        "Todos los escenarios de la corrida tenían expectativas y todos las cumplieron.",
+        etiqueta="PASS", senal="aprobada",
+    ),
+    "fail": Aviso(
+        "rechazada", "Suite en FAIL",
+        "Al menos un escenario no cumplió su expectativa.",
+        etiqueta="FAIL", senal="rechazada",
+    ),
+    "error": Aviso(
+        "error", "Suite con errores",
+        "Al menos un escenario no se pudo ejecutar, o la corrida quedó inconsistente.",
+        etiqueta="ERROR", senal="",
+    ),
+    "incompleta": Aviso(
+        "indeterminado", "Corrida incompleta",
+        "Hubo escenarios que pasaron y escenarios sin expectativas: no todos los "
+        "casos de esta corrida fueron realmente evaluados.",
+        etiqueta="INCOMPLETA", senal="",
+    ),
+    "sin_expectativas": Aviso(
+        "no-enviada", "Sin expectativas",
+        "Ningún escenario de esta corrida definía qué resultado esperaba.",
+        etiqueta="SIN EXPECTATIVAS", senal="",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class FilaCorrida:
+    """Una fila del listado de corridas."""
+
+    corrida_id: int
+    suite_nombre: str
+    estado: str
+    resultado_global: str | None
+    total: int
+    cantidad_pass: int
+    cantidad_fail: int
+    cantidad_error: int
+    cantidad_sin_expectativas: int
+    iniciada_en: str
+    duracion: str
+
+
+def _duracion(corrida) -> str:
+    if corrida.finalizada_en is None:
+        return "en curso"
+    segundos = (corrida.finalizada_en - corrida.iniciada_en).total_seconds()
+    return f"{segundos:.1f} s"
+
+
+def fila_de_corrida(corrida) -> FilaCorrida:
+    return FilaCorrida(
+        corrida_id=corrida.corrida_id,
+        suite_nombre=corrida.suite_nombre,
+        estado=corrida.estado.value,
+        resultado_global=corrida.resultado_global.value if corrida.resultado_global else None,
+        total=corrida.total,
+        cantidad_pass=corrida.cantidad_pass,
+        cantidad_fail=corrida.cantidad_fail,
+        cantidad_error=corrida.cantidad_error,
+        cantidad_sin_expectativas=corrida.cantidad_sin_expectativas,
+        iniciada_en=corrida.iniciada_en.strftime("%Y-%m-%d %H:%M:%S"),
+        duracion=_duracion(corrida),
+    )
+
+
+@dataclass(frozen=True)
+class FilaItemCorrida:
+    """Una fila del detalle de una corrida: un escenario y su resultado.
+
+    `evaluacion` se arma del `evaluacion_json` propio del item -nunca del
+    escenario en vivo ni de una nueva evaluacion-: la corrida se explica con
+    su propio snapshot, autosuficiente.
+    """
+
+    orden: int
+    escenario_id: str
+    escenario_nombre: str
+    resultado: str
+    detalle: str | None
+    ejecucion_id: int | None
+    evaluacion: EvaluacionMostrada | None
+
+
+def filas_de_corrida(items: Sequence, descripciones: Mapping[str, str]) -> Sequence[FilaItemCorrida]:
+    return [
+        FilaItemCorrida(
+            orden=item.orden,
+            escenario_id=item.escenario_id,
+            escenario_nombre=item.escenario_nombre,
+            resultado=item.resultado.value,
+            detalle=item.detalle,
+            ejecucion_id=item.ejecucion_id,
+            evaluacion=evaluacion_de_item(item, descripciones),
+        )
+        for item in items
+    ]
+
+
+def evaluacion_de_item(item, descripciones: Mapping[str, str]) -> EvaluacionMostrada | None:
+    """Igual que `evaluacion_de_ejecucion`, pero leyendo el snapshot propio
+    del item de corrida -nunca el de una `Ejecucion` releida, aunque
+    `item.ejecucion_id` exista solo como enlace de navegacion-.
+    """
+    if not item.evaluacion_json:
+        return None
+    datos = json.loads(item.evaluacion_json)
+    mensajes = [_mensaje_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])]
+    return EvaluacionMostrada(estado=datos["resultado"], discrepancias=tuple(mensajes))

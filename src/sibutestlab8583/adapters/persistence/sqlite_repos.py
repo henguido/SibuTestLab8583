@@ -20,10 +20,16 @@ from ...domain.expectativas import expectativas_a_dict, expectativas_desde_dict
 from ...domain.modelos import (
     LARGO_STAN,
     STAN_MAXIMO,
+    CorridaSuite,
     DestinoGuardado,
     Ejecucion,
     Escenario,
+    EstadoCorridaSuite,
     EstadoEjecucion,
+    EstadoItemCorrida,
+    ItemCorridaSuite,
+    ResultadoGlobalSuite,
+    Suite,
     TarjetaPrueba,
 )
 from .esquema import SECUENCIA_STAN, ruta_base_datos
@@ -394,6 +400,261 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
                 ),
             )
             await conexion.commit()
+
+
+class RepositorioSuitesSQLite(_RepositorioSQLite):
+    """Catalogo de suites: agrupaciones reutilizables de escenarios, en orden.
+
+    `guardar` reemplaza entera la membresia (`suite_escenarios`) en la MISMA
+    transaccion que el upsert de la fila de `suites` -DELETE + INSERT, nunca
+    fusion con lo que ya estaba guardado-, igual criterio que ya aplica
+    `ServicioEscenarios.actualizar` a `campos_manuales`/`expectativas`.
+    """
+
+    async def obtener(self, suite_id: str) -> Suite | None:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT suite_id, nombre, descripcion, activa, creado_en, actualizado_en"
+                " FROM suites WHERE suite_id = ?",
+                (suite_id,),
+            ) as cursor:
+                fila = await cursor.fetchone()
+            if fila is None:
+                return None
+            escenarios = await self._escenarios_de(conexion, suite_id)
+        return _a_suite(fila, escenarios)
+
+    async def listar(self) -> Sequence[Suite]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT suite_id, nombre, descripcion, activa, creado_en, actualizado_en"
+                " FROM suites ORDER BY nombre"
+            ) as cursor:
+                filas = await cursor.fetchall()
+            resultado = [
+                _a_suite(fila, await self._escenarios_de(conexion, fila["suite_id"]))
+                for fila in filas
+            ]
+        return resultado
+
+    async def _escenarios_de(self, conexion: aiosqlite.Connection, suite_id: str) -> tuple[str, ...]:
+        conexion.row_factory = aiosqlite.Row
+        async with conexion.execute(
+            "SELECT escenario_id FROM suite_escenarios WHERE suite_id = ? ORDER BY orden",
+            (suite_id,),
+        ) as cursor:
+            filas = await cursor.fetchall()
+        return tuple(f["escenario_id"] for f in filas)
+
+    async def guardar(self, suite: Suite) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute("PRAGMA foreign_keys = ON")
+            await conexion.execute(
+                "INSERT INTO suites (suite_id, nombre, descripcion, activa, creado_en, actualizado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(suite_id) DO UPDATE SET"
+                "   nombre = excluded.nombre,"
+                "   descripcion = excluded.descripcion,"
+                "   activa = excluded.activa,"
+                "   actualizado_en = excluded.actualizado_en",
+                (
+                    suite.suite_id,
+                    suite.nombre,
+                    suite.descripcion,
+                    int(suite.activa),
+                    suite.creado_en.isoformat(),
+                    suite.actualizado_en.isoformat(),
+                ),
+            )
+            await conexion.execute(
+                "DELETE FROM suite_escenarios WHERE suite_id = ?", (suite.suite_id,)
+            )
+            if suite.escenarios:
+                await conexion.executemany(
+                    "INSERT INTO suite_escenarios (suite_id, escenario_id, orden) VALUES (?, ?, ?)",
+                    [
+                        (suite.suite_id, escenario_id, orden)
+                        for orden, escenario_id in enumerate(suite.escenarios, start=1)
+                    ],
+                )
+            await conexion.commit()
+
+
+class RepositorioCorridasSuiteSQLite(_RepositorioSQLite):
+    """Historial de corridas de suite.
+
+    Tres momentos de escritura, cada uno con su propia atomicidad: abrir con
+    todos los items presembrados (una transaccion), actualizar un item a la
+    vez segun se ejecuta su escenario (un commit por item, deliberadamente
+    aislado del resto), y cerrar con los contadores finales (un UPDATE
+    atomico). Ver `application.corredor_suites`.
+    """
+
+    async def crear_con_items(
+        self, corrida: CorridaSuite, items: Sequence[ItemCorridaSuite]
+    ) -> int:
+        async with self._conectar() as conexion:
+            await conexion.execute("PRAGMA foreign_keys = ON")
+            cursor = await conexion.execute(
+                "INSERT INTO corridas_suite"
+                " (suite_id, suite_nombre, estado, resultado_global, total,"
+                "  cantidad_pass, cantidad_fail, cantidad_error, cantidad_sin_expectativas,"
+                "  cantidad_no_ejecutado, iniciada_en, finalizada_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    corrida.suite_id,
+                    corrida.suite_nombre,
+                    corrida.estado.value,
+                    corrida.resultado_global.value if corrida.resultado_global else None,
+                    corrida.total,
+                    corrida.cantidad_pass,
+                    corrida.cantidad_fail,
+                    corrida.cantidad_error,
+                    corrida.cantidad_sin_expectativas,
+                    corrida.cantidad_no_ejecutado,
+                    corrida.iniciada_en.isoformat(),
+                    corrida.finalizada_en.isoformat() if corrida.finalizada_en else None,
+                ),
+            )
+            corrida_id = cursor.lastrowid
+            await conexion.executemany(
+                "INSERT INTO corrida_suite_items"
+                " (corrida_id, escenario_id, escenario_nombre, orden, resultado,"
+                "  ejecucion_id, detalle, evaluacion_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        corrida_id,
+                        item.escenario_id,
+                        item.escenario_nombre,
+                        item.orden,
+                        item.resultado.value,
+                        item.ejecucion_id,
+                        item.detalle,
+                        item.evaluacion_json,
+                    )
+                    for item in items
+                ],
+            )
+            await conexion.commit()
+        corrida.corrida_id = corrida_id
+        return corrida_id
+
+    async def actualizar_item(self, item: ItemCorridaSuite) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "UPDATE corrida_suite_items"
+                " SET resultado = ?, ejecucion_id = ?, detalle = ?, evaluacion_json = ?"
+                " WHERE corrida_id = ? AND orden = ?",
+                (
+                    item.resultado.value,
+                    item.ejecucion_id,
+                    item.detalle,
+                    item.evaluacion_json,
+                    item.corrida_id,
+                    item.orden,
+                ),
+            )
+            await conexion.commit()
+
+    async def cerrar(self, corrida: CorridaSuite) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "UPDATE corridas_suite SET"
+                "   estado = ?, resultado_global = ?, cantidad_pass = ?, cantidad_fail = ?,"
+                "   cantidad_error = ?, cantidad_sin_expectativas = ?, cantidad_no_ejecutado = ?,"
+                "   finalizada_en = ?"
+                " WHERE corrida_id = ?",
+                (
+                    corrida.estado.value,
+                    corrida.resultado_global.value if corrida.resultado_global else None,
+                    corrida.cantidad_pass,
+                    corrida.cantidad_fail,
+                    corrida.cantidad_error,
+                    corrida.cantidad_sin_expectativas,
+                    corrida.cantidad_no_ejecutado,
+                    corrida.finalizada_en.isoformat() if corrida.finalizada_en else None,
+                    corrida.corrida_id,
+                ),
+            )
+            await conexion.commit()
+
+    async def obtener(self, corrida_id: int) -> CorridaSuite | None:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM corridas_suite WHERE corrida_id = ?", (corrida_id,)
+            ) as cursor:
+                fila = await cursor.fetchone()
+        return _a_corrida(fila) if fila else None
+
+    async def listar(self, limite: int = 50) -> Sequence[CorridaSuite]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM corridas_suite ORDER BY corrida_id DESC LIMIT ?", (limite,)
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_corrida(f) for f in filas]
+
+    async def obtener_items(self, corrida_id: int) -> Sequence[ItemCorridaSuite]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM corrida_suite_items WHERE corrida_id = ? ORDER BY orden",
+                (corrida_id,),
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_item(f) for f in filas]
+
+
+def _a_suite(fila: aiosqlite.Row, escenarios: tuple[str, ...]) -> Suite:
+    return Suite(
+        suite_id=fila["suite_id"],
+        nombre=fila["nombre"],
+        descripcion=fila["descripcion"],
+        escenarios=escenarios,
+        activa=bool(fila["activa"]),
+        creado_en=datetime.fromisoformat(fila["creado_en"]),
+        actualizado_en=datetime.fromisoformat(fila["actualizado_en"]),
+    )
+
+
+def _a_corrida(fila: aiosqlite.Row) -> CorridaSuite:
+    return CorridaSuite(
+        corrida_id=fila["corrida_id"],
+        suite_id=fila["suite_id"],
+        suite_nombre=fila["suite_nombre"],
+        total=fila["total"],
+        estado=EstadoCorridaSuite(fila["estado"]),
+        resultado_global=(
+            ResultadoGlobalSuite(fila["resultado_global"]) if fila["resultado_global"] else None
+        ),
+        cantidad_pass=fila["cantidad_pass"],
+        cantidad_fail=fila["cantidad_fail"],
+        cantidad_error=fila["cantidad_error"],
+        cantidad_sin_expectativas=fila["cantidad_sin_expectativas"],
+        cantidad_no_ejecutado=fila["cantidad_no_ejecutado"],
+        iniciada_en=datetime.fromisoformat(fila["iniciada_en"]),
+        finalizada_en=(
+            datetime.fromisoformat(fila["finalizada_en"]) if fila["finalizada_en"] else None
+        ),
+    )
+
+
+def _a_item(fila: aiosqlite.Row) -> ItemCorridaSuite:
+    return ItemCorridaSuite(
+        corrida_id=fila["corrida_id"],
+        escenario_id=fila["escenario_id"],
+        escenario_nombre=fila["escenario_nombre"],
+        orden=fila["orden"],
+        resultado=EstadoItemCorrida(fila["resultado"]),
+        ejecucion_id=fila["ejecucion_id"],
+        detalle=fila["detalle"],
+        evaluacion_json=fila["evaluacion_json"],
+    )
 
 
 def _a_escenario(fila: aiosqlite.Row) -> Escenario:

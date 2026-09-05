@@ -12,12 +12,15 @@ from typing import Protocol, Sequence, runtime_checkable
 
 from .catalogo import CatalogoDeRespuestas
 from .modelos import (
+    CorridaSuite,
     DestinoGuardado,
     DestinoTcp,
     Ejecucion,
     Escenario,
     FalloDeConexion,
     FalloDeTransmision,
+    ItemCorridaSuite,
+    Suite,
     TarjetaPrueba,
     TiempoAgotado,
 )
@@ -150,6 +153,57 @@ class RepositorioEscenarios(Protocol):
     async def listar(self) -> Sequence[Escenario]: ...
 
     async def guardar(self, escenario: Escenario) -> None: ...
+
+
+@runtime_checkable
+class RepositorioSuites(Protocol):
+    """Catalogo de suites guardadas: agrupaciones reutilizables de escenarios."""
+
+    async def obtener(self, suite_id: str) -> Suite | None: ...
+
+    async def listar(self) -> Sequence[Suite]: ...
+
+    async def guardar(self, suite: Suite) -> None:
+        """Reemplaza entera la suite y su membresia (`suite_escenarios`), en
+        una sola transaccion: nunca fusiona con lo que ya estaba guardado.
+        """
+        ...
+
+
+@runtime_checkable
+class RepositorioCorridasSuite(Protocol):
+    """Historial de corridas de suite. Escritura en tres momentos separados,
+    cada uno su propia atomicidad (ver `application.corredor_suites`):
+    abrir con todos los items presembrados, actualizar un item a la vez segun
+    se ejecuta su escenario, y cerrar con los contadores y el resultado final.
+    """
+
+    async def crear_con_items(
+        self, corrida: CorridaSuite, items: Sequence[ItemCorridaSuite]
+    ) -> int:
+        """Inserta la corrida y TODOS sus items (en NO_EJECUTADO) en una sola
+        transaccion. Devuelve el `corrida_id` asignado.
+        """
+        ...
+
+    async def actualizar_item(self, item: ItemCorridaSuite) -> None:
+        """Sobrescribe el item `(corrida_id, orden)` con su resultado real.
+        Se persiste de inmediato, item por item -no se agrupa con los demas-,
+        para que un item ya corrido sobreviva aunque el proceso muera despues.
+        """
+        ...
+
+    async def cerrar(self, corrida: CorridaSuite) -> None:
+        """Un unico UPDATE atomico: estado, resultado_global, contadores y
+        finalizada_en. Se llama una sola vez, al final.
+        """
+        ...
+
+    async def obtener(self, corrida_id: int) -> CorridaSuite | None: ...
+
+    async def listar(self, limite: int = 50) -> Sequence[CorridaSuite]: ...
+
+    async def obtener_items(self, corrida_id: int) -> Sequence[ItemCorridaSuite]: ...
 
 
 @runtime_checkable

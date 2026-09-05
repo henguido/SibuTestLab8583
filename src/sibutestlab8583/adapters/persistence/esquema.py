@@ -142,6 +142,76 @@ CREATE TABLE IF NOT EXISTS ejecuciones (
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_creada_en ON ejecuciones(creada_en);
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_card_id   ON ejecuciones(card_id);
 
+-- Bloque 4: suites de regresion. Una suite es una agrupacion reutilizable de
+-- escenarios, en un orden fijo -no una corrida-. Igual que escenarios, nunca
+-- contiene PAN ni host/puerto/timeout.
+CREATE TABLE IF NOT EXISTS suites (
+    suite_id       TEXT    PRIMARY KEY,
+    nombre         TEXT    NOT NULL,
+    descripcion    TEXT    NOT NULL DEFAULT '',
+    activa         INTEGER NOT NULL DEFAULT 1,
+    creado_en      TEXT    NOT NULL,
+    actualizado_en TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_suites_nombre ON suites(nombre);
+
+-- Membresia + orden. Se reemplaza entera (DELETE + INSERT en una sola
+-- transaccion) al editar una suite, nunca se fusiona con lo anterior.
+CREATE TABLE IF NOT EXISTS suite_escenarios (
+    suite_id     TEXT    NOT NULL REFERENCES suites(suite_id),
+    escenario_id TEXT    NOT NULL REFERENCES escenarios(escenario_id),
+    orden        INTEGER NOT NULL,
+    PRIMARY KEY (suite_id, escenario_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suite_escenarios_orden ON suite_escenarios(suite_id, orden);
+
+-- Corrida = ejecucion historica concreta de una suite. suite_nombre se copia
+-- -no se resuelve con join- por el mismo motivo que ejecuciones.escenario_nombre:
+-- renombrar la suite despues no debe alterar como luce una corrida ya registrada.
+-- estado es el ciclo de vida (en_curso/finalizada); resultado_global es el
+-- desenlace agregado, separado a proposito -ver domain/modelos.py- y NULL
+-- mientras la corrida esta en curso.
+CREATE TABLE IF NOT EXISTS corridas_suite (
+    corrida_id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    suite_id                   TEXT    NOT NULL REFERENCES suites(suite_id),
+    suite_nombre               TEXT    NOT NULL,
+    estado                     TEXT    NOT NULL,
+    resultado_global           TEXT,
+    total                      INTEGER NOT NULL,
+    cantidad_pass              INTEGER NOT NULL DEFAULT 0,
+    cantidad_fail              INTEGER NOT NULL DEFAULT 0,
+    cantidad_error             INTEGER NOT NULL DEFAULT 0,
+    cantidad_sin_expectativas  INTEGER NOT NULL DEFAULT 0,
+    cantidad_no_ejecutado      INTEGER NOT NULL DEFAULT 0,
+    iniciada_en                TEXT    NOT NULL,
+    finalizada_en              TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_corridas_suite_iniciada_en ON corridas_suite(iniciada_en);
+
+-- Item = resultado historico de UN escenario dentro de una corrida.
+-- escenario_nombre y orden se copian al presembrar el item, antes de
+-- ejecutarlo -editar la suite o el escenario despues no altera esta fila-.
+-- evaluacion_json es una copia LITERAL del snapshot ya inmutable de la
+-- Ejecucion (solo para pass/fail; NULL en cualquier otro caso): el detalle
+-- de una corrida explica por si mismo que se esperaba, que se obtuvo y las
+-- discrepancias, sin volver a consultar el escenario ni recalcular nada.
+-- ejecucion_id sigue existiendo, aparte, como enlace de navegacion hacia el
+-- detalle ISO completo.
+CREATE TABLE IF NOT EXISTS corrida_suite_items (
+    corrida_id       INTEGER NOT NULL REFERENCES corridas_suite(corrida_id),
+    escenario_id     TEXT    NOT NULL,
+    escenario_nombre TEXT    NOT NULL,
+    orden            INTEGER NOT NULL,
+    resultado        TEXT    NOT NULL,
+    ejecucion_id     INTEGER REFERENCES ejecuciones(id),
+    detalle          TEXT,
+    evaluacion_json  TEXT,
+    PRIMARY KEY (corrida_id, orden)
+);
+
 -- Secuencias persistentes. Existe para que el numero de trazabilidad sobreviva
 -- a los reinicios y sea unico entre peticiones concurrentes. NO se deriva de
 -- MAX(id) de ejecuciones: dos peticiones simultaneas leerian el mismo maximo.

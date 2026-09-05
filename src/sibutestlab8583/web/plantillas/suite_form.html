@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal %}
+{% block titulo %}{{ 'Editar suite' if suite_actual else 'Nueva suite' }} · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>{{ 'Editar suite' if suite_actual else 'Nueva suite' }}</h1>
+  <p class="encabezado__sub">
+    Elija los escenarios que forman esta suite y el orden en que se ejecutan. Guardar
+    reemplaza entera la lista anterior: no se fusiona con lo que ya estaba guardado.
+  </p>
+</div>
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise los datos</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+<form method="post" action="{{ '/suites/' ~ suite_id if suite_id else '/suites' }}">
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Datos de la suite</h2>
+    </div>
+    <div class="panel__cuerpo">
+      <div class="campo">
+        <label class="campo__rotulo" for="nombre">Nombre</label>
+        <input type="text" id="nombre" name="nombre" autocomplete="off" value="{{ nombre }}" required>
+      </div>
+      <div class="campo">
+        <label class="campo__rotulo" for="descripcion">Descripción (opcional)</label>
+        <input type="text" id="descripcion" name="descripcion" autocomplete="off" value="{{ descripcion }}">
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Escenarios</h2>
+      <span class="panel__nota">gobernado por el catálogo actual</span>
+    </div>
+    <div class="panel__cuerpo">
+      {% if filas_seleccion %}
+      <div class="desplazable" tabindex="0" role="region" aria-label="Seleccion de escenarios">
+        <table class="tabla">
+          <thead>
+            <tr>
+              <th>Incluir</th>
+              <th>Escenario</th>
+              <th>Estado</th>
+              <th>Orden</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fila in filas_seleccion %}
+            <tr>
+              <td>
+                <input type="checkbox" name="incluir_{{ fila.escenario_id }}" value="1"
+                       {{ 'checked' if fila.incluido }}>
+              </td>
+              <td>{{ fila.nombre }}</td>
+              <td>
+                {% if fila.activo %}
+                <span class="chip chip--activa">Activo</span>
+                {% else %}
+                <span class="chip chip--inactiva">Inactivo</span>
+                {% endif %}
+              </td>
+              <td>
+                <input type="text" name="orden_{{ fila.escenario_id }}" class="campo-tabla"
+                       inputmode="numeric" autocomplete="off" value="{{ fila.orden }}">
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="campo__pista">
+        Un escenario inactivo, con tarjeta o conexión no disponible, o incompatible con el
+        perfil actual, puede seguir formando parte de la suite: eso solo bloquea SU ejecución
+        (queda en ERROR), no la de los demás escenarios de la corrida.
+      </p>
+      {% else %}
+      <p class="vacio">
+        No hay escenarios guardados todavía. <a href="/">Cree uno</a> antes de armar una suite.
+      </p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="acciones">
+      <button class="boton" type="submit">Guardar</button>
+      <a href="/suites">Cancelar</a>
+    </div>
+  </section>
+</form>
+{% endblock %}

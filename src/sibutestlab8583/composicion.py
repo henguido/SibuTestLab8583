@@ -22,9 +22,11 @@ from .adapters.persistence.esquema import ruta_base_datos
 from .adapters.persistence.sqlite_repos import (
     GeneradorStanSQLite,
     RepositorioCatalogosSQLite,
+    RepositorioCorridasSuiteSQLite,
     RepositorioDestinosSQLite,
     RepositorioEjecucionesSQLite,
     RepositorioEscenariosSQLite,
+    RepositorioSuitesSQLite,
     RepositorioTarjetasSQLite,
 )
 from .adapters.transporte.framing_demo import FramingDemostracion
@@ -35,8 +37,11 @@ from .adapters.transporte.tcp import (
 )
 from .application.consultas import ServicioConsultas
 from .application.conexiones import ServicioConexiones
+from .application.corredor_suites import CorredorDeSuites
+from .application.ejecutor_escenarios import EjecutorDeEscenarios
 from .application.escenarios import ServicioEscenarios
 from .application.orquestador import Orquestador
+from .application.suites import ServicioSuites
 from .application.tarjetas import ServicioTarjetas
 from .domain.catalogo import NOMBRE_CATALOGO_GENERICO
 from .domain.modelos import DestinoTcp
@@ -91,6 +96,8 @@ class Composicion:
         self._catalogos = RepositorioCatalogosSQLite(configuracion.ruta_base_datos)
         self._destinos = RepositorioDestinosSQLite(configuracion.ruta_base_datos)
         self._escenarios = RepositorioEscenariosSQLite(configuracion.ruta_base_datos)
+        self._suites = RepositorioSuitesSQLite(configuracion.ruta_base_datos)
+        self._corridas_suite = RepositorioCorridasSuiteSQLite(configuracion.ruta_base_datos)
         self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
@@ -111,6 +118,44 @@ class Composicion:
     @property
     def administracion_escenarios(self) -> ServicioEscenarios:
         return ServicioEscenarios(self._escenarios, self._tarjetas, self._destinos, self._perfil)
+
+    @property
+    def administracion_suites(self) -> ServicioSuites:
+        return ServicioSuites(self._suites, self._escenarios)
+
+    @property
+    def ejecutor_escenarios(self) -> EjecutorDeEscenarios:
+        """Reejecucion de un escenario guardado, ya resuelta: obtiene, valida
+        que este activo, diagnostica, resuelve la conexion y arma el
+        `Orquestador` con el timeout de esa conexion. La usan tanto
+        "Ejecutar" en la pantalla de escenarios como `corredor_suites`, para
+        no tener dos implementaciones de la misma capacidad.
+        """
+        return EjecutorDeEscenarios(
+            self.administracion_escenarios,
+            self.administracion_conexiones,
+            lambda destino, tiempo_limite: self.orquestador(destino, tiempo_limite=tiempo_limite),
+        )
+
+    @property
+    def corridas_suite(self):
+        """Historial de corridas de suite, de solo lectura para la web.
+
+        Se expone el puerto tal cual -sin envoltorio de aplicacion- porque no
+        hace falta ninguna logica adicional para listar/leer: mismo criterio
+        que ya usa `ServicioConsultas` para ejecuciones, solo que aqui el
+        propio repositorio ya es la interfaz de lectura completa.
+        """
+        return self._corridas_suite
+
+    @property
+    def corredor_suites(self) -> CorredorDeSuites:
+        return CorredorDeSuites(
+            self.administracion_suites,
+            self.administracion_escenarios,
+            self._corridas_suite,
+            self.ejecutor_escenarios,
+        )
 
     @property
     def perfil(self):

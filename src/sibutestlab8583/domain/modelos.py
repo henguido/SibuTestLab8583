@@ -536,3 +536,126 @@ class ResultadoCompra:
     @property
     def aprobada(self) -> bool:
         return self.ejecucion.estado is EstadoEjecucion.APROBADA
+
+
+@dataclass(frozen=True)
+class Suite:
+    """Un grupo reutilizable de escenarios, en un orden fijo.
+
+    SUITE = agrupacion reusable; CORRIDA = una ejecucion historica concreta de
+    esa agrupacion en un momento dado (ver `CorridaSuite`). Igual que
+    `Escenario`, nunca contiene PAN ni host/puerto/timeout: solo referencia
+    escenarios por `escenario_id`. `escenarios` es una tupla, no un conjunto:
+    el orden de ejecucion es parte del dato, no un detalle de presentacion.
+    """
+
+    suite_id: str
+    nombre: str
+    descripcion: str = ""
+    escenarios: tuple[str, ...] = ()
+    activa: bool = True
+    creado_en: datetime = field(default_factory=_ahora)
+    actualizado_en: datetime = field(default_factory=_ahora)
+
+
+class EstadoItemCorrida(str, Enum):
+    """Resultado de UN escenario dentro de una corrida de suite.
+
+    Deliberadamente distinto de `EstadoEjecucion` (que dice que paso con la
+    transaccion) y de `EstadoEvaluacion` (pass/fail de una unica ejecucion):
+    este agrega un quinto y un sexto caso que no existen a nivel de una sola
+    ejecucion, porque solo tienen sentido cuando se agrupan varios escenarios:
+
+      PASS               se ejecuto, tenia expectativas, se cumplieron
+      FAIL               se ejecuto, tenia expectativas, no se cumplieron
+      ERROR              no se pudo ejecutar (escenario no disponible) o fallo
+                         tecnicamente de forma inesperada
+      SIN_EXPECTATIVAS  se ejecuto sin problema, pero el escenario no definia
+                         que esperaba -nunca se cuenta como PASS ni como FAIL
+      NO_EJECUTADO       todavia no se intento; solo sobrevive si la corrida
+                         se interrumpio antes de llegar a este item
+    """
+
+    PASS = "pass"
+    FAIL = "fail"
+    ERROR = "error"
+    SIN_EXPECTATIVAS = "sin_expectativas"
+    NO_EJECUTADO = "no_ejecutado"
+
+
+class EstadoCorridaSuite(str, Enum):
+    """Ciclo de vida de una corrida: si termino de correr, no que resultado dio.
+
+    Separado de `ResultadoGlobalSuite` por el mismo motivo que
+    `EstadoEjecucion` esta separado de `EstadoEvaluacion`: una corrida puede
+    estar EN_CURSO sin tener todavia ningun resultado que mostrar, y mezclar
+    ambas preguntas en una sola columna reproduciria la ambiguedad que el
+    Bloque 3 ya corrigio una vez.
+    """
+
+    EN_CURSO = "en_curso"
+    FINALIZADA = "finalizada"
+
+
+class ResultadoGlobalSuite(str, Enum):
+    """Resultado agregado de una corrida ya FINALIZADA. `None` mientras EN_CURSO.
+
+    PASS significa exactamente "todos los escenarios de la corrida tenian
+    expectativas y todos cumplieron" -nunca un PASS por mezcla ni por omision-.
+    Ver `domain.suites.calcular_resultado_global` para el algoritmo exacto.
+    """
+
+    PASS = "pass"
+    FAIL = "fail"
+    ERROR = "error"
+    INCOMPLETA = "incompleta"
+    SIN_EXPECTATIVAS = "sin_expectativas"
+
+
+@dataclass
+class CorridaSuite:
+    """Ejecucion historica concreta de una `Suite`. No frozen: `corrida_id` se
+    asigna despues de insertar, igual que `Ejecucion.id`.
+
+    `suite_nombre` se copia al crear la corrida -no se resuelve con un join en
+    cada lectura-: renombrar la suite despues no debe alterar como luce una
+    corrida ya registrada. Mismo principio que `Ejecucion.escenario_nombre`.
+    """
+
+    suite_id: str
+    suite_nombre: str
+    total: int
+    estado: EstadoCorridaSuite = EstadoCorridaSuite.EN_CURSO
+    resultado_global: ResultadoGlobalSuite | None = None
+    cantidad_pass: int = 0
+    cantidad_fail: int = 0
+    cantidad_error: int = 0
+    cantidad_sin_expectativas: int = 0
+    cantidad_no_ejecutado: int = 0
+    iniciada_en: datetime = field(default_factory=_ahora)
+    finalizada_en: datetime | None = None
+    corrida_id: int | None = None
+
+
+@dataclass(frozen=True)
+class ItemCorridaSuite:
+    """Resultado historico de UN escenario dentro de una `CorridaSuite`.
+
+    Autosuficiente: `evaluacion_json` es una copia LITERAL del
+    `Ejecucion.evaluacion_json` que produjo ese resultado (solo para
+    PASS/FAIL; `None` en cualquier otro caso) -nunca se recalcula ni se
+    reconstruye desde el escenario vivo-, asi que el detalle de una corrida
+    puede explicar que se esperaba, que se obtuvo y las discrepancias sin
+    consultar el escenario ni ejecutar de nuevo Expected vs Actual.
+    `ejecucion_id` sigue existiendo, aparte, como enlace de navegacion hacia
+    el detalle ISO completo (`/historial/{id}`).
+    """
+
+    corrida_id: int
+    escenario_id: str
+    escenario_nombre: str
+    orden: int
+    resultado: EstadoItemCorrida
+    ejecucion_id: int | None = None
+    detalle: str | None = None
+    evaluacion_json: str | None = None

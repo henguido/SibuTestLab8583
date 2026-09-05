@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import estado, evaluacion as pieza_evaluacion %}
+{% set etiquetas_resultado = {
+  'pass': 'PASS', 'fail': 'FAIL', 'error': 'ERROR',
+  'sin_expectativas': 'Sin expectativas', 'no_ejecutado': 'No ejecutado',
+} %}
+{% block titulo %}Corrida #{{ corrida.corrida_id }} · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<div class="encabezado">
+  <h1>Corrida #{{ corrida.corrida_id }} · {{ corrida.suite_nombre }}</h1>
+  <p class="encabezado__sub">
+    Ejecución histórica de una suite. Cada resultado viene de su propio snapshot: editar la
+    suite o los escenarios después no altera lo que se ve aquí.
+  </p>
+</div>
+
+{% if aviso_resultado %}
+{{ estado(aviso_resultado, corrida.resultado_global) }}
+{% else %}
+<div class="aviso indeterminado">
+  <h2 class="aviso__titulo">Corrida en curso</h2>
+  <p class="aviso__detalle">
+    Esta corrida todavía no terminó -o el proceso se interrumpió antes de cerrarla-.
+  </p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Resumen</h2>
+    <span class="panel__nota">{{ corrida.iniciada_en }} UTC · {{ corrida.duracion }}</span>
+  </div>
+  <div class="panel__cuerpo">
+    <div class="metricas">
+      <div class="metrica">
+        <span class="metrica__rotulo">Total</span>
+        <span class="metrica__valor">{{ corrida.total }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">PASS</span>
+        <span class="metrica__valor">{{ corrida.cantidad_pass }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">FAIL</span>
+        <span class="metrica__valor">{{ corrida.cantidad_fail }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">ERROR</span>
+        <span class="metrica__valor">{{ corrida.cantidad_error }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Sin expectativas</span>
+        <span class="metrica__valor">{{ corrida.cantidad_sin_expectativas }}</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Escenarios</h2>
+    <span class="panel__nota">{{ filas_items|length }} item{{ 's' if filas_items|length != 1 }}</span>
+  </div>
+  <div class="desplazable" tabindex="0" role="region" aria-label="Escenarios de la corrida">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Orden</th>
+          <th>Escenario</th>
+          <th>Resultado</th>
+          <th>Detalle</th>
+          <th>Ejecución</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas_items %}
+        <tr data-resultado="{{ fila.resultado }}">
+          <td class="num">{{ fila.orden }}</td>
+          <td>{{ fila.escenario_nombre }}</td>
+          <td>
+            <span class="chip chip--{{ 'activa' if fila.resultado == 'pass' else 'inactiva' if fila.resultado in ('fail', 'error') else 'sintetica' }}">
+              {{ etiquetas_resultado.get(fila.resultado, fila.resultado) }}
+            </span>
+          </td>
+          <td>{{ fila.detalle or '—' }}</td>
+          <td>
+            {% if fila.ejecucion_id %}
+            <a href="/historial/{{ fila.ejecucion_id }}">Ver ejecución</a>
+            {% else %}
+            <span class="vacio">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% if fila.evaluacion %}
+        <tr>
+          <td colspan="5">{{ pieza_evaluacion(fila.evaluacion) }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<a class="volver" href="/suites/corridas">&larr; Corridas</a>
+{% endblock %}

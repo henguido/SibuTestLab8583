@@ -62,7 +62,7 @@ PANTALLAS = (
     "compra", "resultado", "historial", "detalle", "no_encontrado",
     "configuracion", "config_tarjetas", "config_tarjeta_nueva", "config_tarjeta_editar",
     "config_conexiones", "config_conexion_nueva", "config_conexion_editar",
-    "escenarios",
+    "escenarios", "suites", "suite_nueva", "corridas",
 )
 
 
@@ -90,6 +90,9 @@ def _paginas() -> dict[str, str]:
             f"/configuracion/conexiones/{DESTINO_ID_DEMO}/editar"
         ).text,
         "escenarios": cliente.get("/escenarios").text,
+        "suites": cliente.get("/suites").text,
+        "suite_nueva": cliente.get("/suites/nueva").text,
+        "corridas": cliente.get("/suites/corridas").text,
     }
     assert tuple(paginas) == PANTALLAS, "PANTALLAS y _paginas() se desincronizaron"
     return paginas
