@@ -11,9 +11,11 @@ Diagramas: [`componentes.mmd`](componentes.mmd) y [`flujo-compra.mmd`](flujo-com
 Implementado: web, composición, orquestador, consultas, perfiles, codec ISO 8583, validación,
 framing, transporte TCP, persistencia SQLite, generador de STAN, host simulado, administración
 web de tarjetas y de destinos (Conexiones), la derivación pura de Track 1/Track 2, escenarios
-reutilizables con expected-vs-actual, suites de regresión con su corredor secuencial, y una CLI
-(`sibu-run-suite`) que ejecuta una suite sin navegador, apta para CI. **Sin implementar:** motor
-de carga, perfiles reales de Visa y Mastercard, modo avanzado ISO 8583, isoscopio 2.0. La
+reutilizables con expected-vs-actual, suites de regresión con su corredor secuencial, una CLI
+(`sibu-run-suite`) que ejecuta una suite sin navegador, apta para CI, y una integración CI
+genérica de referencia (GitHub Actions) que la invoca automáticamente en cada push —ver
+`docs/ci/INTEGRACION_CI.md`. **Sin implementar:** motor de carga, perfiles reales de Visa y
+Mastercard, modo avanzado ISO 8583, isoscopio 2.0. La
 arquitectura está cubierta por pruebas automatizadas y CI; el estado exacto de la suite se
 mantiene en `CONTEXTO.md` y en el pipeline, no aquí.
 
@@ -59,6 +61,7 @@ importa un adaptador. Tres límites que no se cruzan:
 | **Escenarios** | Aplicación | `ServicioEscenarios`: casos reutilizables (guardar, editar, duplicar, activar/desactivar), con expectativas opcionales (expected-vs-actual) evaluadas por el propio `Orquestador` |
 | **Suites y corredor** | Aplicación | `ServicioSuites` agrupa escenarios en un orden fijo; `CorredorDeSuites` los ejecuta secuencialmente reutilizando `EjecutorDeEscenarios` (la misma resolución que usa la reejecución individual), persiste cada `CorridaSuite`/`ItemCorridaSuite` y calcula el resultado global (PASS/FAIL/ERROR/INCOMPLETA/SIN_EXPECTATIVAS) |
 | **CLI (`sibu-run-suite`)** | Interfaz | Ejecuta una suite sin navegador, apta para CI: mismo `CorredorDeSuites` que la web, códigos de salida por resultado, salida texto o JSON. No depende de `web/` |
+| **Integración CI** | Scripts + adaptador | `scripts/sembrar_suite_demo.py` (siembra idempotente), `scripts/ci_esperar_host.py` (espera TCP), `scripts/verificar_artefacto_seguro.py` (guardia sobre el artefacto); todo reutilizable por cualquier proveedor. `.github/workflows/ci-suite-demo.yml` es la única pieza específica de GitHub. Detalle en `docs/ci/INTEGRACION_CI.md` |
 | **Motor de carga** | *Fase posterior* | Repite el recorrido con múltiples tareas concurrentes y agrega métricas. **No implementado** |
 
 ## Contratos principales

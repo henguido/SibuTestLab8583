@@ -167,6 +167,11 @@ La CLI nunca levanta `sibu-host-demo` por su cuenta: si la conexión configurada
 escenario no responde, eso se registra como el `ERROR` de ese escenario dentro de la
 corrida, igual que en la interfaz web.
 
+Este mismo comando es lo que ejecuta automáticamente el pipeline de CI de referencia
+(`.github/workflows/ci-suite-demo.yml`) en cada push — ver
+[`docs/ci/INTEGRACION_CI.md`](docs/ci/INTEGRACION_CI.md) para el flujo completo (siembra de
+datos, host demo, exit codes, artefacto) y cómo adaptarlo a Jenkins/Azure DevOps/GitLab.
+
 ## Ejecutar las pruebas
 
 ```bash
@@ -204,3 +209,5 @@ Este es el estado real del prototipo, no una lista de fallos:
 - [BITACORA.md](BITACORA.md) — decisiones, correcciones de rumbo y gobernanza del proceso.
 - [Documento de arquitectura](docs/arquitectura/ARQUITECTURA.md) — diseño detallado y
   diagramas.
+- [Integración CI](docs/ci/INTEGRACION_CI.md) — cómo correr una suite de regresión en un
+  pipeline, política de exit codes y adaptación a otros proveedores de CI.

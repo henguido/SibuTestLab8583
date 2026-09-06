@@ -1,0 +1,120 @@
+name: Suite de regresión vía CLI (Bloque 6)
+
+# Implementacion de REFERENCIA para GitHub Actions -no es "la logica del
+# producto", que vive entera en comandos ya versionados (sibu-init-db,
+# scripts/sembrar_suite_demo.py, sibu-host-demo, scripts/ci_esperar_host.py,
+# sibu-run-suite). Ver docs/ci/INTEGRACION_CI.md para adaptar este mismo
+# flujo a Jenkins/Azure DevOps/GitLab: solo cambia la sintaxis de este
+# archivo, nunca los comandos que ejecuta.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  suite-demo:
+    name: Suite demo end-to-end (sibu-run-suite)
+    runs-on: ubuntu-latest
+    env:
+      # DB efimera, propia de este job: se descarta junto con el runner.
+      # Nunca es el archivo que usaria un desarrollo local.
+      SIBU_DB_PATH: ${{ github.workspace }}/ci-suite-demo.db
+
+    steps:
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Instalar el proyecto
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Inicializar la base de datos de CI
+        run: sibu-init-db
+
+      - name: Sembrar (o reutilizar) el escenario y la suite demo de CI
+        # Idempotente (scripts/sembrar_suite_demo.py): en esta DB efimera
+        # siempre crea; el diseño idempotente es para quien lo corra a mano
+        # varias veces contra la misma base local.
+        id: sembrar
+        run: |
+          salida="$(python scripts/sembrar_suite_demo.py)"
+          echo "$salida"
+          echo "suite_id=${salida#SUITE_ID=}" >> "$GITHUB_OUTPUT"
+
+      - name: Levantar el host ISO 8583 simulado en segundo plano
+        run: |
+          sibu-host-demo > host-demo.log 2>&1 &
+          echo "host_pid=$!" >> "$GITHUB_ENV"
+
+      - name: Esperar a que el host simulado acepte conexiones
+        run: python scripts/ci_esperar_host.py --host 127.0.0.1 --puerto 8583 --timeout 15
+
+      - name: Ejecutar la suite (preserva el exit code real de la CLI)
+        # `set +e` + captura explicita de $?: sin esto, el `set -e` por
+        # defecto de los steps de bash en Actions abortaria este step apenas
+        # sibu-run-suite devuelva distinto de 0, y los pasos de limpieza y
+        # artefacto de abajo no correrian sin encadenar `if: always()` sobre
+        # un step ya fallido -mas fragil de leer que un output explicito. El
+        # `>` es una REDIRECCION, nunca un pipe: nada intermedio (tee, etc.)
+        # puede comerse este exit code.
+        id: ejecutar_suite
+        env:
+          SUITE_ID: ${{ steps.sembrar.outputs.suite_id }}
+        run: |
+          set +e
+          sibu-run-suite run-suite "$SUITE_ID" --format json > corrida.json
+          codigo=$?
+          set -e
+          echo "Resultado de sibu-run-suite: exit code $codigo"
+          echo "codigo=$codigo" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Mostrar el JSON de la corrida (solo visibilidad en el log)
+        if: always()
+        run: cat corrida.json
+
+      - name: Guardia de seguridad sobre el artefacto (PAN + claves prohibidas)
+        if: always()
+        run: python scripts/verificar_artefacto_seguro.py corrida.json
+
+      - name: Detener el host simulado
+        # Siempre corre, incluso si la suite fallo: un host que queda vivo no
+        # debe sobrevivir al job. `|| true`: si el proceso ya murio por su
+        # cuenta, este step no debe fallar por eso.
+        if: always()
+        run: |
+          if [ -n "${host_pid:-}" ]; then
+            kill "$host_pid" 2>/dev/null || true
+          fi
+
+      - name: Subir corrida.json como artefacto
+        # ÚNICO artefacto oficial. host-demo.log NO se publica por defecto
+        # -queda en el log nativo del step de arriba si hace falta
+        # diagnosticar algo localmente, pero no se sube: menor superficie de
+        # datos, contrato de CI mas chico.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corrida-suite-demo
+          path: corrida.json
+          if-no-files-found: error
+
+      - name: Reflejar el resultado real de la suite en el job
+        # Unica fuente de verdad del exito del job: el exit code que
+        # capturo el step "Ejecutar la suite", sin reinterpretar. Solo PASS
+        # (0) hace exito al pipeline; cualquier otro valor (1/2/3/4/5/6/130)
+        # lo falla, tal como exige la política de CI documentada en
+        # docs/ci/INTEGRACION_CI.md.
+        if: always()
+        run: |
+          codigo="${{ steps.ejecutar_suite.outputs.codigo }}"
+          echo "Código final de sibu-run-suite: $codigo"
+          exit "$codigo"
