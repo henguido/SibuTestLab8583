@@ -274,3 +274,61 @@ jobs:
             nodeid-*.log
             nodeids.txt
           if-no-files-found: ignore
+
+      - name: Emitir resumen como anotaciones (accesibles sin descargar artefactos)
+        # Los artefactos y los logs de step requieren permisos de admin del
+        # repo para descargarse via API sin sesion autenticada; las
+        # anotaciones de un workflow (::notice::/::warning::) SI son legibles
+        # sin autenticacion via la API publica de Checks
+        # (/check-runs/{id}/annotations). Este paso solo repite en ese canal
+        # lo que ya escriben los pasos anteriores -no es logica nueva de
+        # diagnostico, es unicamente para poder leer el resultado sin acceso
+        # de admin al repositorio.
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          patron_pan = re.compile(r"(?<!\d)\d{12,19}(?!\d)")
+
+          def limpio(texto: str) -> str:
+              lineas = []
+              for linea in texto.splitlines():
+                  if patron_pan.search(linea):
+                      lineas.append("[linea omitida: contenia una secuencia con forma de PAN]")
+                  else:
+                      lineas.append(linea)
+              return "\n".join(lineas)
+
+          def escapar(texto: str) -> str:
+              # Reglas de escape de "workflow commands" de GitHub Actions
+              # para el cuerpo de un mensaje: % antes que \r y \n.
+              return texto.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+          def emitir(titulo: str, texto: str, limite: int = 5000) -> None:
+              texto = limpio(texto)[:limite]
+              print(f"::notice title={titulo}::{escapar(texto)}")
+
+          codigo_suite = os.environ.get("CODIGO_SUITE_COMPLETA", "desconocido")
+          emitir("codigo-suite-completa", f"codigo={codigo_suite}")
+
+          if Path("resumen-archivos.txt").exists():
+              emitir("resumen-archivos", Path("resumen-archivos.txt").read_text(encoding="utf-8", errors="replace"))
+
+          if Path("resumen-nodeids.txt").exists():
+              emitir("resumen-nodeids", Path("resumen-nodeids.txt").read_text(encoding="utf-8", errors="replace"))
+
+          conclusion = os.environ.get("CONCLUSION", "")
+          if conclusion:
+              emitir("conclusion", conclusion)
+
+          if Path("pytest-completo.log").exists():
+              contenido = Path("pytest-completo.log").read_text(encoding="utf-8", errors="replace")
+              lineas = contenido.splitlines()
+              cola = "\n".join(lineas[-80:])
+              emitir("pytest-completo-cola", cola)
+          PY
+        env:
+          CODIGO_SUITE_COMPLETA: ${{ steps.suite_completa.outputs.codigo }}
