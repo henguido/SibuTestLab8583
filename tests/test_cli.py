@@ -379,6 +379,45 @@ def test_format_json_tiene_el_esquema_esperado_y_evaluacion_literal(tmp_path, ca
     assert item["evaluacion"] == json.loads(items_reales[0].evaluacion_json)
 
 
+#: Claves EXACTAS del esquema `run-suite --format json` tal como quedo
+#: publicado en Bloque 5 (VERSION_JSON_CLI=1) -congelado aqui literal, no
+#: derivado de `exportacion_corridas` (Bloque 7), para que un cambio futuro de
+#: ESE modulo no pueda "arrastrar" silenciosamente el contrato ya publicado de
+#: la CLI sin que este test lo note.
+_CLAVES_CORRIDA_JSON_BLOQUE_5 = {
+    "version", "suite_id", "suite_nombre", "corrida_id", "estado", "resultado",
+    "iniciada_en", "finalizada_en", "duracion_s", "contadores", "items",
+}
+_CLAVES_ITEM_JSON_BLOQUE_5 = {
+    "orden", "escenario_id", "escenario_nombre", "resultado", "detalle",
+    "ejecucion_id", "evaluacion",
+}
+
+
+def test_el_esquema_json_de_run_suite_no_cambio_desde_que_bloque_7_reutiliza_el_serializador(
+    tmp_path, capsys
+):
+    """`run-suite --format json` ahora delega en `application/exportacion_corridas.py`
+    (Bloque 7) en vez de construir el dict localmente -ver `cli.py::_run_suite`-.
+    Este test es el candado de regresion contra ese refactor: si alguna vez el
+    modulo neutral agrega/quita/renombra una clave (por ejemplo para una
+    necesidad futura de `export-run`), este test debe fallar antes que
+    cualquier pipeline de CI existente note un JSON con forma distinta.
+    """
+    base = _base(tmp_path)
+    suite_id = _preparar_suite(base, "Suite esquema congelado", [
+        {"nombre": "E1", "expectativas": Expectativas(estado=EstadoEjecucion.APROBADA)},
+    ])
+    composicion = _ComposicionPrueba(base, TransporteFalso(codigo="00"))
+
+    codigo = ejecutar_cli(["run-suite", suite_id, "--format", "json"], composicion=composicion)
+    assert codigo == 0
+
+    datos = json.loads(capsys.readouterr().out)
+    assert set(datos.keys()) == _CLAVES_CORRIDA_JSON_BLOQUE_5
+    assert set(datos["items"][0].keys()) == _CLAVES_ITEM_JSON_BLOQUE_5
+
+
 def test_json_nunca_contiene_pan_ni_mensajes_iso_crudos(tmp_path, capsys):
     base = _base(tmp_path)
     suite_id = _preparar_suite(base, "Suite JSON segura", [
@@ -400,12 +439,16 @@ def test_json_nunca_contiene_pan_ni_mensajes_iso_crudos(tmp_path, capsys):
 def test_json_de_una_corrida_en_curso_no_rompe_y_duracion_es_null():
     """El serializador no debe romper si recibe una corrida sin finalizar,
     aunque `run-suite` normal siempre cierre la corrida antes de imprimir.
+
+    `run-suite --format json` delega en `application/exportacion_corridas.py`
+    (Bloque 7) desde que ese modulo neutral existe -mismo esquema de antes,
+    ninguna clave cambio (ver el comentario sobre "resultado" en ese modulo).
     """
-    from sibutestlab8583.cli import _corrida_a_json
+    from sibutestlab8583.application.exportacion_corridas import reporte_de_corrida
     from sibutestlab8583.domain.modelos import CorridaSuite
 
     corrida = CorridaSuite(suite_id="SUI-x", suite_nombre="X", total=0, corrida_id=1)
-    datos = _corrida_a_json(corrida, [])
+    datos = reporte_de_corrida(corrida, [])
     assert datos["duracion_s"] is None
     assert datos["finalizada_en"] is None
     assert datos["resultado"] is None

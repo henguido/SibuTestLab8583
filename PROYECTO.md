@@ -7,20 +7,51 @@ Entrega y presentación: martes 8 de septiembre de 2026, Sesión 8
 > consigna oficial; todo lo demás de esa consigna —el núcleo, la rúbrica de nueve
 > criterios y las restricciones— aplica igual.
 
+## 0. Estado de implementación (nota de cierre, 2026-09-07)
+
+Este documento es el enunciado original del proyecto, escrito antes de implementar
+nada — sus decisiones y su alcance declarado se conservan tal cual más abajo, sin
+reescribirlos. Esta nota aclara, para quien lo lea al momento del cierre, qué de lo
+descrito ya existe en el código y qué sigue siendo hoja de ruta sin construir.
+
+**Implementado y verificado en el repositorio:**
+- Construcción y envío de la transacción ISO 8583 (0100→0110) contra el host
+  simulado propio.
+- Administración de conexiones (destinos TCP).
+- Tarjetas de prueba sintéticas (generadas en ejecución; nunca un PAN real ni un
+  literal versionado).
+- Escenarios reutilizables, con validación Expected vs Actual.
+- Suites de regresión (agrupan escenarios; PASS/FAIL/ERROR por ítem).
+- Historial y corridas de suite persistidos.
+- CLI (`sibu-run-suite`) para correr suites sin navegador, apta para CI.
+- Integración continua real (GitHub Actions), verificada con un run exitoso.
+- Exportación de corridas a JSON/CSV (`export-run`), si Bloque 7 entra en el
+  cierre publicado.
+
+**Sigue siendo hoja de ruta — NO implementado hoy**, aunque se mencione más abajo
+(secciones 1, 2, 3.8, 7.2 y 9) como parte de la visión original del proyecto:
+- El motor de pruebas de carga y sus métricas (aprobados, rechazados, timeouts,
+  tiempo de respuesta promedio bajo carga).
+- Ejecución paralela o concurrente de transacciones.
+- Cualquier scheduler o programación de corridas.
+- Autenticación, control de acceso, o cualquier paso hacia productización.
+- Perfiles oficiales de Visa/Mastercard/Amex — se usa un catálogo y un perfil
+  genéricos, documentados como tales (ver sección 4, "La decisión difícil").
+
 ## 1. Qué es y para quién
 
 Una aplicación que permite construir mensajes de transacciones ISO 8583 (el protocolo
 que usan las transacciones con tarjeta), enviarlos por una conexión TCP directa, y
-probar tanto que la mensajería esté bien formada como la capacidad de carga del
-sistema que la recibe.
+probar tanto que la mensajería esté bien formada como —en una evolución posterior a
+esta entrega, ver sección 0— la capacidad de carga del sistema que la recibe.
 
 - **Quién lo usa:** ingenieros, equipo de QA o usuarios no expertos de un banco o
   cooperativa que necesite probar su sistema de autorizaciones o switch. **(supuesto)**
   Yo mismo soy el primer usuario; no hay un número fijo de personas porque también se
   imagina como algo que se podría ofrecer a otras personas o instituciones.
 - **Qué dispara el uso:** cuando hay que probar el switch de autorizaciones — sea una
-  prueba puntual de un mensaje, o una prueba de carga y estrés con muchos mensajes
-  simultáneos.
+  prueba puntual de un mensaje, ya implementada, o una prueba de carga y estrés con
+  muchos mensajes simultáneos, planificada como roadmap (ver sección 0).
 
 ## 2. El eje de valor
 
@@ -36,7 +67,7 @@ exacto de cuánto.
 | | Hoy | Con el prototipo | Origen del número |
 |---|---|---|---|
 | Tiempo para armar y ejecutar una prueba | De 10 segundos a horas (muy variable) | Menor y más predecible *(por definir durante el proyecto)* | Estimado |
-| Prueba de carga real contra el switch | No se puede hacer | Sí, con métricas de aprobados, rechazados y timeouts | Eje alterno — capacidad nueva |
+| Prueba de carga real contra el switch | No se puede hacer | Sí, con métricas de aprobados, rechazados y timeouts — **roadmap posterior a la entrega, no implementado en el prototipo actual (ver sección 0)** | Eje alterno — capacidad nueva |
 
 Sobre este eje se van a argumentar el criterio 1 —oportunidad— y el criterio 6 —hoja
 de ruta y retorno—. Los números finales se construyen durante el proyecto; lo que
@@ -55,7 +86,9 @@ queda fijo acá es contra qué se comparan.
 7. Guardar la ejecución: mensaje enviado, respuesta recibida y resultado.
 8. Para pruebas de carga: repetir el envío a razón de decenas de mensajes por
    segundo, y mostrar métricas — aprobados, rechazados, timeouts y tiempo de
-   respuesta promedio.
+   respuesta promedio. **Evolución prevista, no implementada en el prototipo
+   actual — ver sección 0.** Los pasos 1 a 7 sí están implementados y
+   verificados de extremo a extremo.
 
 **Queda afuera a propósito:** retiro, consulta de saldo, reverso, OCT, AFT, refund,
 anulaciones y verificaciones de cuenta — quedan como hoja de ruta. También queda
@@ -111,7 +144,8 @@ marca como trabajo futuro. Esto es lo que voy a defender en la Sesión 8.
    actual de hacer pruebas de carga reales contra el switch.
 2. **La arquitectura se decidió antes que el código.** Tendrá que estar documentado
    cómo se separan el armado del mensaje, la validación, la conexión TCP, el host
-   simulado y el motor de pruebas de carga — sin decidirlo todavía acá.
+   simulado y el futuro motor de pruebas de carga (roadmap, no implementado —
+   ver sección 0) — sin decidirlo todavía acá.
 3. **El prototipo funciona de extremo a extremo y persiste datos de verdad.** El
    recorrido de compra (0100/0110) descrito en la sección 3, con persistencia real de
    mensajes, respuestas y resultados.
@@ -149,7 +183,7 @@ Horas disponibles por semana: **4**. Semanas hasta la entrega: **5**.
 | 4 · 11 de agosto | Repositorio con CLAUDE.md propio; arquitectura con módulos (armado de mensaje, validación, conector TCP, host simulado, persistencia) y sus contratos; diagramas versionados; bitácora abierta |
 | 5 · 18 de agosto | Recorrido de compra (0100/0110) funcionando de extremo a extremo, con persistencia real, contra el host simulado |
 | 6 · 25 de agosto | Pruebas automatizadas de las cuatro reglas corriendo en cada push; refactorización de lo acumulado |
-| 7 · 1.º de septiembre | Skill de arranque para la demostración; motor de pruebas de carga con métricas; escenarios de adopción y riesgos en el documento de negocio |
+| 7 · 1.º de septiembre | Skill de arranque para la demostración; motor de pruebas de carga con métricas *(planificado; no se llegó a implementar — roadmap posterior a la entrega, ver sección 0)*; escenarios de adopción y riesgos en el documento de negocio |
 | 8 · 8 de septiembre | Repositorio completo y presentación |
 
 ## 10. Supuestos declarados

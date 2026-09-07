@@ -33,6 +33,24 @@ def _servicio(base) -> ServicioConexiones:
     return ServicioConexiones(RepositorioDestinosSQLite(base), VerificadorDeConexionTcp())
 
 
+async def _aceptar_y_cerrar(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Handler de conexion para el servidor de prueba de "probar conexion":
+    acepta la conexion y la cierra de inmediato -nunca la deja abierta-.
+
+    Antes este handler era `lambda r, w: None` (acepta y no hace nada). Bajo
+    Python 3.11, `asyncio.Server.wait_closed()` no esperaba de verdad a que
+    las conexiones activas terminaran, asi que dejar el writer sin cerrar
+    nunca se notaba. Python 3.12 corrigio `wait_closed()` para que SI espere
+    -ver gh-123720 en el repositorio de CPython, con el mismo problema real
+    documentado en uvicorn (Kludex/uvicorn#2145)-, y un writer que nadie
+    cierra hace que `async with servidor:` se cuelgue para siempre al salir
+    del bloque. Cerrar aqui el writer explicitamente ya no depende del
+    comportamiento permisivo de una version vieja de Python.
+    """
+    writer.close()
+    await writer.wait_closed()
+
+
 # --------------------------------------------------------------- listar/leer --
 
 
@@ -291,7 +309,7 @@ async def test_probar_una_conexion_inexistente_falla_con_su_propia_excepcion(bas
 
 
 async def test_probar_una_conexion_disponible_da_true(base):
-    servidor = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    servidor = await asyncio.start_server(_aceptar_y_cerrar, "127.0.0.1", 0)
     puerto = servidor.sockets[0].getsockname()[1]
     async with servidor:
         servicio = _servicio(base)
@@ -326,7 +344,7 @@ async def test_probar_no_persiste_ninguna_ejecucion(base):
     """"Probar conexion" no debe dejar rastro en el historial de ejecuciones."""
     import sqlite3
 
-    servidor = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    servidor = await asyncio.start_server(_aceptar_y_cerrar, "127.0.0.1", 0)
     puerto = servidor.sockets[0].getsockname()[1]
     async with servidor:
         servicio = _servicio(base)

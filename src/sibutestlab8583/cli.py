@@ -1,5 +1,6 @@
 """Comando `sibu-run-suite` / `python -m sibutestlab8583.cli`: ejecuta una
-suite de regresion sin navegador, para invocarla desde CI.
+suite de regresion sin navegador, para invocarla desde CI, y exporta el
+reporte de una corrida ya persistida (Bloque 7).
 
 No reimplementa nada: pide la misma `Composicion` que ya arma la web
 (`Configuracion.desde_entorno()`), y delega la ejecucion entera en
@@ -9,6 +10,10 @@ formatea la salida (texto o JSON) a partir del snapshot ya persistido
 (`ItemCorridaSuite.evaluacion_json`), y traduce el resultado a un codigo de
 salida. Nunca vuelve a evaluar Expected vs Actual, nunca recalcula
 `resultado_global`, nunca toca RN-1..RN-4.
+
+`export-run` reutiliza `application/exportacion_corridas.py` -el mismo modulo
+neutral que en el futuro podria reutilizar una ruta web de descarga, sin que
+ninguna de las dos importe a la otra.
 
 Deliberadamente NO levanta `sibu-host-demo`: si la conexion configurada no
 responde, eso es un ERROR por escenario que el corredor ya sabe aislar -no
@@ -21,8 +26,10 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
 from typing import Sequence
 
+from .application import exportacion_corridas
 from .application.corredor_suites import SuiteNoEjecutable
 from .application.presentacion_evaluacion import mensaje_de_discrepancia
 from .composicion import Composicion, Configuracion
@@ -49,6 +56,16 @@ CODIGO_SUITE_NO_EJECUTABLE = 5
 CODIGO_ERROR_CLI = 6
 CODIGO_INTERRUMPIDO = 130
 
+#: `export-run` tiene su PROPIO contrato de codigo de salida, deliberadamente
+#: separado del de arriba: no "corre" nada, solo exporta un reporte de una
+#: corrida ya persistida, asi que su exit code responde a "¿se pudo generar
+#: el reporte?", nunca al resultado (PASS/FAIL/...) de esa corrida -mezclar
+#: ambas preguntas confundiria un comando de solo lectura con uno que hace
+#: que un pipeline dependa del resultado de una suite que ni siquiera corrio
+#: en este invocacion.
+CODIGO_EXPORT_OK = 0
+CODIGO_CORRIDA_NO_ENCONTRADA = 1
+
 MENSAJE_INTERRUMPIDO = (
     "Interrumpido. La corrida puede haber quedado EN CURSO. Revísela en "
     "Suites -> Corridas en la interfaz web."
@@ -56,6 +73,12 @@ MENSAJE_INTERRUMPIDO = (
 MENSAJE_FALLO_TECNICO = (
     "error: fallo técnico inesperado. Verifique la configuración "
     "(SIBU_DB_PATH, la conexión de la suite) o ejecute sibu-init-db."
+)
+MENSAJE_EVALUACION_CORRUPTA = (
+    "error: el reporte no se pudo generar porque los datos de evaluación "
+    "guardados para esta corrida no son JSON válido. No es un problema de "
+    "configuración (SIBU_DB_PATH está bien); la base de datos tiene una "
+    "fila corrupta."
 )
 
 
@@ -92,6 +115,16 @@ def _construir_parser() -> argparse.ArgumentParser:
     )
     ejecutar.add_argument("--format", choices=("text", "json"), default="text")
 
+    exportar = subcomandos.add_parser(
+        "export-run", help="Exporta el reporte de una corrida de suite ya persistida."
+    )
+    exportar.add_argument("corrida_id", type=int, help="Identificador numerico de la corrida.")
+    exportar.add_argument("--format", choices=("json", "csv"), default="json")
+    exportar.add_argument(
+        "--out", default=None,
+        help="Ruta de archivo donde escribir el reporte; si se omite, se imprime a stdout.",
+    )
+
     return parser
 
 
@@ -117,7 +150,10 @@ def ejecutar_cli(argv: Sequence[str], *, composicion: Composicion | None = None)
         return salida.code if isinstance(salida.code, int) else 0
 
     if args.comando is None:
-        print("error: indique un subcomando (list-suites | run-suite).", file=sys.stderr)
+        print(
+            "error: indique un subcomando (list-suites | run-suite | export-run).",
+            file=sys.stderr,
+        )
         return CODIGO_ERROR_CLI
 
     if args.comando == "run-suite":
@@ -136,10 +172,18 @@ def ejecutar_cli(argv: Sequence[str], *, composicion: Composicion | None = None)
     try:
         if args.comando == "list-suites":
             return asyncio.run(_list_suites(composicion, args.format))
+        if args.comando == "export-run":
+            return asyncio.run(_export_run(composicion, args))
         return asyncio.run(_run_suite(composicion, args))
     except KeyboardInterrupt:
         print(MENSAJE_INTERRUMPIDO, file=sys.stderr)
         return CODIGO_INTERRUMPIDO
+    except json.JSONDecodeError:
+        # evaluacion_json corrupto en la fila persistida -distinto de un
+        # problema de configuracion, no debe confundirse con el mensaje
+        # generico de abajo (hallazgo real de Ciclo 1, Agente C).
+        print(MENSAJE_EVALUACION_CORRUPTA, file=sys.stderr)
+        return CODIGO_ERROR_CLI
     except Exception:
         # Nunca str(excepcion)/repr/traceback: un fallo no controlado no debe
         # filtrar detalles tecnicos ni datos crudos a la salida de la CLI.
@@ -184,12 +228,50 @@ async def _run_suite(composicion: Composicion, args) -> int:
     descripciones = composicion.descripciones_de_campos
 
     if args.format == "json":
-        print(json.dumps(_corrida_a_json(corrida, items), ensure_ascii=False))
+        print(exportacion_corridas.reporte_a_json(corrida, items))
     else:
         print(_corrida_a_texto(corrida, items, descripciones))
 
     resultado = corrida.resultado_global.value if corrida.resultado_global else "error"
     return CODIGOS_RESULTADO.get(resultado, CODIGO_ERROR_CLI)
+
+
+async def _export_run(composicion: Composicion, args) -> int:
+    """Exporta el reporte de una corrida YA PERSISTIDA -nunca la ejecuta de
+    nuevo-. A diferencia de `run-suite`, el exit code de este subcomando
+    nunca codifica el resultado de la corrida (ver `CODIGO_EXPORT_OK`).
+    """
+    corrida = await composicion.corridas_suite.obtener(args.corrida_id)
+    if corrida is None:
+        print(f"error: no existe ninguna corrida con id {args.corrida_id}.", file=sys.stderr)
+        return CODIGO_CORRIDA_NO_ENCONTRADA
+
+    items = await composicion.corridas_suite.obtener_items(corrida.corrida_id)
+    descripciones = composicion.descripciones_de_campos
+
+    if args.format == "csv":
+        texto = exportacion_corridas.reporte_a_csv(corrida, items, descripciones)
+    else:
+        texto = exportacion_corridas.reporte_a_json(corrida, items)
+
+    if args.out:
+        # Escritura directa a archivo -sin pasar por stdout- para que un
+        # pipeline no dependa de una redireccion de shell para conservar el
+        # reporte; UTF-8 explicito, igual criterio que `main()` para stdout.
+        # newline="" preserva el "\n" literal que reporte_a_csv/reporte_a_json
+        # ya produjeron -sin esto, en Windows write_text() traduce cada "\n"
+        # a "\r\n" (traduccion de fin de linea del modo texto), contradiciendo
+        # el `lineterminator="\n"` explicito de reporte_a_csv (hallazgo
+        # confirmado en Ciclo 6 del cierre).
+        Path(args.out).write_text(texto, encoding="utf-8", newline="")
+    elif args.format == "csv":
+        # reporte_a_csv() ya termina en "\n" (csv.writer con lineterminator
+        # explicito); print(texto) agregaria un segundo salto de linea al
+        # final, visible como una fila vacia extra para un csv.reader estricto.
+        print(texto, end="")
+    else:
+        print(texto)
+    return CODIGO_EXPORT_OK
 
 
 async def _list_suites(composicion: Composicion, formato: str) -> int:
@@ -223,57 +305,6 @@ async def _list_suites(composicion: Composicion, formato: str) -> int:
 # ------------------------------------------------------------ formateo -----
 
 
-def _duracion_s(corrida) -> float | None:
-    """`None` si la corrida no esta finalizada -no deberia ocurrir en un
-    `run-suite` normal (el corredor siempre cierra antes de devolver), pero
-    el serializador no debe romper si alguna vez recibe una corrida EN_CURSO.
-    """
-    if corrida.finalizada_en is None:
-        return None
-    return (corrida.finalizada_en - corrida.iniciada_en).total_seconds()
-
-
-def _corrida_a_json(corrida, items) -> dict:
-    """Construido campo por campo -nunca `dataclasses.asdict()`-, para que el
-    esquema quede estable y no dependa de la forma interna de `CorridaSuite`.
-    """
-    return {
-        "version": VERSION_JSON_CLI,
-        "suite_id": corrida.suite_id,
-        "suite_nombre": corrida.suite_nombre,
-        "corrida_id": corrida.corrida_id,
-        "estado": corrida.estado.value,
-        "resultado": corrida.resultado_global.value if corrida.resultado_global else None,
-        "iniciada_en": corrida.iniciada_en.isoformat(),
-        "finalizada_en": corrida.finalizada_en.isoformat() if corrida.finalizada_en else None,
-        "duracion_s": _duracion_s(corrida),
-        "contadores": {
-            "total": corrida.total,
-            "pass": corrida.cantidad_pass,
-            "fail": corrida.cantidad_fail,
-            "error": corrida.cantidad_error,
-            "sin_expectativas": corrida.cantidad_sin_expectativas,
-            "no_ejecutado": corrida.cantidad_no_ejecutado,
-        },
-        "items": [_item_a_json(item) for item in items],
-    }
-
-
-def _item_a_json(item) -> dict:
-    return {
-        "orden": item.orden,
-        "escenario_id": item.escenario_id,
-        "escenario_nombre": item.escenario_nombre,
-        "resultado": item.resultado.value,
-        "detalle": item.detalle,
-        "ejecucion_id": item.ejecucion_id,
-        # El snapshot literal del propio item -json.loads, nunca recalculado
-        # ni releido de un escenario vivo-. `None` para ERROR/SIN_EXPECTATIVAS/
-        # NO_EJECUTADO, donde `evaluacion_json` ya es `None`.
-        "evaluacion": json.loads(item.evaluacion_json) if item.evaluacion_json else None,
-    }
-
-
 _ETIQUETAS_RESULTADO_GLOBAL = {
     "pass": "PASS", "fail": "FAIL", "error": "ERROR",
     "incompleta": "INCOMPLETA", "sin_expectativas": "SIN EXPECTATIVAS",
@@ -286,7 +317,7 @@ _ETIQUETAS_RESULTADO_ITEM = {
 
 def _corrida_a_texto(corrida, items, descripciones) -> str:
     resultado = corrida.resultado_global.value if corrida.resultado_global else "en_curso"
-    duracion = _duracion_s(corrida)
+    duracion = exportacion_corridas.duracion_s(corrida)
     lineas = [
         f"Suite: {corrida.suite_nombre}",
         f"Corrida: {corrida.corrida_id}",

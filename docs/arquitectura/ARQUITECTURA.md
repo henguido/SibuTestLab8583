@@ -4,7 +4,10 @@ Documento de arquitectura, con límite de dos páginas más los diagramas versio
 `PROYECTO.md` §7.2). El detalle histórico de cómo se llegó a cada decisión —sub-bloques,
 correcciones de rumbo, retroalimentación— vive en `BITACORA.md`; aquí solo el diseño vigente.
 
-Diagramas: [`componentes.mmd`](componentes.mmd) y [`flujo-compra.mmd`](flujo-compra.mmd).
+Diagramas: [`componentes.mmd`](componentes.mmd) y [`flujo-compra.mmd`](flujo-compra.mmd). Ambos
+ilustran el recorrido único `0100 → TCP → 0110` (núcleo transaccional); Escenarios, Suites, CLI,
+Integración CI y Reportes (Bloques 5-7) se documentan en la tabla de módulos de abajo y en
+`docs/ci/INTEGRACION_CI.md`, sin diagrama propio todavía.
 
 ## Estado actual
 
@@ -12,8 +15,10 @@ Implementado: web, composición, orquestador, consultas, perfiles, codec ISO 858
 framing, transporte TCP, persistencia SQLite, generador de STAN, host simulado, administración
 web de tarjetas y de destinos (Conexiones), la derivación pura de Track 1/Track 2, escenarios
 reutilizables con expected-vs-actual, suites de regresión con su corredor secuencial, una CLI
-(`sibu-run-suite`) que ejecuta una suite sin navegador, apta para CI, y una integración CI
-genérica de referencia (GitHub Actions) que la invoca automáticamente en cada push —ver
+(`sibu-run-suite`) que ejecuta una suite sin navegador, apta para CI, una integración CI
+genérica de referencia (GitHub Actions) que la invoca automáticamente en cada push, y un
+reporte portable de una corrida (JSON/CSV, `export-run`) reutilizando su snapshot histórico
+-ver
 `docs/ci/INTEGRACION_CI.md`. **Sin implementar:** motor de carga, perfiles reales de Visa y
 Mastercard, modo avanzado ISO 8583, isoscopio 2.0. La
 arquitectura está cubierta por pruebas automatizadas y CI; el estado exacto de la suite se
@@ -60,7 +65,8 @@ importa un adaptador. Tres límites que no se cruzan:
 | **Host simulado** | Proceso aparte | Servidor TCP que recibe `0100` y responde `0110` según el catálogo configurado. Reutiliza codec y framing |
 | **Escenarios** | Aplicación | `ServicioEscenarios`: casos reutilizables (guardar, editar, duplicar, activar/desactivar), con expectativas opcionales (expected-vs-actual) evaluadas por el propio `Orquestador` |
 | **Suites y corredor** | Aplicación | `ServicioSuites` agrupa escenarios en un orden fijo; `CorredorDeSuites` los ejecuta secuencialmente reutilizando `EjecutorDeEscenarios` (la misma resolución que usa la reejecución individual), persiste cada `CorridaSuite`/`ItemCorridaSuite` y calcula el resultado global (PASS/FAIL/ERROR/INCOMPLETA/SIN_EXPECTATIVAS) |
-| **CLI (`sibu-run-suite`)** | Interfaz | Ejecuta una suite sin navegador, apta para CI: mismo `CorredorDeSuites` que la web, códigos de salida por resultado, salida texto o JSON. No depende de `web/` |
+| **CLI (`sibu-run-suite`)** | Interfaz | Ejecuta una suite sin navegador, apta para CI: mismo `CorredorDeSuites` que la web, códigos de salida por resultado, salida texto o JSON. `export-run` exporta el reporte de una corrida ya persistida (JSON/CSV, Bloque 7). No depende de `web/` |
+| **Exportación de corridas** | Aplicación | `application/exportacion_corridas.py`: servicio neutral que arma el reporte (JSON/CSV) de una `CorridaSuite` ya persistida desde su propio snapshot histórico -nunca relee escenario/suite/expectativas vigentes-. Reutilizado hoy por `export-run`; ninguna interfaz depende de otra |
 | **Integración CI** | Scripts + adaptador | `scripts/sembrar_suite_demo.py` (siembra idempotente), `scripts/ci_esperar_host.py` (espera TCP), `scripts/verificar_artefacto_seguro.py` (guardia sobre el artefacto); todo reutilizable por cualquier proveedor. `.github/workflows/ci-suite-demo.yml` es la única pieza específica de GitHub. Detalle en `docs/ci/INTEGRACION_CI.md` |
 | **Motor de carga** | *Fase posterior* | Repite el recorrido con múltiples tareas concurrentes y agrega métricas. **No implementado** |
 

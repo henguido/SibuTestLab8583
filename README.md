@@ -97,7 +97,9 @@ Abrir en el navegador: **http://127.0.0.1:8000/**
 
 1. Abrir **Nueva transacción** (pantalla inicial).
 2. Elegir la tarjeta **`DEMO-0001`**.
-3. Ejecutar la compra.
+3. Escribir un monto en el campo **Monto** (el valor que se ve ahí, ej. `150.00`,
+   es solo un placeholder de ejemplo, no un valor precargado — el formulario no
+   se envía si se deja vacío) y ejecutar la compra.
 4. Revisar el resultado: estado, código de respuesta e isoscopio con los campos ISO 8583
    (el número de tarjeta siempre enmascarado, `************6666`).
 5. Ir a **Historial** — la ejecución queda listada.
@@ -171,6 +173,24 @@ Este mismo comando es lo que ejecuta automáticamente el pipeline de CI de refer
 (`.github/workflows/ci-suite-demo.yml`) en cada push — ver
 [`docs/ci/INTEGRACION_CI.md`](docs/ci/INTEGRACION_CI.md) para el flujo completo (siembra de
 datos, host demo, exit codes, artefacto) y cómo adaptarlo a Jenkins/Azure DevOps/GitLab.
+
+## Exportar el reporte de una corrida ya persistida
+
+`export-run` arma un reporte portable y autosuficiente (JSON o CSV) de una corrida **ya
+registrada**, a partir de su propio snapshot histórico — nunca vuelve a ejecutar la suite, ni
+relee el escenario/suite/expectativas tal como están hoy (que pueden haber cambiado desde
+entonces). Es distinto de `run-suite`: su código de salida solo dice si el reporte se pudo
+generar (`0`) o si la corrida no existe (`1`), nunca codifica PASS/FAIL/etc. de esa corrida.
+
+```bash
+sibu-run-suite export-run 42 --format json
+sibu-run-suite export-run 42 --format csv --out reporte.csv
+```
+
+El CSV tiene una fila por escenario de la corrida, con columnas estables (incluidos los datos
+de la corrida repetidos en cada fila, para que el archivo sea autosuficiente). Ni el JSON ni el
+CSV contienen PAN, PIN, Track1/Track2 ni mensajes ISO crudos — solo lo que el snapshot de la
+corrida ya tenía persistido.
 
 ## Ejecutar las pruebas
 

@@ -1856,3 +1856,120 @@ configuración desactualizada, la ejecución mecánica de las suites de pruebas,
 de documentación —incluido este mismo `SKILL.md`— y las auditorías realizadas en paralelo
 mediante subagentes. Ningún resultado delegado se aceptó sin presentarse antes para
 revisión, en particular antes de cualquier `git add`, `commit` o `push`.
+
+---
+
+## 2026-09-06 · Cuelgue de CI en Python 3.12 y Bloque 7 (exportación de corridas)
+
+**Hallazgo: el job "Suite en Python 3.12" de `tests.yml` se colgaba indefinidamente**, hasta el
+timeout de 6 horas de GitHub. Causa raíz: dos pruebas de `tests/test_conexiones_administracion.py`
+levantaban un servidor TCP de prueba con `asyncio.start_server(lambda r, w: None, ...)` —un
+handler que acepta la conexión y nunca cierra el `writer`—. Bajo Python 3.11,
+`asyncio.Server.wait_closed()` no esperaba de verdad a que las conexiones activas terminaran
+(casi un no-op), así que dejar el writer abierto nunca se notaba. Python 3.12 corrigió ese
+comportamiento (issue documentado en el propio repositorio de CPython, gh-123720, con el mismo
+problema real ya parcheado en uvicorn), y una conexión que nadie cierra hace que
+`Server.wait_closed()` —y por lo tanto `async with servidor:` al salir del bloque— se cuelgue
+para siempre.
+
+**Cómo se aisló.** Se reprodujo el cuelgue real en GitHub Actions, no solo localmente, usando una
+rama temporal (`diagnostico/python312-hang`) para no tocar `main`. Se comparó el mismo nodeid
+(`test_probar_una_conexion_disponible_da_true`) en Python 3.11.16, 3.12.14 y 3.13.15 antes y
+después del cambio, confirmando que el comportamiento distinto entre versiones era la causa, no
+una falla intermitente del runner.
+
+**Corrección aplicada.** El handler pasa a ser una función (`_aceptar_y_cerrar`) que cierra el
+writer explícitamente (`writer.close(); await writer.wait_closed()`) en vez de depender del
+comportamiento permisivo de Python 3.11. Tras el cambio, el mismo nodeid da PASS en las tres
+versiones, y el workflow `tests.yml` completo —sin ninguna otra modificación— corrió en verde en
+Python 3.12 en la rama de diagnóstico. **Pendiente de commit a `main`.**
+
+**Bloque 7: exportación de una corrida ya persistida.** Nuevo servicio neutral
+`application/exportacion_corridas.py` (JSON versión 1 y CSV) y subcomando
+`sibu-run-suite export-run CORRIDA_ID --format json|csv [--out ARCHIVO]`, reutilizado por
+`cli.py` sin que ninguna interfaz dependa de otra —mismo criterio de desacoplamiento que ya usa
+`application/presentacion_evaluacion.py`—. Deliberadamente sin PDF, sin Excel y sin HTML: son
+formatos fuera de lo pedido para un reporte portable de CI. El exit code de `export-run` es un
+contrato propio, separado del de `run-suite`: solo distingue si el reporte se pudo generar (`0`)
+o si la corrida no existe (`1`), nunca codifica el resultado (PASS/FAIL/...) de esa corrida.
+Auditado en paralelo por seis perspectivas (arquitectura, seguridad, CSV/JSON, CLI/Windows,
+persistencia, calidad de tests), sin hallazgos P0. **Pendiente de commit a `main`.**
+
+---
+
+## 2026-09-07 · Ciclo 6 de cierre: cuatro correcciones sobre Bloque 7 y su cobertura
+
+Auditoría final cruzada sobre el working tree sin commitear (Bloque 7 + fix de Python 3.12).
+Cuatro hallazgos puntuales, corregidos en el mismo ciclo:
+
+**1. `export-run --format csv` a stdout imprimía una línea en blanco de más.**
+`reporte_a_csv()` ya termina en `"\n"` (usa `csv.writer` con `lineterminator="\n"`), pero la
+rama de impresión a stdout de `cli.py` volvía a hacer `print(texto)`, que agrega su propio
+salto de línea final —doble salto visible al final de la salida—. Corregido distinguiendo esa
+rama: cuando el destino es stdout y el formato es CSV, se usa `print(texto, end="")` en vez de
+`print(texto)`, en vez de tocar `reporte_a_csv()` (que ya era correcto y lo sigue usando `--out`
+sin cambios).
+
+**2. Mensaje de error genérico y engañoso ante `evaluacion_json` corrupto.** Si la fila
+persistida de una corrida tenía `evaluacion_json` con JSON inválido, `export-run` capturaba la
+excepción en el `except Exception` genérico de `ejecutar_cli()` e imprimía
+`MENSAJE_FALLO_TECNICO`, que sugiere revisar `SIBU_DB_PATH` o la conexión de la suite —ninguna
+de las dos cosas es la causa real—. Se agrega un `except json.JSONDecodeError` específico,
+antes del genérico, con el nuevo `MENSAJE_EVALUACION_CORRUPTA`, que nombra la causa real (fila
+corrupta en la base) y aclara explícitamente que no es un problema de configuración.
+
+**3. Test tautológico en `tests/test_politica_campos.py`.**
+`test_la_capa_estructural_gana_aunque_la_validacion_no_existiera` armaba el diccionario de
+campos a mano (partiendo de `valores_por_defecto`, aplicando el `update` con los valores
+manipulados y luego el `update` con los valores correctos) y afirmaba sobre ESE diccionario
+armado a mano —nunca invocaba `armar_compra`—. Pasaba sin importar si `armar_compra` hiciera lo
+que el docstring decía. Reescrito para invocar `armar_compra` real con los mismos campos
+manipulados; como `validar_campos_manuales` normalmente rechazaría ese `campos_manuales` con
+`CampoProtegido` antes de llegar al merge estructural que el test quiere ejercer, se neutraliza
+esa validación con `monkeypatch.setattr` para poder llegar al camino real que se quería probar.
+
+**4. `export-run --out archivo` en Windows no respetaba el `"\n"` explícito.**
+`Path.write_text()` sin `newline=""` traduce, en modo texto de Windows, cada `"\n"` a
+`"\r\n"` -contradiciendo el `lineterminator="\n"` que `reporte_a_csv()` elige a propósito
+(ver su propio docstring) para evitar fin de línea mixto. Confirmado con una prueba directa
+(`Path.write_text("a,b\n", encoding="utf-8")` produce `b"a,b\r\n"` en esta máquina). Corregido
+agregando `newline=""` a esa llamada, tanto para CSV como para JSON con `--out`.
+
+Suite completa: **897 pruebas** (antes 895), cifra verificada con `pytest -q --collect-only`
+sobre el working tree, no estimada. El test de `test_politica_campos.py` fue reescrito, no
+agregado -no suma a la cuenta-; el incremento neto de +2 viene de dos pruebas nuevas de este
+mismo ciclo: `test_export_run_con_evaluacion_json_corrupta_da_mensaje_especifico_no_generico`
+(hallazgo 2) y `test_export_run_csv_a_archivo_no_traduce_los_saltos_de_linea_en_windows`
+(hallazgo 4), ambas en `tests/test_cli_export_run.py`.
+Ninguna de las tres correcciones cambia comportamiento fuera de lo descrito arriba; ninguna
+toca RN-1..RN-4 ni el esquema JSON ya publicado de `run-suite` (ese mismo test lo deja como
+candado explícito). **Pendiente de commit a `main`**, junto con Bloque 7 y el fix de Python
+3.12.
+
+## 2026-09-07 · Decisión de cierre: cifra final de pruebas y corrección de alcance en PROYECTO.md
+
+Revisión final antes de staging. Dos decisiones de gobernanza:
+
+**1. Cifra de pruebas para publicar: 897.** Confirmado que `pytest -q` sobre el working
+tree final (Bloque 7 + fix de Python 3.12 + las cuatro correcciones del Ciclo 6) da
+`897 passed`. Se decide que esa es la cifra de cierre que se publica -CONTEXTO.md y la
+propuesta de presentación se actualizaron para reflejarla como estado final, no como
+estimación provisional. Esta entrada no reemplaza las cifras históricas ya registradas
+(436, 895) en entradas anteriores de esta bitácora ni en `PRESENTACION.md`: cada una
+describe el estado real de un momento distinto del proyecto, y se conservan tal cual.
+
+**2. Corrección de alcance en `PROYECTO.md`.** La nota "Estado de implementación"
+agregada el 2026-09-07 (ver entrada anterior de ese mismo día) no bastaba: las secciones
+1, 2, 3 (paso 8), 7.2 y 9 (semana 7) seguían redactadas de forma que un lector podía
+interpretar el motor de pruebas de carga como parte de la entrega actual. Se agregaron
+anotaciones puntuales e inequívocas en cada una de esas menciones -"roadmap posterior a
+la entrega", "evolución prevista, no implementada", "planificado; no se llegó a
+implementar"-, sin reescribir el documento, sin eliminar el motor de carga del roadmap,
+y sin tocar ninguna otra sección. Se revisó además todo el documento buscando menciones
+de concurrencia, scheduler, autenticación, productización y perfiles Visa/Mastercard: las
+únicas que existían ya estaban correctamente enmarcadas como trabajo futuro (sección 4,
+"La decisión difícil", y la nueva sección 0); no hicieron falta más cambios.
+
+Verificación final tras ambas decisiones: `pytest -q` → 897 passed; guardia PAN
+(`test_seguridad_auditoria.py`) → 3 passed; `git diff --check` limpio. Sin commit ni push
+a `main` todavía -queda para la etapa de staging, fuera de esta revisión.

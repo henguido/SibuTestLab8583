@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-03
+**Última actualización:** 2026-09-07
 
 ## Estado actual
 
@@ -14,8 +14,26 @@ laboratorio, la administración visual de catálogos y de destinos, la integraci
 Track 1/Track 2 en el mensaje ISO, los perfiles reales de marca, el isoscopio 2.0 y el motor
 de carga— pasan a trabajo futuro sin fecha, sin haberse eliminado del horizonte del proyecto.
 El trabajo activo pasa al cierre académico: documentación final, documento de negocio,
-arquitectura, presentación y revisión contra la consigna. CI en verde en Python 3.11, 3.12 y
-3.13.
+arquitectura, presentación y revisión contra la consigna.
+
+Tras el congelamiento del 2026-08-26, se retomó trabajo funcional adicional no cubierto por
+esa decisión: Bloque 5 —escenarios reutilizables (`ServicioEscenarios`), validación
+expected-vs-actual, suites de regresión (`ServicioSuites`, `CorredorDeSuites`) y una CLI
+`sibu-run-suite` para ejecutarlas sin navegador— y Bloque 6 —integración CI genérica de
+referencia (`scripts/ci_esperar_host.py`, `scripts/sembrar_suite_demo.py`,
+`scripts/verificar_artefacto_seguro.py`, `.github/workflows/ci-suite-demo.yml`), documentada
+en `docs/ci/INTEGRACION_CI.md`—. Ambos ya están commiteados e implementados; no son parte del
+congelamiento de Fase 1 (Configuración), que sigue vigente tal como se decidió.
+
+Sin commitear todavía en el working tree: Bloque 7 —reporte portable JSON/CSV de una corrida
+ya persistida (`sibu-run-suite export-run`, `application/exportacion_corridas.py`)—, la
+corrección de un cuelgue de CI en Python 3.12 en `tests/test_conexiones_administracion.py`
+(ver «Historial de avances», 2026-09-06), y cuatro correcciones puntuales del Ciclo 6 de cierre
+(2026-09-07): el doble salto de línea de `export-run --format csv` a stdout, un mensaje de
+error específico para `evaluacion_json` corrupto en la CLI, un test de
+`tests/test_politica_campos.py` que antes no invocaba `armar_compra` de verdad, y `newline=""`
+al escribir `--out` para que Windows no traduzca los `\n` deliberados a `\r\n` (ver «Historial
+de avances», 2026-09-07).
 
 | | |
 |---|---|
@@ -36,8 +54,11 @@ clasifica según el **catálogo persistido en SQLite**, leído en cada compra me
 paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma idempotente.
 Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
 enmascarado, e historial **navegable**: cada ejecución tiene su detalle en `/historial/{id}`,
-con los campos ISO de la solicitud y de la respuesta. **436 pruebas en verde**, incluidas 29
-específicas de RN-1 a RN-4 (`tests/test_reglas_negocio.py`). El CI ejecuta la suite en Python
+con los campos ISO de la solicitud y de la respuesta. **897 pruebas en verde — cifra de
+cierre que se publica**, con Bloque 7, el fix de Python 3.12 y las cuatro correcciones del
+Ciclo 6 ya incluidas (decisión tomada en la revisión final del 2026-09-07; ver «Historial de
+avances» para el detalle de cada corrección), incluidas 29 específicas de RN-1 a RN-4
+(`tests/test_reglas_negocio.py`). El CI ejecuta la suite en Python
 3.11, 3.12 y 3.13, corre aparte las cuatro reglas de negocio, y en un job propio
 (`clon-limpio`) comprueba que el repositorio no contenga artefactos locales versionados y que
 se instale respetando el metadata declarado. Aparte de eso, y de forma manual —no es
@@ -153,8 +174,10 @@ Documento completo en `docs/arquitectura/ARQUITECTURA.md`, con diagramas version
 Dirección de dependencia: `web → application service → dominio/puertos → adaptadores`.
 
 Módulos implementados: web, composición, orquestador, consultas, perfiles, codec ISO 8583,
-validación, framing, transporte TCP, persistencia, generador de STAN y host simulado.
-Pendiente: motor de carga.
+validación, framing, transporte TCP, persistencia, generador de STAN, host simulado,
+escenarios reutilizables, suites de regresión con su corredor, CLI de suites (Bloque 5),
+integración CI genérica de referencia (Bloque 6) y reporte de exportación de corridas en
+JSON/CSV (Bloque 7). Pendiente: motor de carga.
 
 El número de trazabilidad (campo 11) lo entrega el puerto `GeneradorStan`, con una secuencia
 persistente en la tabla `secuencias` e incrementada con una sola sentencia
@@ -242,6 +265,15 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-08-26 | Decisión: se congela el crecimiento funcional —incluida la Fase 1 restante y el motor de carga— para priorizar el cierre de entregables académicos. `PROYECTO.md` no se modifica. Decisión de trabajo, sin commit propio |
 | 2026-09-03 | `README.md` y `demo.cmd`: procedimiento manual y camino rápido de arranque en Windows. Reproducibilidad desde clon limpio validada manualmente en dos máquinas distintas; CRLF ajustado en `.gitattributes` para `.cmd`. Commit `633be24` |
 | 2026-09-03 | Skill de Claude Code `levantar-demo` (`.claude/skills/levantar-demo/SKILL.md`): reutiliza `demo.cmd` y verifica HTTP y TCP de forma independiente, sin remediación automática. Commit `ba07853` |
+| 2026-09-04 | Mejora del constructor ISO y gestión de conexiones. Commit `044a565` |
+| 2026-09-04 | Escenarios reutilizables (`ServicioEscenarios`) y reejecución de una transacción guardada. Commit `c75f67e` |
+| 2026-09-04 | Bloque 5: validación expected-vs-actual sobre una ejecución, con defensa en profundidad en `Orquestador.ejecutar_compra` además de la capa web. Commit `1aad67f` |
+| 2026-09-04 | Bloque 5: suites de regresión (`ServicioSuites`, `CorredorDeSuites`), ejecución secuencial con aislamiento de fallas por escenario, snapshot histórico inmutable de cada corrida. Commit `97ae8cb` |
+| 2026-09-05 | Bloque 5: CLI `sibu-run-suite` (`list-suites`/`run-suite`, texto o JSON, códigos de salida 0-6/130), reutilizando el mismo `CorredorDeSuites` que la web. Auditoría nocturna: fix de FK real en `RepositorioCorridasSuiteSQLite.actualizar_item`, cobertura de seguridad/persistencia ampliada. Commit `2b5b268` |
+| 2026-09-05 | Bloque 6: integración CI genérica de referencia (`scripts/ci_esperar_host.py`, `scripts/sembrar_suite_demo.py`, `scripts/verificar_artefacto_seguro.py`), workflow `.github/workflows/ci-suite-demo.yml`, documentado en `docs/ci/INTEGRACION_CI.md`. Ejecutado y verificado en GitHub Actions real (run 34001652509, SUCCESS). Commit `da8eb72` |
+| 2026-09-06 | Hallazgo de CI: el job "Suite en Python 3.12" de `tests.yml` se colgaba indefinidamente. Causa raíz: `tests/test_conexiones_administracion.py` usaba un handler de conexión (`lambda r, w: None`) que nunca cerraba el `writer`; bajo Python 3.11 `asyncio.Server.wait_closed()` no esperaba de verdad las conexiones activas (casi no-op), y Python 3.12 lo corrigió (CPython gh-123720, mismo problema real ya parcheado en uvicorn), por lo que una conexión sin cerrar cuelga `async with servidor:` para siempre. Reproducido en real en GitHub Actions (rama temporal `diagnostico/python312-hang`); corregido cerrando el writer explícitamente en el handler. Mismo nodeid verificado PASS en 3.11.16, 3.12.14 y 3.13.15 tras el fix |
+| 2026-09-06 | Bloque 7: reporte portable de una corrida ya persistida, JSON (versión 1) y CSV, vía `sibu-run-suite export-run CORRIDA_ID --format json|csv [--out ARCHIVO]`, en el servicio neutral nuevo `application/exportacion_corridas.py`, reutilizado por `cli.py` sin acoplar interfaces entre sí. Sin PDF/Excel/HTML. Auditado en paralelo (arquitectura, seguridad, CSV/JSON, CLI/Windows, persistencia, calidad de tests), sin hallazgos P0 |
+| 2026-09-07 | Ciclo 6 de cierre: cuatro correcciones puntuales sobre Bloque 7 y su cobertura. (1) `export-run --format csv` a stdout imprimía una línea en blanco de más (doble salto de línea); corregido en `cli.py`. (2) La CLI mostraba el mensaje genérico de fallo técnico cuando `evaluacion_json` de una corrida persistida no era JSON válido; se agrega `MENSAJE_EVALUACION_CORRUPTA` para ese caso específico. (3) `tests/test_politica_campos.py::test_la_capa_estructural_gana_aunque_la_validacion_no_existiera` era tautológico -armaba el merge a mano en vez de invocar `armar_compra`-; reescrito para invocar `armar_compra` real, neutralizando `validar_campos_manuales` con `monkeypatch` para poder ejercer el camino que esa validación normalmente bloquea. (4) `export-run --out archivo` en Windows traducía cada `\n` a `\r\n` pese al `lineterminator="\n"` explícito de `reporte_a_csv` (`Path.write_text()` sin `newline=""`); corregido agregando `newline=""`. Suite completa: 897 pruebas (antes 895) |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -311,6 +343,11 @@ para lo que el CI ya aportó evidencia.
 | `README.md` | Procedimiento manual completo: clonar, instalar, inicializar, levantar y probar |
 | `demo.cmd` | Camino rápido de arranque en Windows; reproduce los mismos pasos operativos que `README.md` |
 | `.claude/skills/levantar-demo/SKILL.md` | Skill de Claude Code: ejecuta `demo.cmd` y verifica HTTP/TCP de forma independiente |
+| `src/sibutestlab8583/cli.py` | CLI `sibu-run-suite`: `list-suites`/`run-suite`/`export-run`, texto/JSON/CSV, códigos de salida para CI |
+| `src/sibutestlab8583/application/exportacion_corridas.py` | Bloque 7: reporte neutral (JSON/CSV) de una corrida ya persistida, reutilizable por CLI y web |
+| `scripts/` | Utilidades de pipeline para Bloque 6 (no son parte del paquete instalado): siembra demo idempotente, espera TCP, guardia de seguridad del artefacto |
+| `.github/workflows/ci-suite-demo.yml` | Bloque 6: workflow de referencia que ejecuta una suite demo end-to-end en GitHub Actions |
+| `docs/ci/INTEGRACION_CI.md` | Contrato de integración CI genérico y su adaptación a otros proveedores |
 
 Para levantar el proyecto desde cero: crear un entorno virtual, `pip install -e ".[dev]"`,
 `sibu-init-db` y `pytest`. La demostración usa dos terminales: `sibu-host-demo` levanta el host

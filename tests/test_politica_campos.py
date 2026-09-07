@@ -234,26 +234,34 @@ def test_detecta_un_campo_que_dejo_de_ser_editable():
     assert "automatico" in problemas[0]
 
 
-def test_la_capa_estructural_gana_aunque_la_validacion_no_existiera():
+def test_la_capa_estructural_gana_aunque_la_validacion_no_existiera(monkeypatch):
     """Defensa en profundidad: aunque `campos_manuales` ya trajera un campo
     derivado -sin pasar por `validar_campos_manuales`-, el merge estructural de
     `armar_compra` lo pisa igual. No depende de la validacion previa para ser
-    correcto.
+    correcta.
+
+    Para probar esto de verdad (no solo simular el merge a mano), se
+    neutraliza `validar_campos_manuales` -que normalmente rechazaria este
+    `campos_manuales` con `CampoProtegido` antes de llegar al merge- y se
+    invoca `armar_compra` real con un campo derivado (2) y uno automatico (11)
+    manipulados. Si el merge estructural no ganara, el mensaje resultante
+    tendria el PAN falso "9"*16 y el STAN "999999".
     """
+    monkeypatch.setattr(armado, "validar_campos_manuales", lambda *a, **k: None)
     tarjeta = _tarjeta()
     campos_manuales_manipulados = {"2": "9" * 16, "11": "999999"}
-    campos = dict(PERFIL_GENERICO.politica("0100").valores_por_defecto)
-    campos.update(campos_manuales_manipulados)
-    campos.update(
-        {
-            "2": tarjeta.pan,
-            "4": armado.formatear_monto(Decimal("10.00")),
-            "7": MOMENTO.strftime("%m%d%H%M%S"),
-            "11": "000001",
-            "12": MOMENTO.strftime("%H%M%S"),
-            "13": MOMENTO.strftime("%m%d"),
-            "14": tarjeta.expiracion,
-        }
+
+    mensaje = armar_compra(
+        DatosCompra(
+            card_id="X",
+            monto=Decimal("10.00"),
+            campos_manuales=campos_manuales_manipulados,
+        ),
+        tarjeta,
+        stan="000001",
+        momento=MOMENTO,
+        perfil=PERFIL_GENERICO,
     )
-    assert campos["2"] == tarjeta.pan
-    assert campos["11"] == "000001"
+
+    assert mensaje.campos["2"] == tarjeta.pan
+    assert mensaje.campos["11"] == "000001"
