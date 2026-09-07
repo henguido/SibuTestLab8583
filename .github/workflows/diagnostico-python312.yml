@@ -27,12 +27,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configurar Python ${{ matrix.python }}
+        id: setup_python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
 
       - name: Version exacta
-        run: python --version
+        run: |
+          python --version
+          python -VV
 
       - name: Extraer las dependencias declaradas en pyproject.toml
         run: |
@@ -82,7 +85,7 @@ jobs:
       - name: Emitir resultado como anotacion publica
         if: always()
         run: |
-          echo "::notice title=resultado-python-${{ matrix.python }}::python=${{ matrix.python }} resultado=${RESULTADO:-desconocido} codigo=${{ steps.nodeid_sospechoso.outputs.codigo }}"
+          echo "::notice title=resultado-python-${{ matrix.python }}::python-version=${{ steps.setup_python.outputs.python-version }} resultado=${RESULTADO:-desconocido} codigo=${{ steps.nodeid_sospechoso.outputs.codigo }}"
 
   diagnostico-3-12:
     name: Diagnostico Python 3.12
