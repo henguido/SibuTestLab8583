@@ -1,0 +1,276 @@
+name: Diagnostico Python 3.12 (temporal, no oficial)
+
+# Workflow DIAGNOSTICO, no es parte del CI oficial: existe solo en la rama
+# diagnostico/python312-hang para investigar por que "Suite en Python 3.12"
+# de tests.yml (commit da8eb7299a389527843d3fe39c6d39a385d03525) quedo
+# colgado hasta el timeout por defecto de GitHub Actions (6 horas). No se
+# fusiona a main. No agrega dependencias nuevas.
+on:
+  push:
+    branches: [diagnostico/python312-hang]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostico-3-12:
+    name: Diagnostico Python 3.12
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Confirmar version exacta de Python y de asyncio
+        run: |
+          echo "== python --version =="
+          python --version
+          echo "== python -VV =="
+          python -VV
+          echo "== sys.version =="
+          python -c "import sys; print(sys.version)"
+          echo "== asyncio.__file__ =="
+          python -c "import asyncio; print(asyncio.__file__)"
+
+      - name: Extraer las dependencias declaradas en pyproject.toml
+        # Identico al workflow oficial (tests.yml): misma lectura de
+        # pyproject.toml con tomllib, sin una segunda lista que mantener.
+        run: |
+          python - "$RUNNER_TEMP/requisitos.txt" <<'PY'
+          import pathlib
+          import sys
+          import tomllib
+
+          destino = pathlib.Path(sys.argv[1])
+          proyecto = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]
+
+          requisitos = list(proyecto.get("dependencies", []))
+          requisitos += list(proyecto.get("optional-dependencies", {}).get("dev", []))
+
+          destino.write_text("\n".join(requisitos) + "\n", encoding="utf-8")
+          print("Dependencias que se instalaran normalmente:")
+          for requisito in requisitos:
+              print(f"  {requisito}")
+          PY
+
+      - name: Instalar las dependencias respetando su propia compatibilidad
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "$RUNNER_TEMP/requisitos.txt"
+
+      - name: Instalar solo nuestro paquete
+        run: python -m pip install --no-deps --ignore-requires-python -e .
+
+      - name: Versiones realmente instaladas
+        run: python -m pip list
+
+      - name: FASE 3 - Suite completa acotada a 5 minutos
+        id: suite_completa
+        run: |
+          set +e
+          timeout 300s python -m pytest -vv > pytest-completo.log 2>&1
+          codigo=$?
+          set -e
+          echo "codigo=$codigo" >> "$GITHUB_OUTPUT"
+          echo "Codigo de salida de la suite completa: $codigo"
+          if [ "$codigo" -eq 124 ]; then
+            echo "TIMEOUT REPRODUCIDO"
+          else
+            echo "La suite completa NO se colgo en esta corrida (codigo $codigo)."
+          fi
+          echo "== ultimas 100 lineas del log =="
+          tail -n 100 pytest-completo.log
+
+      - name: Guardia de seguridad sobre el log antes de publicarlo
+        if: always()
+        run: |
+          python - <<'PY'
+          import re, sys
+          from pathlib import Path
+
+          ruta = Path("pytest-completo.log")
+          if not ruta.exists():
+              print("no hay log que revisar todavia")
+              raise SystemExit(0)
+          contenido = ruta.read_text(encoding="utf-8", errors="replace")
+          patron_pan = re.compile(r"(?<!\d)\d{12,19}(?!\d)")
+          hallazgos = []
+          for numero, linea in enumerate(contenido.splitlines(), start=1):
+              for coincidencia in patron_pan.findall(linea):
+                  hallazgos.append(f"linea {numero}: secuencia de {len(coincidencia)} digitos")
+          if hallazgos:
+              print("error: el log NO es seguro para publicar como artefacto:")
+              for h in hallazgos:
+                  print(" ", h)
+              raise SystemExit(1)
+          print("log limpio: sin secuencias con forma de PAN. Apto para publicar.")
+          PY
+
+      - name: Subir pytest-completo.log como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostico-pytest-completo
+          path: pytest-completo.log
+          if-no-files-found: warn
+
+      - name: FASE 4 - Aislar por archivo (solo si la suite completa se colgo)
+        if: steps.suite_completa.outputs.codigo == '124'
+        run: |
+          set +e
+          echo "archivo|resultado|codigo|duracion_s" > resumen-archivos.txt
+
+          # Orden de revision: primero los senalados explicitamente, despues
+          # el resto en orden alfabetico, sin repetir.
+          prioritarios="tests/test_integracion_end_to_end.py tests/test_semantica_comunicacion.py tests/test_cli.py tests/test_auditoria_cobertura.py tests/test_ci_esperar_host.py tests/test_sembrar_suite_demo.py"
+          resto=$(ls tests/test_*.py | sort)
+          orden=""
+          for f in $prioritarios; do
+            if [ -f "$f" ]; then
+              orden="$orden $f"
+            fi
+          done
+          for f in $resto; do
+            case " $orden " in
+              *" $f "*) ;;
+              *) orden="$orden $f" ;;
+            esac
+          done
+
+          encontrado_hang=0
+          for archivo in $orden; do
+            nombre_log="archivo-$(basename "$archivo" .py).log"
+            inicio=$(date +%s)
+            timeout 45s python -m pytest -q "$archivo" > "$nombre_log" 2>&1
+            codigo=$?
+            fin=$(date +%s)
+            duracion=$((fin - inicio))
+
+            if [ "$codigo" -eq 124 ]; then
+              resultado="HANG"
+            elif [ "$codigo" -eq 0 ]; then
+              resultado="PASS"
+            else
+              resultado="FAIL(codigo=$codigo)"
+            fi
+            echo "$archivo|$resultado|$codigo|${duracion}s" | tee -a resumen-archivos.txt
+            echo "ARCHIVO_SOSPECHOSO=$archivo" >> "$GITHUB_ENV"
+            echo "CODIGO_ARCHIVO_SOSPECHOSO=$codigo" >> "$GITHUB_ENV"
+
+            if [ "$codigo" -eq 124 ]; then
+              encontrado_hang=1
+              echo "HANG encontrado en $archivo -- detengo la busqueda por archivo."
+              break
+            fi
+          done
+
+          echo "ENCONTRADO_HANG_ARCHIVO=$encontrado_hang" >> "$GITHUB_ENV"
+          echo "== resumen-archivos.txt =="
+          cat resumen-archivos.txt
+          set -e
+
+      - name: FASE 5 - Aislar nodeid exacto (solo si un archivo se colgo)
+        if: steps.suite_completa.outputs.codigo == '124' && env.ENCONTRADO_HANG_ARCHIVO == '1'
+        run: |
+          set +e
+          archivo="$ARCHIVO_SOSPECHOSO"
+          echo "Archivo sospechoso: $archivo"
+
+          python -m pytest --collect-only -q "$archivo" > nodeids.txt 2>&1
+          echo "== nodeids recolectados =="
+          cat nodeids.txt
+
+          echo "nodeid|resultado|codigo|duracion_s" > resumen-nodeids.txt
+          todos_pasan=1
+          nodeid_colgado=""
+
+          while IFS= read -r nodeid; do
+            case "$nodeid" in
+              *::*) ;;
+              *) continue ;;
+            esac
+            inicio=$(date +%s)
+            timeout 30s python -m pytest -q "$nodeid" > "nodeid-$(echo "$nodeid" | tr '/:' '__').log" 2>&1
+            codigo=$?
+            fin=$(date +%s)
+            duracion=$((fin - inicio))
+
+            if [ "$codigo" -eq 124 ]; then
+              resultado="HANG"
+              todos_pasan=0
+              nodeid_colgado="$nodeid"
+            elif [ "$codigo" -eq 0 ]; then
+              resultado="PASS"
+            else
+              resultado="FAIL(codigo=$codigo)"
+              todos_pasan=0
+            fi
+            echo "$nodeid|$resultado|$codigo|${duracion}s" | tee -a resumen-nodeids.txt
+
+            if [ "$codigo" -eq 124 ]; then
+              echo "HANG encontrado en nodeid exacto: $nodeid"
+              break
+            fi
+          done < nodeids.txt
+
+          if [ -n "$nodeid_colgado" ]; then
+            echo "NODEID_SOSPECHOSO=$nodeid_colgado" >> "$GITHUB_ENV"
+            echo "CONCLUSION=test individual cuelga solo" >> "$GITHUB_ENV"
+          elif [ "$todos_pasan" -eq 1 ]; then
+            echo "CONCLUSION=INTERACCION ENTRE TESTS -- todos los nodeids de $archivo pasan individualmente" >> "$GITHUB_ENV"
+          else
+            echo "CONCLUSION=algun nodeid fallo (no colgo) de forma aislada, revisar resumen-nodeids.txt" >> "$GITHUB_ENV"
+          fi
+
+          echo "== resumen-nodeids.txt =="
+          cat resumen-nodeids.txt
+          echo "== CONCLUSION =="
+          echo "$CONCLUSION"
+          set -e
+
+      - name: Publicar resumen final
+        if: always()
+        run: |
+          {
+            echo "# Diagnostico Python 3.12"
+            echo ""
+            echo "Codigo suite completa: ${{ steps.suite_completa.outputs.codigo }}"
+            echo ""
+            if [ -f resumen-archivos.txt ]; then
+              echo "## Resumen por archivo"
+              echo '```'
+              cat resumen-archivos.txt
+              echo '```'
+            fi
+            if [ -f resumen-nodeids.txt ]; then
+              echo "## Resumen por nodeid"
+              echo '```'
+              cat resumen-nodeids.txt
+              echo '```'
+            fi
+            echo ""
+            echo "Conclusion: ${CONCLUSION:-no se llego a una conclusion de nodeid (ver logs)}"
+          } | tee resumen-diagnostico.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Subir logs y resumenes como artefactos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostico-detalle
+          path: |
+            resumen-diagnostico.md
+            resumen-archivos.txt
+            resumen-nodeids.txt
+            archivo-*.log
+            nodeid-*.log
+            nodeids.txt
+          if-no-files-found: ignore
