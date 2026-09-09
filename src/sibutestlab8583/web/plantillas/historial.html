@@ -12,15 +12,82 @@
   </p>
 </div>
 
+{% if error %}
+<div class="aviso error">
+  <h2 class="aviso__titulo">Revise los filtros</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
 <section class="panel">
   <div class="panel__cabecera">
-    <h2 class="panel__titulo">Ejecuciones recientes</h2>
+    <h2 class="panel__titulo">Filtros</h2>
+  </div>
+  <div class="panel__cuerpo">
+    <form method="get" action="/historial" class="rejilla">
+      <div class="campo">
+        <label class="campo__rotulo" for="f-desde">Desde</label>
+        <input type="date" id="f-desde" name="desde" value="{{ filtro_valores.desde }}">
+      </div>
+      <div class="campo">
+        <label class="campo__rotulo" for="f-hasta">Hasta</label>
+        <input type="date" id="f-hasta" name="hasta" value="{{ filtro_valores.hasta }}">
+      </div>
+      <div class="campo">
+        <label class="campo__rotulo" for="f-estado">Estado de la transacción</label>
+        <select id="f-estado" name="estado">
+          <option value="" {{ 'selected' if not filtro_valores.estado }}>Todos</option>
+          {% for estado_valor in estados_ejecucion %}
+          <option value="{{ estado_valor.value }}" {{ 'selected' if estado_valor.value == filtro_valores.estado }}>
+            {{ avisos[estado_valor].etiqueta }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo">
+        <label class="campo__rotulo" for="f-evaluacion">Expectativa</label>
+        <select id="f-evaluacion" name="evaluacion">
+          <option value="" {{ 'selected' if not filtro_valores.evaluacion }}>Todas</option>
+          <option value="pass" {{ 'selected' if filtro_valores.evaluacion == 'pass' }}>PASS</option>
+          <option value="fail" {{ 'selected' if filtro_valores.evaluacion == 'fail' }}>FAIL</option>
+          <option value="sin_expectativas" {{ 'selected' if filtro_valores.evaluacion == 'sin_expectativas' }}>
+            Sin expectativas
+          </option>
+        </select>
+      </div>
+      <div class="campo campo--mono">
+        <label class="campo__rotulo" for="f-card">Tarjeta (card_id)</label>
+        <input type="text" id="f-card" name="card_id" autocomplete="off" value="{{ filtro_valores.card_id }}">
+      </div>
+      <div class="campo campo--mono">
+        <label class="campo__rotulo" for="f-destino">Destino (host o host:puerto)</label>
+        <input type="text" id="f-destino" name="destino" autocomplete="off" value="{{ filtro_valores.destino }}">
+      </div>
+      <div class="campo campo--mono">
+        <label class="campo__rotulo" for="f-stan">STAN</label>
+        <input type="text" id="f-stan" name="stan" autocomplete="off" value="{{ filtro_valores.stan }}">
+      </div>
+      <div class="acciones">
+        <button class="boton" type="submit">Filtrar</button>
+        {% if hay_filtros %}
+        <a class="volver" href="/historial">Quitar filtros</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</section>
+
+{% if pagina_resultado %}
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Ejecuciones</h2>
     <span class="panel__nota">
-      {{ ejecuciones|length }} registro{{ 's' if ejecuciones|length != 1 }}
+      {{ pagina_resultado.total }} registro{{ 's' if pagina_resultado.total != 1 }}
+      · página {{ pagina_resultado.pagina }} de {{ pagina_resultado.total_paginas }}
     </span>
   </div>
-  {% if ejecuciones %}
-  <div class="desplazable" tabindex="0" role="region" aria-label="Ejecuciones recientes">
+  {% if pagina_resultado.ejecuciones %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Ejecuciones">
     <table class="tabla">
       <thead>
         <tr>
@@ -40,7 +107,7 @@
         {# `data-estado` lleva el valor exacto del estado, para poder leer la
            tabla con una herramienta sin depender del rotulo visible ni de una
            clase de estilo. Nunca transporta datos de tarjeta. #}
-        {% for ejecucion in ejecuciones %}
+        {% for ejecucion in pagina_resultado.ejecuciones %}
         <tr data-estado="{{ ejecucion.estado.value }}">
           <td class="mono">{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
           <td class="mono">{{ ejecucion.stan }}</td>
@@ -86,14 +153,30 @@
       </tbody>
     </table>
   </div>
+  {% if pagina_resultado.hay_anterior or pagina_resultado.hay_siguiente %}
+  <div class="panel__cuerpo paginacion">
+    {% if pagina_resultado.hay_anterior %}
+    <a class="boton" href="/historial?pagina={{ pagina_resultado.pagina - 1 }}{{ '&' ~ query_filtros if query_filtros }}">&larr; Anterior</a>
+    {% endif %}
+    <span class="panel__nota">Página {{ pagina_resultado.pagina }} de {{ pagina_resultado.total_paginas }}</span>
+    {% if pagina_resultado.hay_siguiente %}
+    <a class="boton" href="/historial?pagina={{ pagina_resultado.pagina + 1 }}{{ '&' ~ query_filtros if query_filtros }}">Siguiente &rarr;</a>
+    {% endif %}
+  </div>
+  {% endif %}
   {% else %}
   <div class="panel__cuerpo">
     <p class="vacio">
+      {% if hay_filtros %}
+      La búsqueda no encontró ejecuciones con estos filtros. <a href="/historial">Quitar filtros</a>.
+      {% else %}
       Todavía no hay ejecuciones registradas. Ejecute una transacción para ver el registro.
+      {% endif %}
     </p>
   </div>
   {% endif %}
 </section>
+{% endif %}
 
 <a class="volver" href="/">&larr; Nueva transacción</a>
 {% endblock %}

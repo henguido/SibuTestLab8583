@@ -112,6 +112,40 @@ async def test_cargar_un_escenario_prellena_el_constructor():
     assert f'value="{DESTINO_ID_DEMO}"' in html or DESTINO_ID_DEMO in html
 
 
+async def test_cambiar_conexion_con_un_escenario_cargado_conserva_el_vinculo():
+    """El boton "Cambiar" vive dentro del mismo `<form>` que ya lleva el campo
+    oculto `escenario_id`: el POST a `cambiar_conexion` debe reenviarlo, para
+    que el escenario cargado siga siendo el mismo despues de cambiar de
+    conexion -no se pierde el vinculo ni sus posibles bloqueos.
+    """
+    cliente, composicion = _cliente()
+    async with cliente:
+        respuesta = await cliente.post(
+            "/escenarios", data={**FORMULARIO_ESCENARIO, "monto": "77.50"}
+        )
+        escenario_id = _escenario_id_de(respuesta)
+
+        html_cargado = (await cliente.get(f"/?escenario_id={escenario_id}")).text
+        assert f'value="{escenario_id}"' in html_cargado  # campo oculto presente
+
+        html_tras_cambiar = (
+            await cliente.post(
+                "/",
+                data={
+                    "conexion_id": DESTINO_ID_DEMO,
+                    "escenario_id": escenario_id,
+                    "ir_a_conexion": DESTINO_ID_DEMO,
+                    "card_id": CARD_ID_DEMO,
+                    "monto": "77.50",
+                    "nombre": "",
+                },
+            )
+        ).text
+
+    assert f'name="escenario_id" value="{escenario_id}"' in html_tras_cambiar
+    assert "77.50" in html_tras_cambiar
+
+
 async def test_cargar_un_escenario_con_tarjeta_no_disponible_no_sustituye_en_silencio():
     cliente, composicion = _cliente(
         tarjetas=[

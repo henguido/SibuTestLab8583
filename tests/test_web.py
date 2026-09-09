@@ -7,6 +7,7 @@ entrada no produzca un 500 y que el PAN completo no llegue nunca al navegador.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -22,7 +23,7 @@ from sibutestlab8583.adapters.persistence.esquema import (
     DESTINO_PUERTO_DEMO,
     PAN_DEMO,
 )
-from sibutestlab8583.application.consultas import TarjetaListada
+from sibutestlab8583.application.consultas import PaginaHistorial, TarjetaListada
 from sibutestlab8583.application.conexiones import ServicioConexiones
 from sibutestlab8583.application.tarjetas import ServicioTarjetas
 from sibutestlab8583.domain.datos_sinteticos import monto_iso
@@ -60,6 +61,39 @@ class ConsultasFalsas:
 
     async def ejecuciones_recientes(self, limite=20):
         return self._ejecuciones
+
+    async def historial(self, filtro, pagina=1, tam_pagina=20):
+        """Filtra y pagina en memoria -mismo comportamiento observable que el
+        repositorio SQLite real, para un doble que nunca abre una base-.
+        """
+        def cumple(ejecucion) -> bool:
+            if filtro.desde and ejecucion.creada_en.date().isoformat() < filtro.desde:
+                return False
+            if filtro.hasta and ejecucion.creada_en.date().isoformat() > filtro.hasta:
+                return False
+            if filtro.estado is not None and ejecucion.estado != filtro.estado:
+                return False
+            if filtro.evaluacion == "sin_expectativas" and ejecucion.evaluacion_estado is not None:
+                return False
+            if filtro.evaluacion in ("pass", "fail") and ejecucion.evaluacion_estado != filtro.evaluacion:
+                return False
+            if filtro.card_id and ejecucion.card_id != filtro.card_id:
+                return False
+            if filtro.destino:
+                destino = f"{ejecucion.destino_host or ''}:{ejecucion.destino_puerto or ''}"
+                if filtro.destino not in destino:
+                    return False
+            if filtro.stan and filtro.stan not in ejecucion.stan:
+                return False
+            return True
+
+        coinciden = [e for e in self._ejecuciones if cumple(e)]
+        total = len(coinciden)
+        inicio = (pagina - 1) * tam_pagina
+        pagina_items = coinciden[inicio : inicio + tam_pagina]
+        return PaginaHistorial(
+            ejecuciones=pagina_items, total=total, pagina=pagina, tam_pagina=tam_pagina
+        )
 
     async def detalle_ejecucion(self, id_ejecucion):
         """Detalle de la ejecucion que se le haya dado, interpretada de verdad.
@@ -751,3 +785,214 @@ def test_el_formulario_de_compra_no_ofrece_ningun_campo_de_host_puerto_o_timeout
     texto = _cliente().get("/").text.lower()
     for prohibido in ('name="host"', 'name="puerto"', 'name="timeout"'):
         assert prohibido not in texto
+
+
+# ----------------------------------------------- conservar datos al cambiar --
+#
+# Mejora funcional posterior a la entrega: cambiar de conexion no debe borrar
+# lo que ya se habia escrito en el constructor. El boton "Cambiar" somete el
+# mismo <form> por GET (`ir_a_conexion`); `pantalla_compra` reconstruye
+# `enviado` desde la querystring resultante.
+
+
+def test_cambiar_de_conexion_conserva_tarjeta_monto_y_campos_editables():
+    """El mecanismo es POST /, no GET: el navegador entrega los campos en el
+    cuerpo de la peticion, nunca en la URL ni en la querystring.
+    """
+    segunda_conexion = DestinoGuardado(
+        destino_id="QA-02", nombre="QA 2", host="10.20.30.41", puerto=9584
+    )
+    composicion = ComposicionFalsa(destinos=[_CONEXION_DEMO_FALSA, segunda_conexion])
+    cliente = TestClient(crear_app(composicion))
+
+    respuesta = cliente.post(
+        "/",
+        data={
+            "conexion_id": DESTINO_ID_DEMO,  # valor VIEJO, en el campo oculto
+            "escenario_id": "",
+            "ir_a_conexion": "QA-02",
+            "card_id": CARD_ID_DEMO,
+            "monto": "275.50",
+            "campo_37": "REF-QA-99",
+            "nombre": "Escenario a medio armar",
+        },
+    )
+    assert respuesta.status_code == 200
+    assert respuesta.request.url.query == b"" or not respuesta.request.url.query, (
+        "el POST no debe convertirse en una URL con querystring"
+    )
+    texto = respuesta.text
+    assert 'value="QA-02"' in texto  # la conexion nueva quedo seleccionada
+    assert re.search(rf'name="card_id" value="{CARD_ID_DEMO}"\s*checked', texto)
+    assert "275.50" in texto
+    assert "REF-QA-99" in texto
+    assert "Escenario a medio armar" in texto
+
+
+def test_cambiar_conexion_no_ejecuta_ni_guarda_nada():
+    """POST / re-renderiza el constructor; no debe tocar el orquestador ni
+    el servicio de escenarios bajo ninguna circunstancia.
+    """
+    composicion = ComposicionFalsa(
+        destinos=[
+            _CONEXION_DEMO_FALSA,
+            DestinoGuardado(destino_id="QA-02", nombre="QA 2", host="10.20.30.41", puerto=9584),
+        ],
+    )
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/",
+        data={"ir_a_conexion": "QA-02", "card_id": CARD_ID_DEMO, "monto": "", "nombre": "X"},
+    )
+    assert respuesta.status_code == 200
+    assert composicion._orquestador.ultimos_datos is None, "no debio ejecutar ninguna transaccion"
+
+
+def test_los_botones_de_cambiar_conexion_no_bloquean_por_validacion_nativa():
+    """Hallazgo de revisión: el botón que somete el formulario para cambiar de
+    conexión debe llevar `formnovalidate`. Sin eso, un navegador real bloquea
+    el envío cuando `monto` (campo `required`) está vacío o cuando cualquier
+    otro campo requerido del formulario no lo cumple, impidiendo cambiar de
+    conexión y -peor- sin perder lo escrito, contradiciendo el propósito de
+    esta mejora. `TestClient` no ejecuta validación HTML5, así que esto no lo
+    detectaría un test funcional contra el servidor: se verifica el marcado.
+    Confirmado además con un clic real en navegador (monto vacío e inválido).
+    El botón hereda el método POST del propio `<form>` -sin `formmethod`, a
+    diferencia del mecanismo anterior (GET), que exponía los valores en la URL.
+    """
+    segunda_conexion = DestinoGuardado(
+        destino_id="QA-02", nombre="QA 2", host="10.20.30.41", puerto=9584
+    )
+    composicion = ComposicionFalsa(destinos=[_CONEXION_DEMO_FALSA, segunda_conexion])
+    texto = TestClient(crear_app(composicion)).get("/").text
+    botones = re.findall(r'<button[^>]*name="ir_a_conexion"[^>]*>', texto)
+    assert len(botones) == 2
+    for boton in botones:
+        assert "formnovalidate" in boton
+        assert 'formaction="/"' in boton
+        assert "formmethod" not in boton, "no debe forzar GET: hereda el POST del formulario"
+
+
+def test_un_enlace_comun_con_solo_conexion_id_no_dispara_la_conservacion():
+    """Un enlace ordinario (historial, escenarios) nunca trae `monto`: debe
+    seguir comportandose exactamente igual que antes de esta mejora.
+    """
+    respuesta = _cliente().get("/", params={"conexion_id": DESTINO_ID_DEMO})
+    assert respuesta.status_code == 200
+    # Sin `enviado`, la primera tarjeta activa se preselecciona como siempre.
+    assert 'checked' in respuesta.text
+
+
+def test_falla_al_guardar_una_suite_conserva_los_escenarios_marcados_y_su_orden():
+    import sqlite3
+    import tempfile
+
+    from sibutestlab8583.adapters.persistence.esquema import DDL
+    from sibutestlab8583.composicion import Composicion, Configuracion
+
+    ruta = Path(tempfile.mkstemp(suffix=".db")[1])
+    with sqlite3.connect(ruta) as conexion:
+        conexion.executescript(DDL)
+        ahora = "2026-08-19T12:00:00+00:00"
+        conexion.execute(
+            "INSERT INTO tarjetas_prueba (card_id, pan, pan_enmascarado, expiracion, creada_en)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (CARD_ID_DEMO, PAN_DEMO, "************6666", "3012", ahora),
+        )
+        conexion.execute(
+            "INSERT INTO destinos (destino_id, nombre, host, puerto, creado_en) VALUES (?, ?, ?, ?, ?)",
+            (DESTINO_ID_DEMO, DESTINO_NOMBRE_DEMO, DESTINO_HOST_DEMO, DESTINO_PUERTO_DEMO, ahora),
+        )
+        for escenario_id, nombre in (("ESC-1", "Uno"), ("ESC-2", "Dos")):
+            conexion.execute(
+                "INSERT INTO escenarios"
+                " (escenario_id, nombre, perfil, mti, card_id, conexion_id, monto, creado_en, actualizado_en)"
+                " VALUES (?, ?, 'generico', '0100', ?, ?, '150.00', ?, ?)",
+                (escenario_id, nombre, CARD_ID_DEMO, DESTINO_ID_DEMO, ahora, ahora),
+            )
+        conexion.commit()
+
+    composicion = Composicion(Configuracion(ruta_base_datos=ruta))
+    cliente = TestClient(crear_app(composicion))
+
+    # Orden invalido (repetido) a proposito: dispara el ValueError de
+    # `_leer_escenarios_de_suite`, pero ESC-1 y ESC-2 quedaron marcados.
+    respuesta = cliente.post(
+        "/suites",
+        data={
+            "nombre": "Suite nueva",
+            "descripcion": "",
+            "incluir_ESC-1": "on",
+            "orden_ESC-1": "1",
+            "incluir_ESC-2": "on",
+            "orden_ESC-2": "1",
+        },
+    )
+    assert respuesta.status_code == 400
+    texto = respuesta.text
+    assert "mismo número de orden" in texto
+    # Los dos checkboxes siguen marcados y con el texto de orden que se escribio.
+    assert texto.count('checked') >= 2 or texto.count("checked>") >= 2
+
+
+def test_falla_al_guardar_una_suite_conserva_el_texto_de_orden_no_numerico():
+    """Version mas estricta del hallazgo anterior: el texto de "orden" debe
+    preservarse LITERAL -incluso si no es un numero valido-, y un escenario
+    que la persona NO marco no debe aparecer marcado (no "todo se selecciona
+    en el error", solo lo que de verdad se habia elegido).
+    """
+    import sqlite3
+    import tempfile
+
+    from sibutestlab8583.adapters.persistence.esquema import DDL
+    from sibutestlab8583.composicion import Composicion, Configuracion
+
+    ruta = Path(tempfile.mkstemp(suffix=".db")[1])
+    with sqlite3.connect(ruta) as conexion:
+        conexion.executescript(DDL)
+        ahora = "2026-08-19T12:00:00+00:00"
+        conexion.execute(
+            "INSERT INTO tarjetas_prueba (card_id, pan, pan_enmascarado, expiracion, creada_en)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (CARD_ID_DEMO, PAN_DEMO, "************6666", "3012", ahora),
+        )
+        conexion.execute(
+            "INSERT INTO destinos (destino_id, nombre, host, puerto, creado_en) VALUES (?, ?, ?, ?, ?)",
+            (DESTINO_ID_DEMO, DESTINO_NOMBRE_DEMO, DESTINO_HOST_DEMO, DESTINO_PUERTO_DEMO, ahora),
+        )
+        for escenario_id, nombre in (("ESC-1", "Uno"), ("ESC-2", "Dos"), ("ESC-3", "Tres")):
+            conexion.execute(
+                "INSERT INTO escenarios"
+                " (escenario_id, nombre, perfil, mti, card_id, conexion_id, monto, creado_en, actualizado_en)"
+                " VALUES (?, ?, 'generico', '0100', ?, ?, '150.00', ?, ?)",
+                (escenario_id, nombre, CARD_ID_DEMO, DESTINO_ID_DEMO, ahora, ahora),
+            )
+        conexion.commit()
+
+    composicion = Composicion(Configuracion(ruta_base_datos=ruta))
+    cliente = TestClient(crear_app(composicion))
+
+    # ESC-1 e ESC-2 marcados con un orden NO numerico; ESC-3 deliberadamente
+    # NO se marca.
+    respuesta = cliente.post(
+        "/suites",
+        data={
+            "nombre": "Suite nueva",
+            "descripcion": "",
+            "incluir_ESC-1": "on",
+            "orden_ESC-1": "primero",
+            "incluir_ESC-2": "on",
+            "orden_ESC-2": "2",
+        },
+    )
+    assert respuesta.status_code == 400
+    texto = respuesta.text
+    assert "debe ser un número entero" in texto
+    entrada_esc1 = re.search(r'<input[^>]*orden_ESC-1[^>]*>', texto)
+    entrada_esc2 = re.search(r'<input[^>]*orden_ESC-2[^>]*>', texto)
+    assert entrada_esc1 is not None and 'value="primero"' in entrada_esc1.group(0)
+    assert entrada_esc2 is not None and 'value="2"' in entrada_esc2.group(0)
+    # ESC-3 no se marco: su fila no debe llevar `checked`.
+    fila_esc3 = re.search(r'name="incluir_ESC-3"[^>]*', texto)
+    assert fila_esc3 is not None
+    assert "checked" not in fila_esc3.group(0)

@@ -47,38 +47,52 @@
 </div>
 {% endif %}
 
-<div class="conexion-barra">
-  {% if conexion_actual %}
-  <span class="chip chip--sintetica">Sin verificar</span>
-  <span class="conexion-barra__texto">
-    <strong>{{ conexion_actual.nombre }}</strong>
-    <span class="mono">{{ conexion_actual.host }}:{{ conexion_actual.puerto }}</span>
-  </span>
-  {% else %}
-  <span class="conexion-barra__texto">
-    Sin conexiones activas. <a href="/configuracion/conexiones">Administrar conexiones</a>.
-  </span>
-  {% endif %}
-
-  {% if conexiones|length > 1 %}
-  <details class="cambiar-conexion">
-    <summary>Cambiar</summary>
-    <div class="tarjetas">
-      {% for conexion in conexiones %}
-      <a class="tarjeta{{ ' tarjeta--seleccionada' if conexion_actual and conexion.conexion_id == conexion_actual.conexion_id }}"
-         href="/?conexion_id={{ conexion.conexion_id }}{{ '&escenario_id=' ~ escenario_actual.escenario_id if escenario_actual }}">
-        <span class="tarjeta__id">{{ conexion.nombre }}</span>
-        <span class="tarjeta__pan">{{ conexion.host }}:{{ conexion.puerto }}</span>
-      </a>
-      {% endfor %}
-    </div>
-  </details>
-  {% endif %}
-</div>
-
 <form method="post" action="/compra" id="formulario-constructor">
   <input type="hidden" name="conexion_id" value="{{ conexion_id }}">
   <input type="hidden" name="escenario_id" value="{{ escenario_actual.escenario_id if escenario_actual else '' }}">
+
+  {# El selector de conexion vive DENTRO del formulario a proposito: el boton
+     "Cambiar" somete el formulario entero por POST a "/" (hereda el metodo
+     del propio <form>; sin `formmethod`, a diferencia del resto de botones
+     de esta pantalla, que si cambian de metodo/destino) -asi el navegador
+     entrega TODOS los campos ya escritos (tarjeta, monto, campos editables,
+     expectativas, nombre de escenario) en el CUERPO de la peticion, nunca en
+     la URL: no quedan en el historial del navegador ni en el log de acceso
+     del servidor. `cambiar_conexion` (POST /) los recupera y vuelve a
+     renderizar esta misma pantalla, sin ejecutar ninguna transaccion ni
+     guardar ningun escenario. `formnovalidate` evita que un `monto` vacio o
+     invalido (campo `required`) bloquee el cambio de conexion. El boton usa
+     su propio nombre, `ir_a_conexion`, para no chocar con el campo oculto
+     `conexion_id` de arriba (ese lleva el valor VIEJO, antes del cambio). #}
+  <div class="conexion-barra">
+    {% if conexion_actual %}
+    <span class="chip chip--sintetica">Sin verificar</span>
+    <span class="conexion-barra__texto">
+      <strong>{{ conexion_actual.nombre }}</strong>
+      <span class="mono">{{ conexion_actual.host }}:{{ conexion_actual.puerto }}</span>
+    </span>
+    {% else %}
+    <span class="conexion-barra__texto">
+      Sin conexiones activas. <a href="/configuracion/conexiones">Administrar conexiones</a>.
+    </span>
+    {% endif %}
+
+    {% if conexiones|length > 1 %}
+    <details class="cambiar-conexion">
+      <summary>Cambiar</summary>
+      <div class="tarjetas">
+        {% for conexion in conexiones %}
+        <button type="submit" formaction="/" formnovalidate
+                name="ir_a_conexion" value="{{ conexion.conexion_id }}"
+                class="tarjeta tarjeta--boton{{ ' tarjeta--seleccionada' if conexion_actual and conexion.conexion_id == conexion_actual.conexion_id }}">
+          <span class="tarjeta__id">{{ conexion.nombre }}</span>
+          <span class="tarjeta__pan">{{ conexion.host }}:{{ conexion.puerto }}</span>
+        </button>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
 
   <section class="panel">
     <div class="panel__cabecera">
@@ -233,7 +247,7 @@
     </details>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="guardar-como-escenario">
     <div class="panel__cabecera">
       <h2 class="panel__titulo">Guardar como escenario</h2>
     </div>

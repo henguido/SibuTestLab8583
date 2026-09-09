@@ -27,6 +27,7 @@ from ...domain.modelos import (
     EstadoCorridaSuite,
     EstadoEjecucion,
     EstadoItemCorrida,
+    FiltroHistorial,
     ItemCorridaSuite,
     ResultadoGlobalSuite,
     Suite,
@@ -267,6 +268,61 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
             ) as cursor:
                 filas = await cursor.fetchall()
         return [_a_ejecucion(f) for f in filas]
+
+    async def buscar(
+        self, filtro: FiltroHistorial, pagina: int, tam_pagina: int
+    ) -> tuple[Sequence[Ejecucion], int]:
+        """Filtra y pagina sobre `ejecuciones`. Ver `RepositorioEjecuciones.buscar`.
+
+        El WHERE se arma con fragmentos fijos (nunca interpola el valor del
+        usuario en el texto SQL: todo valor viaja como parametro) segun que
+        criterios de `filtro` esten presentes -mismo principio que ya aplica
+        `_leer_escenarios_de_suite` en la web: nunca se reinterpreta en
+        silencio, y aqui nunca se concatena una entrada sin parametrizar.
+        """
+        condiciones: list[str] = []
+        parametros: list[object] = []
+
+        if filtro.desde:
+            condiciones.append("date(creada_en) >= date(?)")
+            parametros.append(filtro.desde)
+        if filtro.hasta:
+            condiciones.append("date(creada_en) <= date(?)")
+            parametros.append(filtro.hasta)
+        if filtro.estado is not None:
+            condiciones.append("estado = ?")
+            parametros.append(filtro.estado.value)
+        if filtro.evaluacion == "sin_expectativas":
+            condiciones.append("evaluacion_estado IS NULL")
+        elif filtro.evaluacion in ("pass", "fail"):
+            condiciones.append("evaluacion_estado = ?")
+            parametros.append(filtro.evaluacion)
+        if filtro.card_id:
+            condiciones.append("card_id = ?")
+            parametros.append(filtro.card_id)
+        if filtro.destino:
+            condiciones.append("(destino_host || ':' || COALESCE(destino_puerto, '')) LIKE ?")
+            parametros.append(f"%{filtro.destino}%")
+        if filtro.stan:
+            condiciones.append("stan LIKE ?")
+            parametros.append(f"%{filtro.stan}%")
+
+        where = f" WHERE {' AND '.join(condiciones)}" if condiciones else ""
+
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                f"SELECT COUNT(*) AS total FROM ejecuciones{where}", parametros
+            ) as cursor:
+                total = (await cursor.fetchone())["total"]
+
+            desplazamiento = (pagina - 1) * tam_pagina
+            async with conexion.execute(
+                f"SELECT * FROM ejecuciones{where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                (*parametros, tam_pagina, desplazamiento),
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_ejecucion(f) for f in filas], total
 
 
 class RepositorioDestinosSQLite(_RepositorioSQLite):

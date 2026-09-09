@@ -18,7 +18,9 @@ servidor valida todo lo que llega, exista o no JavaScript en el cliente.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -46,7 +48,11 @@ from ..application.tarjetas import (
 )
 from ..composicion import Composicion, Configuracion
 from ..domain.errores import ErrorDelSimulador
-from ..domain.expectativas import campos_permitidos_expectativa, validar_expectativas
+from ..domain.expectativas import (
+    campos_permitidos_expectativa,
+    expectativas_desde_dict,
+    validar_expectativas,
+)
 from ..domain.modelos import (
     MTI_COMPRA,
     MTI_RESPUESTA_COMPRA,
@@ -84,16 +90,94 @@ def obtener_composicion() -> Composicion:
 @enrutador.get("/", response_class=HTMLResponse)
 async def pantalla_compra(
     request: Request,
-    # Query, no Form: cambiar de conexion es una navegacion (GET), no un envio
-    # de formulario. Sin JavaScript, "Cambiar conexion" es una lista de enlaces
-    # a "/?conexion_id=...", y esto es lo que cada uno resuelve. "Cargar" un
-    # escenario funciona igual: "/?escenario_id=...".
+    # Query, no Form: son enlaces sueltos (historial, escenarios), no el envio
+    # de un formulario. Cambiar de conexion sin perder lo escrito usa un
+    # mecanismo aparte -ver `cambiar_conexion`, POST- precisamente para que
+    # los valores del constructor no viajen en la URL.
     conexion_id: str | None = Query(None),
     escenario_id: str | None = Query(None),
+    # Presente cuando se llega desde "Editar y volver a ejecutar" o "Guardar
+    # como escenario" del resultado de una ejecucion pasada (`/historial/{id}`
+    # y `resultado.html` enlazan aqui). Se ignora si la navegacion ya trae
+    # `escenario_id` (cargar un escenario sigue siendo la fuente de verdad
+    # para ese caso).
+    ejecucion_id: str | None = Query(None),
     composicion: Composicion = Depends(obtener_composicion),
 ):
+    enviado = None
+    error_carga = None
+    if ejecucion_id and not escenario_id:
+        try:
+            numero = int(ejecucion_id)
+        except ValueError:
+            numero = None
+        reconstruido = (
+            await _reconstruir_desde_ejecucion(composicion, numero) if numero is not None else None
+        )
+        if reconstruido is None:
+            return await _formulario(
+                request, composicion,
+                error="La ejecución que se quiere reutilizar no existe o ya no está disponible.",
+                estado_http=404,
+            )
+        enviado, conexion_id_resuelta, error_carga = reconstruido
+        if conexion_id_resuelta is not None:
+            conexion_id = conexion_id_resuelta
+
     return await _formulario(
-        request, composicion, conexion_id=conexion_id, escenario_id=escenario_id
+        request,
+        composicion,
+        conexion_id=conexion_id,
+        escenario_id=escenario_id,
+        enviado=enviado,
+        error=error_carga,
+    )
+
+
+@enrutador.post("/", response_class=HTMLResponse)
+async def cambiar_conexion(
+    request: Request,
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """Cambia la conexion elegida en el constructor SIN perder lo que ya
+    estaba escrito -tarjeta, monto, campos editables, expectativas, nombre
+    del escenario- y SIN ejecutar ninguna transaccion ni guardar ningun
+    escenario: solo vuelve a renderizar `compra.html` con el estado enviado y
+    la conexion nueva. Es el destino del boton "Cambiar" de la barra de
+    conexion, que vive dentro del mismo `<form>` del constructor con
+    `formaction="/"` (metodo POST, heredado del formulario) y
+    `formnovalidate` -asi un `monto` vacio o invalido (campo `required`) no
+    bloquea el cambio de conexion, que es justamente el proposito de este
+    mecanismo-.
+
+    POST y no GET a proposito: por-diseno un envio POST no queda en la URL
+    ni en el historial del navegador, y los frameworks de servidor (incluido
+    Uvicorn) no registran el cuerpo de la peticion en el log de acceso -solo
+    metodo y ruta-. Antes de este cambio, el mismo mecanismo iba por GET con
+    `formmethod="get"`, y el monto/los campos/el nombre del escenario
+    quedaban en la querystring, visibles en el historial del navegador y en
+    los logs de acceso por defecto del servidor (nunca el PAN: los unicos
+    campos que se leen son los editables segun el perfil -3, 22, 37, 41,
+    49-, estructuralmente excluidos de ser sensibles). Este endpoint corrige
+    esa exposicion sin introducir sesion ni almacenamiento en el navegador:
+    el propio POST, mas `_formulario`, alcanzan.
+
+    `ir_a_conexion` es el nombre propio del boton -deliberadamente distinto
+    de `conexion_id`, el campo oculto del mismo formulario que lleva el
+    valor VIEJO- para que el destino real de la navegacion sea siempre el
+    que la persona eligio, nunca el que ya estaba.
+    """
+    formulario_bruto = await request.form()
+    enviado = _leer_enviado(formulario_bruto, composicion.perfil)
+    ir_a_conexion = (formulario_bruto.get("ir_a_conexion", "") or "").strip() or None
+    escenario_id = (formulario_bruto.get("escenario_id", "") or "").strip() or None
+
+    return await _formulario(
+        request,
+        composicion,
+        conexion_id=ir_a_conexion,
+        escenario_id=escenario_id,
+        enviado=enviado,
     )
 
 
@@ -114,35 +198,17 @@ async def ejecutar_compra(
     escenario_id: str = Form(""),
     composicion: Composicion = Depends(obtener_composicion),
 ):
-    # Los campos manuales no se declaran uno por uno en la firma: se leen del
-    # formulario segun lo que el perfil declare editable para el 0100. Agregar
-    # un campo editable nuevo al perfil no obliga a tocar esta ruta.
-    #
-    # Un campo editable que llega vacio (o que no vino en el formulario) no se
-    # incluye: se deja que `armar_compra` aplique el default de la politica.
-    # Si se incluyera como cadena vacia, el merge lo sobreescribiria y borraria
-    # el default aunque el usuario no haya tocado el campo.
+    # Los campos manuales, las expectativas y el nombre del escenario se leen
+    # del mismo formulario -se hayan guardado o no en ningun escenario-:
+    # "Ejecutar transacción" siempre evalua contra lo que esta escrito en la
+    # pantalla en ese momento, igual que ya hace con card_id/monto -no contra
+    # lo ultimo guardado-. Se calculan antes del try/except para que, si algo
+    # falla, el formulario se vuelva a mostrar con lo que la persona escribio,
+    # no en blanco.
     formulario_bruto = await request.form()
-    editables = composicion.perfil.politica(MTI_COMPRA).editables
-    campos_manuales = {
-        numero: valor
-        for numero in editables
-        if (valor := (formulario_bruto.get(f"campo_{numero}", "") or "").strip())
-    }
-    # Las expectativas se leen del mismo formulario, se hayan guardado o no en
-    # ningun escenario: "Ejecutar transacción" siempre evalua contra lo que
-    # esta escrito en la pantalla en ese momento, igual que ya hace con
-    # card_id/monto/campos_manuales -no contra lo ultimo guardado-. Se leen
-    # antes del try/except para que, si son invalidas, el formulario se
-    # vuelva a mostrar con lo que la persona escribio, no en blanco.
-    try:
-        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
-    except ValueError:
-        expectativas = None
-    enviado = {
-        "card_id": card_id, "monto": monto, "conexion_id": conexion_id,
-        "campos_manuales": campos_manuales, "expectativas": expectativas,
-    }
+    enviado = _leer_enviado(formulario_bruto, composicion.perfil)
+    campos_manuales = enviado["campos_manuales"]
+    expectativas = enviado["expectativas"]
 
     # --- entrada del usuario: errores controlados, nunca un 500 ---
     try:
@@ -213,15 +279,54 @@ async def ejecutar_compra(
 
 @enrutador.get("/historial", response_class=HTMLResponse)
 async def historial(
-    request: Request, composicion: Composicion = Depends(obtener_composicion)
+    request: Request,
+    pagina: int = Query(1, ge=1),
+    desde: str = Query(""),
+    hasta: str = Query(""),
+    estado: str = Query(""),
+    evaluacion: str = Query(""),
+    card_id: str = Query(""),
+    destino: str = Query(""),
+    stan: str = Query(""),
+    composicion: Composicion = Depends(obtener_composicion),
 ):
+    filtro_bruto = {
+        "desde": desde, "hasta": hasta, "estado": estado, "evaluacion": evaluacion,
+        "card_id": card_id, "destino": destino, "stan": stan,
+    }
+    try:
+        filtro = presentacion.leer_filtro_historial(**filtro_bruto)
+    except ValueError as error:
+        return PLANTILLAS.TemplateResponse(
+            request=request,
+            name="historial.html",
+            context={
+                "seccion": "historial",
+                "pagina_resultado": None,
+                "filtro_valores": filtro_bruto,
+                "estados_ejecucion": list(EstadoEjecucion),
+                "avisos": presentacion.AVISOS,
+                "error": str(error),
+            },
+            status_code=400,
+        )
+
+    pagina_resultado = await composicion.consultas.historial(filtro, pagina=pagina)
+    # La paginacion preserva los filtros en la URL -no una sesion ni una
+    # cookie-: cada enlace "Anterior"/"Siguiente" repite exactamente los
+    # mismos parametros que ya trae esta peticion.
+    query_filtros = urlencode({clave: valor for clave, valor in filtro_bruto.items() if valor})
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="historial.html",
         context={
             "seccion": "historial",
-            "ejecuciones": await composicion.consultas.ejecuciones_recientes(),
+            "pagina_resultado": pagina_resultado,
+            "filtro_valores": filtro_bruto,
+            "hay_filtros": not filtro.vacio(),
+            "estados_ejecucion": list(EstadoEjecucion),
             "avisos": presentacion.AVISOS,
+            "query_filtros": query_filtros,
         },
     )
 
@@ -726,21 +831,9 @@ async def escenario_crear(
     partir del estado actual del constructor-.
     """
     formulario_bruto = await request.form()
-    editables = composicion.perfil.politica(MTI_COMPRA).editables
-    campos_manuales = {
-        numero: valor
-        for numero in editables
-        if (valor := (formulario_bruto.get(f"campo_{numero}", "") or "").strip())
-    }
-    try:
-        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
-    except ValueError:
-        expectativas = None
-    enviado = {
-        "card_id": card_id, "monto": monto, "conexion_id": conexion_id,
-        "campos_manuales": campos_manuales, "nombre_escenario": nombre,
-        "expectativas": expectativas,
-    }
+    enviado = _leer_enviado(formulario_bruto, composicion.perfil)
+    campos_manuales = enviado["campos_manuales"]
+    expectativas = enviado["expectativas"]
     try:
         monto_decimal = presentacion.validar_monto(monto)
         expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
@@ -775,21 +868,9 @@ async def escenario_actualizar(
     parcha lo que ya estaba guardado -mismo criterio que crear-.
     """
     formulario_bruto = await request.form()
-    editables = composicion.perfil.politica(MTI_COMPRA).editables
-    campos_manuales = {
-        numero: valor
-        for numero in editables
-        if (valor := (formulario_bruto.get(f"campo_{numero}", "") or "").strip())
-    }
-    try:
-        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
-    except ValueError:
-        expectativas = None
-    enviado = {
-        "card_id": card_id, "monto": monto, "conexion_id": conexion_id,
-        "campos_manuales": campos_manuales, "nombre_escenario": nombre,
-        "expectativas": expectativas,
-    }
+    enviado = _leer_enviado(formulario_bruto, composicion.perfil)
+    campos_manuales = enviado["campos_manuales"]
+    expectativas = enviado["expectativas"]
     try:
         monto_decimal = presentacion.validar_monto(monto)
         expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
@@ -990,7 +1071,8 @@ async def suite_crear(
     except ValueError as error:
         return await _formulario_suite(
             request, composicion, error=str(error),
-            enviado={"nombre": nombre, "descripcion": descripcion}, estado_http=400,
+            enviado={"nombre": nombre, "descripcion": descripcion},
+            formulario_bruto=formulario_bruto, estado_http=400,
         )
     return RedirectResponse(f"/suites/{creada.suite_id}/editar", status_code=303)
 
@@ -1019,7 +1101,8 @@ async def suite_actualizar(
     except ValueError as error:
         return await _formulario_suite(
             request, composicion, suite_id=suite_id, error=str(error),
-            enviado={"nombre": nombre, "descripcion": descripcion}, estado_http=400,
+            enviado={"nombre": nombre, "descripcion": descripcion},
+            formulario_bruto=formulario_bruto, estado_http=400,
         )
     return RedirectResponse(f"/suites/{suite_id}/editar", status_code=303)
 
@@ -1123,13 +1206,28 @@ async def _formulario_suite(
     suite_id: str | None = None,
     error: str | None = None,
     enviado: dict | None = None,
+    formulario_bruto=None,
     estado_http: int = 200,
 ):
+    """`formulario_bruto`, si se pasa, es el POST que se acaba de rechazar: la
+    seleccion de escenarios se reconstruye de ahi -conservando exactamente
+    los que estaban marcados y el orden que se habia escrito, aunque ese
+    orden no fuera valido- en vez de la de `suite` (que puede no existir
+    todavia, o estar desactualizada frente a lo que la persona acaba de
+    escribir). Sin `formulario_bruto`, el comportamiento es el de siempre:
+    la seleccion sale de `suite`.
+    """
     enviado = enviado or {}
     nombre = enviado.get("nombre", suite.nombre if suite else "")
     descripcion = enviado.get("descripcion", suite.descripcion if suite else "")
-    escenarios_incluidos = suite.escenarios if suite else ()
     catalogo = await composicion.administracion_escenarios.listar()
+    if formulario_bruto is not None:
+        filas_seleccion = presentacion.filas_seleccion_escenarios_desde_formulario(
+            catalogo, formulario_bruto
+        )
+    else:
+        escenarios_incluidos = suite.escenarios if suite else ()
+        filas_seleccion = presentacion.filas_seleccion_escenarios(catalogo, escenarios_incluidos)
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="suite_form.html",
@@ -1140,9 +1238,7 @@ async def _formulario_suite(
             "nombre": nombre,
             "descripcion": descripcion,
             "error": error,
-            "filas_seleccion": presentacion.filas_seleccion_escenarios(
-                catalogo, escenarios_incluidos
-            ),
+            "filas_seleccion": filas_seleccion,
         },
         status_code=estado_http,
     )
@@ -1286,6 +1382,151 @@ def _leer_expectativas(formulario_bruto, perfil) -> Expectativas | None:
     if estado is None and not campos:
         return None
     return Expectativas(estado=estado, campos=campos)
+
+
+def _leer_enviado(mapping, perfil) -> dict:
+    """Extrae card_id/monto/conexion_id/campos_manuales/expectativas/nombre de
+    un mapping tipo formulario -o de una querystring, que expone la misma
+    interfaz de lectura (`.get()`, iterable por clave)-.
+
+    Un solo lugar para lo que antes se repetia casi identico en el POST de
+    compra y en los dos POST de escenario: eso es lo que permite que "cambiar
+    de conexion" (una navegacion GET que reenvia el mismo `<form>`) conserve
+    exactamente lo mismo que ya conservaba un error de validacion -mismo
+    criterio de lectura, sin una segunda implementacion que pudiera divergir.
+    """
+    editables = perfil.politica(MTI_COMPRA).editables
+    campos_manuales = {
+        numero: valor
+        for numero in editables
+        if (valor := (mapping.get(f"campo_{numero}", "") or "").strip())
+    }
+    try:
+        expectativas = _leer_expectativas(mapping, perfil)
+    except ValueError:
+        expectativas = None
+    return {
+        "card_id": (mapping.get("card_id", "") or ""),
+        "monto": (mapping.get("monto", "") or ""),
+        "conexion_id": (mapping.get("conexion_id", "") or ""),
+        "campos_manuales": campos_manuales,
+        "nombre_escenario": (mapping.get("nombre", "") or ""),
+        "expectativas": expectativas,
+    }
+
+
+def _expectativas_de_ejecucion(ejecucion) -> Expectativas | None:
+    """Reconstruye la `Expectativas` que se evaluo en su momento, a partir del
+    snapshot persistido -nunca desde un escenario, que puede haber cambiado o
+    ya no existir-. `None` si la ejecucion no tenia expectativas o si el JSON
+    guardado no se puede interpretar -nunca inventa una expectativa a partir
+    de datos que no se pueden leer.
+    """
+    if not ejecucion.evaluacion_json:
+        return None
+    try:
+        datos = json.loads(ejecucion.evaluacion_json)
+        return expectativas_desde_dict(datos["expectativas"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+async def _reconstruir_desde_ejecucion(
+    composicion: Composicion, id_ejecucion: int
+) -> tuple[dict, str | None, str | None] | None:
+    """Recupera la configuracion de una ejecucion pasada para "Editar y volver
+    a ejecutar"/"Guardar como escenario" desde el resultado.
+
+    Nunca reconstruye el PAN ni ningun otro dato sensible: `card_id` alcanza
+    para que `armar_compra` derive de nuevo el 0100 con la tarjeta real. Los
+    campos editables se recuperan de la SOLICITUD ya persistida (enmascarada,
+    pero los campos editables del perfil genérico -3, 22, 37, 41, 49- no son
+    sensibles), nunca de la respuesta ni de un valor enmascarado que pudiera
+    confundirse con datos reales de tarjeta. Las expectativas se reconstruyen
+    del snapshot propio de la ejecucion (`evaluacion_json`), nunca de un
+    escenario -que pudo cambiar o ya no existir-: por eso ninguna de las dos
+    cosas depende del estado ACTUAL de ningun escenario.
+
+    Devuelve `None` si la ejecucion no existe. En caso contrario, devuelve
+    `(enviado, conexion_id_resuelta_o_None, error_o_None)`.
+
+    NINGUNA sustitucion silenciosa: si la tarjeta usada ya no esta disponible
+    (desactivada o eliminada), o si la conexion usada no se puede identificar
+    hoy entre las administradas (o nunca se intento transmitir), se explica
+    en `error_o_None` y se deja sin resolver -el constructor ya bloquea
+    "Ejecutar transacción" en esos casos (`tarjeta_no_disponible`,
+    `conexion_actual is None`), pero antes de esta correccion lo hacia sin
+    decir por que: la persona solo veia el boton deshabilitado. Los dos
+    problemas pueden coexistir; el mensaje los junta, no se queda solo con
+    el primero.
+    """
+    detalle = await composicion.consultas.detalle_ejecucion(id_ejecucion)
+    if detalle is None:
+        return None
+
+    ejecucion = detalle.ejecucion
+    editables = composicion.perfil.politica(MTI_COMPRA).editables
+    campos_manuales = {
+        numero: valor
+        for numero in editables
+        if (valor := detalle.solicitud.valor(numero)) is not None
+    }
+    enviado = {
+        "card_id": ejecucion.card_id,
+        "monto": str(ejecucion.monto),
+        "conexion_id": "",
+        "campos_manuales": campos_manuales,
+        "nombre_escenario": "",
+        "expectativas": _expectativas_de_ejecucion(ejecucion),
+    }
+
+    problemas: list[str] = []
+
+    # La solicitud persistida con el formato de texto heredado (anterior a la
+    # persistencia estructurada) no es demostrablemente fiel -ver el docstring
+    # de `MensajeSerializado.fiel`-: un valor podria haber quedado partido por
+    # el separador sin que se pueda distinguir. Recuperar campos editables de
+    # ahi es la mejor aproximacion posible, pero no debe presentarse como si
+    # fuera "la configuracion exacta": se avisa, sin bloquear la ejecucion
+    # -la persona decide si revisa y corrige antes de continuar.
+    if detalle.solicitud.disponible and not detalle.solicitud.fiel:
+        problemas.append(
+            "Esta ejecución se registró con un formato anterior: los campos "
+            "recuperados son la mejor aproximación posible, pero no puede "
+            "garantizarse que sean exactos. Revíselos antes de ejecutar."
+        )
+
+    tarjetas_disponibles = await composicion.consultas.tarjetas()
+    if not any(t.card_id == ejecucion.card_id for t in tarjetas_disponibles):
+        problemas.append(
+            f"La tarjeta {ejecucion.card_id!r} usada en esa ejecución ya no está disponible "
+            "(fue desactivada o eliminada del catálogo). Seleccione otra tarjeta para poder "
+            "ejecutar."
+        )
+
+    conexion_resuelta: str | None = None
+    if ejecucion.destino_host is None:
+        problemas.append(
+            "Esta ejecución no llegó a intentar transmisión por la red, así que no hay una "
+            "conexión que recuperar. Seleccione una conexión para poder ejecutar."
+        )
+    else:
+        activas = await composicion.administracion_conexiones.listar_activas()
+        candidatas = [
+            c for c in activas
+            if c.host == ejecucion.destino_host and c.puerto == ejecucion.destino_puerto
+        ]
+        if len(candidatas) == 1:
+            conexion_resuelta = candidatas[0].conexion_id
+        else:
+            problemas.append(
+                "No se pudo determinar automáticamente qué conexión administrada corresponde "
+                f"a {ejecucion.destino_host}:{ejecucion.destino_puerto}. Seleccione una "
+                "conexión para poder ejecutar."
+            )
+
+    error = " ".join(problemas) if problemas else None
+    return enviado, conexion_resuelta, error
 
 
 async def _interpretar_formulario(

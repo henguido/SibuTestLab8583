@@ -17,9 +17,40 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from ..domain.modelos import Ejecucion
+from ..domain.modelos import Ejecucion, FiltroHistorial
 from ..domain.puertos import RepositorioEjecuciones, RepositorioTarjetas
 from .serializacion import MensajeSerializado, interpretar
+
+#: Tamano fijo de pagina del historial. Un solo valor, no configurable por el
+#: usuario: mantiene la paginacion simple y predecible.
+TAMANO_PAGINA_HISTORIAL = 20
+
+
+@dataclass(frozen=True)
+class PaginaHistorial:
+    """Una pagina de resultados del historial, ya con lo que la interfaz
+    necesita para distinguir "historial vacio" de "busqueda sin resultados"
+    y para dibujar los controles de paginacion.
+    """
+
+    ejecuciones: Sequence[Ejecucion]
+    total: int
+    pagina: int
+    tam_pagina: int
+
+    @property
+    def total_paginas(self) -> int:
+        if self.total == 0:
+            return 1
+        return -(-self.total // self.tam_pagina)  # techo sin importar math
+
+    @property
+    def hay_anterior(self) -> bool:
+        return self.pagina > 1
+
+    @property
+    def hay_siguiente(self) -> bool:
+        return self.pagina < self.total_paginas
 
 
 @dataclass(frozen=True)
@@ -78,6 +109,22 @@ class ServicioConsultas:
 
     async def ejecuciones_recientes(self, limite: int = 20) -> Sequence[Ejecucion]:
         return await self._ejecuciones.listar(limite)
+
+    async def historial(
+        self,
+        filtro: FiltroHistorial,
+        pagina: int = 1,
+        tam_pagina: int = TAMANO_PAGINA_HISTORIAL,
+    ) -> PaginaHistorial:
+        """Una pagina del historial que cumple `filtro`.
+
+        `pagina` se acota a 1 como minimo aqui -no se le confia al llamador-,
+        para que una pagina invalida (0, negativa) no produzca un `OFFSET`
+        negativo en SQL en vez de un error explicado.
+        """
+        pagina = max(pagina, 1)
+        items, total = await self._ejecuciones.buscar(filtro, pagina, tam_pagina)
+        return PaginaHistorial(ejecuciones=items, total=total, pagina=pagina, tam_pagina=tam_pagina)
 
     async def detalle_ejecucion(self, id_ejecucion: int) -> DetalleEjecucion | None:
         """Una ejecucion pasada, con sus mensajes interpretados.

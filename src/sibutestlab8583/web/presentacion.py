@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence
 
@@ -23,10 +24,16 @@ from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
     EstadoEjecucion,
+    FiltroHistorial,
     MensajeInterpretado,
     MensajeIso,
     ResultadoCompra,
 )
+
+#: Valores admitidos para el filtro de evaluacion del historial. "" significa
+#: "sin restriccion" -nunca un cuarto valor de `EstadoEvaluacion`, que solo
+#: conoce pass/fail-.
+VALORES_FILTRO_EVALUACION = frozenset({"", "pass", "fail", "sin_expectativas"})
 
 MONTO_MAXIMO = Decimal("9999999999.99")
 
@@ -301,6 +308,65 @@ def validar_activa(texto: str) -> bool:
     return valor == "1"
 
 
+def _validar_fecha(texto: str, etiqueta: str) -> str:
+    """Valida una fecha `AAAA-MM-DD` del formulario de filtros. Cadena vacia es
+    valida -significa "sin restriccion en ese extremo"-; cualquier otra cosa
+    que no sea una fecha real se rechaza en vez de pasarla tal cual a SQL.
+    """
+    texto = (texto or "").strip()
+    if not texto:
+        return ""
+    try:
+        date.fromisoformat(texto)
+    except ValueError as error:
+        raise ValueError(f"La fecha «{etiqueta}» no es una fecha válida (AAAA-MM-DD).") from error
+    return texto
+
+
+def leer_filtro_historial(
+    *,
+    desde: str,
+    hasta: str,
+    estado: str,
+    evaluacion: str,
+    card_id: str,
+    destino: str,
+    stan: str,
+) -> FiltroHistorial:
+    """Construye un `FiltroHistorial` a partir de los parámetros crudos de la
+    URL. Lanza `ValueError` con un mensaje explicado ante cualquier valor que
+    no sea uno de los que la propia pantalla de filtros puede producir -mismo
+    principio que `validar_activa`: nunca se reinterpreta en silencio un
+    parámetro manipulado.
+    """
+    desde = _validar_fecha(desde, "desde")
+    hasta = _validar_fecha(hasta, "hasta")
+    if desde and hasta and desde > hasta:
+        raise ValueError("La fecha «desde» no puede ser posterior a «hasta».")
+
+    estado_bruto = (estado or "").strip()
+    estado_valido: EstadoEjecucion | None = None
+    if estado_bruto:
+        try:
+            estado_valido = EstadoEjecucion(estado_bruto)
+        except ValueError as error:
+            raise ValueError("El estado del filtro no es válido.") from error
+
+    evaluacion_bruta = (evaluacion or "").strip()
+    if evaluacion_bruta not in VALORES_FILTRO_EVALUACION:
+        raise ValueError("El filtro de expectativa no es válido.")
+
+    return FiltroHistorial(
+        desde=desde,
+        hasta=hasta,
+        estado=estado_valido,
+        evaluacion=evaluacion_bruta,
+        card_id=(card_id or "").strip(),
+        destino=(destino or "").strip(),
+        stan=(stan or "").strip(),
+    )
+
+
 def filas_de_solicitud(
     mensaje: MensajeIso, descripciones: Mapping[str, str]
 ) -> Sequence[FilaIsoscopio]:
@@ -508,6 +574,33 @@ def filas_seleccion_escenarios(
             )
         )
     return filas
+
+
+def filas_seleccion_escenarios_desde_formulario(
+    catalogo: Sequence, formulario_bruto
+) -> Sequence[FilaSeleccionEscenario]:
+    """Igual que `filas_seleccion_escenarios`, pero reconstruida desde un
+    formulario que **todavia no se valido** -o que fallo la validacion-, no
+    desde una `Suite` ya guardada.
+
+    Existe para que un error al guardar una suite (por ejemplo, un orden
+    invalido o repetido) conserve exactamente los escenarios que la persona
+    habia marcado y el texto que habia escrito en "orden", en vez de volver a
+    la seleccion vacia o a la de la suite tal como estaba antes de editar.
+    Por eso `orden` aqui es el texto CRUDO del formulario -incluso si no es un
+    entero valido-: esta funcion es solo de presentacion, la validacion real
+    sigue siendo unicamente `_leer_escenarios_de_suite`.
+    """
+    return [
+        FilaSeleccionEscenario(
+            escenario_id=escenario.escenario_id,
+            nombre=escenario.nombre,
+            activo=escenario.activo,
+            incluido=bool(formulario_bruto.get(f"incluir_{escenario.escenario_id}") or ""),
+            orden=(formulario_bruto.get(f"orden_{escenario.escenario_id}", "") or ""),
+        )
+        for escenario in catalogo
+    ]
 
 
 #: Un aviso por resultado global de suite. INCOMPLETA y SIN_EXPECTATIVAS

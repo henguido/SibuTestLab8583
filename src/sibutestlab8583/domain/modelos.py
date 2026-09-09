@@ -517,6 +517,36 @@ class Ejecucion:
 
 
 @dataclass(frozen=True)
+class FiltroHistorial:
+    """Criterios de busqueda sobre el historial de ejecuciones.
+
+    Todo campo vacio/`None` significa "sin restriccion en ese criterio" -nunca
+    "cero resultados"-. Vive en el dominio (no en `application`) porque lo
+    comparten el puerto `RepositorioEjecuciones` y su adaptador SQLite, y el
+    dominio no puede depender de `application`.
+
+    `evaluacion` es literal, no `EstadoEvaluacion`: admite el valor especial
+    ``"sin_expectativas"`` -que no es un estado de `EstadoEvaluacion`- para
+    poder filtrar exactamente por "no tenia expectativas", distinto de
+    PASS/FAIL.
+    """
+
+    desde: str = ""  # fecha ISO "AAAA-MM-DD", inclusive
+    hasta: str = ""  # idem, inclusive
+    estado: EstadoEjecucion | None = None
+    evaluacion: str = ""  # "" | "pass" | "fail" | "sin_expectativas"
+    card_id: str = ""
+    destino: str = ""  # subcadena de "host:puerto"
+    stan: str = ""
+
+    def vacio(self) -> bool:
+        return not any((
+            self.desde, self.hasta, self.estado, self.evaluacion,
+            self.card_id, self.destino, self.stan,
+        ))
+
+
+@dataclass(frozen=True)
 class ResultadoCompra:
     """Lo que el orquestador devuelve tras ejecutar un recorrido completo.
 

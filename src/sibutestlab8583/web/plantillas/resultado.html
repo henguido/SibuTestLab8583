@@ -45,5 +45,24 @@
 {{ isoscopio('Isoscopio · respuesta 0110', filas_respuesta, true,
              'No se recibió respuesta que interpretar.') }}
 
+{# Reutilizar esta transaccion: ambos botones llevan al mismo constructor
+   prefilled con la configuracion de ESTA ejecucion -tarjeta, monto, campos
+   editables, expectativas y, cuando se puede identificar, la conexion-.
+   "Guardar como escenario" enfoca directamente el bloque para nombrarlo y
+   guardarlo; en los dos casos la persona revisa antes de reenviar, y cada
+   repeticion es una ejecucion nueva con sus propios identificadores. #}
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Reutilizar esta transacción</h2>
+  </div>
+  <div class="acciones">
+    <a class="boton" href="/?ejecucion_id={{ ejecucion.id }}">Editar y volver a ejecutar</a>
+    <a class="boton" href="/?ejecucion_id={{ ejecucion.id }}#guardar-como-escenario">Guardar como escenario</a>
+    <span class="acciones__nota">
+      Se recupera la configuración usada; puede revisarla y ajustarla antes de enviarla de nuevo.
+    </span>
+  </div>
+</section>
+
 <a class="volver" href="/">&larr; Ejecutar otra transacción</a>
 {% endblock %}

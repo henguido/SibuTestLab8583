@@ -19,6 +19,7 @@ from .modelos import (
     Escenario,
     FalloDeConexion,
     FalloDeTransmision,
+    FiltroHistorial,
     ItemCorridaSuite,
     Suite,
     TarjetaPrueba,
@@ -131,6 +132,18 @@ class RepositorioEjecuciones(Protocol):
     async def obtener(self, id_ejecucion: int) -> Ejecucion | None: ...
 
     async def listar(self, limite: int = 50) -> Sequence[Ejecucion]: ...
+
+    async def buscar(
+        self, filtro: FiltroHistorial, pagina: int, tam_pagina: int
+    ) -> tuple[Sequence[Ejecucion], int]:
+        """Ejecuciones que cumplen `filtro`, paginadas.
+
+        Devuelve `(items_de_esta_pagina, total_de_filas_que_cumplen_el_filtro)`
+        -el total, no solo el largo de la pagina-, para que quien llama pueda
+        distinguir un historial vacio de una busqueda sin resultados y calcule
+        cuantas paginas hay en total.
+        """
+        ...
 
 
 @runtime_checkable
