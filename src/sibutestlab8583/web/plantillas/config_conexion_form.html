@@ -3,6 +3,13 @@
 {% block titulo %}{{ 'Nueva conexión' if modo == 'nueva' else 'Editar conexión' }} · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/configuracion">Configuración</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <a href="/configuracion/conexiones">Conexiones</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">{{ 'Nueva' if modo == 'nueva' else 'Editar' }}</span>
+</nav>
 <div class="encabezado">
   <h1>{{ 'Nueva conexión' if modo == 'nueva' else 'Editar conexión' }}</h1>
   {% if modo == 'editar' %}

@@ -1,16 +1,12 @@
 {% extends "base.html" %}
-{% from "_piezas.html" import pastilla %}
+{% from "_piezas.html" import pastilla, senal, encabezado_pagina %}
 {% block titulo %}Historial · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
-<div class="encabezado">
-  <h1>Historial de ejecuciones</h1>
-  <p class="encabezado__sub">
-    Todo intento queda registrado, también los que no llegaron a transmitirse y los que no
-    obtuvieron respuesta. Las tarjetas se identifican por <code>card_id</code>, nunca por su
-    número.
-  </p>
-</div>
+{{ encabezado_pagina(
+  'Historial de ejecuciones',
+  'Todo intento queda registrado, también los que no llegaron a transmitirse y los que no obtuvieron respuesta. Las tarjetas se identifican por card_id, nunca por su número.'
+) }}
 
 {% if error %}
 <div class="aviso error">
@@ -19,63 +15,58 @@
 </div>
 {% endif %}
 
-<section class="panel">
-  <div class="panel__cabecera">
-    <h2 class="panel__titulo">Filtros</h2>
+<form method="get" action="/historial" class="barra-filtros barra-filtros--historial">
+  <div class="barra-filtros__form">
+    <div class="campo">
+      <label class="campo__rotulo" for="f-desde">Desde</label>
+      <input type="date" id="f-desde" name="desde" value="{{ filtro_valores.desde }}">
+    </div>
+    <div class="campo">
+      <label class="campo__rotulo" for="f-hasta">Hasta</label>
+      <input type="date" id="f-hasta" name="hasta" value="{{ filtro_valores.hasta }}">
+    </div>
+    <div class="campo">
+      <label class="campo__rotulo" for="f-estado">Estado</label>
+      <select id="f-estado" name="estado">
+        <option value="" {{ 'selected' if not filtro_valores.estado }}>Todos</option>
+        {% for estado_valor in estados_ejecucion %}
+        <option value="{{ estado_valor.value }}" {{ 'selected' if estado_valor.value == filtro_valores.estado }}>
+          {{ avisos[estado_valor].etiqueta }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo">
+      <label class="campo__rotulo" for="f-evaluacion">Expectativa</label>
+      <select id="f-evaluacion" name="evaluacion">
+        <option value="" {{ 'selected' if not filtro_valores.evaluacion }}>Todas</option>
+        <option value="pass" {{ 'selected' if filtro_valores.evaluacion == 'pass' }}>PASS</option>
+        <option value="fail" {{ 'selected' if filtro_valores.evaluacion == 'fail' }}>FAIL</option>
+        <option value="sin_expectativas" {{ 'selected' if filtro_valores.evaluacion == 'sin_expectativas' }}>
+          Sin expectativas
+        </option>
+      </select>
+    </div>
+    <div class="campo campo--mono">
+      <label class="campo__rotulo" for="f-card">Tarjeta</label>
+      <input type="text" id="f-card" name="card_id" autocomplete="off" value="{{ filtro_valores.card_id }}">
+    </div>
+    <div class="campo campo--mono">
+      <label class="campo__rotulo" for="f-destino">Destino</label>
+      <input type="text" id="f-destino" name="destino" autocomplete="off" value="{{ filtro_valores.destino }}">
+    </div>
+    <div class="campo campo--mono">
+      <label class="campo__rotulo" for="f-stan">STAN</label>
+      <input type="text" id="f-stan" name="stan" autocomplete="off" value="{{ filtro_valores.stan }}">
+    </div>
   </div>
-  <div class="panel__cuerpo">
-    <form method="get" action="/historial" class="rejilla">
-      <div class="campo">
-        <label class="campo__rotulo" for="f-desde">Desde</label>
-        <input type="date" id="f-desde" name="desde" value="{{ filtro_valores.desde }}">
-      </div>
-      <div class="campo">
-        <label class="campo__rotulo" for="f-hasta">Hasta</label>
-        <input type="date" id="f-hasta" name="hasta" value="{{ filtro_valores.hasta }}">
-      </div>
-      <div class="campo">
-        <label class="campo__rotulo" for="f-estado">Estado de la transacción</label>
-        <select id="f-estado" name="estado">
-          <option value="" {{ 'selected' if not filtro_valores.estado }}>Todos</option>
-          {% for estado_valor in estados_ejecucion %}
-          <option value="{{ estado_valor.value }}" {{ 'selected' if estado_valor.value == filtro_valores.estado }}>
-            {{ avisos[estado_valor].etiqueta }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="campo">
-        <label class="campo__rotulo" for="f-evaluacion">Expectativa</label>
-        <select id="f-evaluacion" name="evaluacion">
-          <option value="" {{ 'selected' if not filtro_valores.evaluacion }}>Todas</option>
-          <option value="pass" {{ 'selected' if filtro_valores.evaluacion == 'pass' }}>PASS</option>
-          <option value="fail" {{ 'selected' if filtro_valores.evaluacion == 'fail' }}>FAIL</option>
-          <option value="sin_expectativas" {{ 'selected' if filtro_valores.evaluacion == 'sin_expectativas' }}>
-            Sin expectativas
-          </option>
-        </select>
-      </div>
-      <div class="campo campo--mono">
-        <label class="campo__rotulo" for="f-card">Tarjeta (card_id)</label>
-        <input type="text" id="f-card" name="card_id" autocomplete="off" value="{{ filtro_valores.card_id }}">
-      </div>
-      <div class="campo campo--mono">
-        <label class="campo__rotulo" for="f-destino">Destino (host o host:puerto)</label>
-        <input type="text" id="f-destino" name="destino" autocomplete="off" value="{{ filtro_valores.destino }}">
-      </div>
-      <div class="campo campo--mono">
-        <label class="campo__rotulo" for="f-stan">STAN</label>
-        <input type="text" id="f-stan" name="stan" autocomplete="off" value="{{ filtro_valores.stan }}">
-      </div>
-      <div class="acciones">
-        <button class="boton" type="submit">Filtrar</button>
-        {% if hay_filtros %}
-        <a class="volver" href="/historial">Quitar filtros</a>
-        {% endif %}
-      </div>
-    </form>
+  <div class="acciones">
+    <button class="boton boton--sm" type="submit">Filtrar</button>
+    {% if hay_filtros %}
+    <a class="volver" href="/historial">Quitar</a>
+    {% endif %}
   </div>
-</section>
+</form>
 
 {% if pagina_resultado %}
 <section class="panel">
@@ -127,9 +118,9 @@
           <td>{{ pastilla(avisos[ejecucion.estado]) }}</td>
           <td data-evaluacion="{{ ejecucion.evaluacion_estado or '' }}">
             {%- if ejecucion.evaluacion_estado == 'pass' -%}
-            <span class="chip chip--activa">PASS</span>
+            <span class="chip chip--pass">PASS</span>
             {%- elif ejecucion.evaluacion_estado == 'fail' -%}
-            <span class="chip chip--inactiva">FAIL</span>
+            <span class="chip chip--fail">FAIL</span>
             {%- else -%}
             <span class="vacio">—</span>
             {%- endif -%}
@@ -165,14 +156,20 @@
   </div>
   {% endif %}
   {% else %}
-  <div class="panel__cuerpo">
-    <p class="vacio">
-      {% if hay_filtros %}
+  <div class="estado-vacio">
+    <span class="estado-vacio__icono" aria-hidden="true">{{ senal('invalida', 20) }}</span>
+    {% if hay_filtros %}
+    <p class="estado-vacio__titulo">Sin resultados para estos filtros</p>
+    <p class="estado-vacio__detalle">
       La búsqueda no encontró ejecuciones con estos filtros. <a href="/historial">Quitar filtros</a>.
-      {% else %}
-      Todavía no hay ejecuciones registradas. Ejecute una transacción para ver el registro.
-      {% endif %}
     </p>
+    {% else %}
+    <p class="estado-vacio__titulo">Todavía no hay ejecuciones registradas</p>
+    <p class="estado-vacio__detalle">
+      Cada transacción que ejecute queda registrada aquí, incluidas las que no obtienen respuesta.
+    </p>
+    <a class="boton" href="/">Ejecutar una transacción</a>
+    {% endif %}
   </div>
   {% endif %}
 </section>

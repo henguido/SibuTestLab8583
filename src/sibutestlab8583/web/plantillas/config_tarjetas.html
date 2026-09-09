@@ -1,15 +1,18 @@
 {% extends "base.html" %}
-{% from "_piezas.html" import senal %}
+{% from "_piezas.html" import senal, encabezado_pagina %}
 {% block titulo %}Tarjetas de prueba · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
-<div class="encabezado">
-  <h1>Tarjetas de prueba</h1>
-  <p class="encabezado__sub">
-    Desactivar una tarjeta no elimina la fila ni su historial: solo deja de ofrecerse para
-    pruebas nuevas. Puede volver a activarse en cualquier momento.
-  </p>
-</div>
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/configuracion">Configuración</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">Tarjetas</span>
+</nav>
+{{ encabezado_pagina(
+  'Tarjetas de prueba',
+  'Desactivar una tarjeta no elimina la fila ni su historial: solo deja de ofrecerse para pruebas nuevas. Puede volver a activarse en cualquier momento.',
+  'Nueva tarjeta', '/configuracion/tarjetas/nueva'
+) }}
 
 {% if error %}
 <div class="aviso error">
@@ -19,73 +22,55 @@
 </div>
 {% endif %}
 
-<section class="panel">
-  <div class="panel__cabecera">
-    <h2 class="panel__titulo">Catálogo</h2>
-    <span class="panel__nota">
-      {{ tarjetas|length }} tarjeta{{ 's' if tarjetas|length != 1 }}
-    </span>
-  </div>
-  {% if tarjetas %}
-  <div class="desplazable" tabindex="0" role="region" aria-label="Tarjetas de prueba">
-    <table class="tabla">
-      <thead>
-        <tr>
-          <th>Identificador</th>
-          <th>Descripción</th>
-          <th>Número</th>
-          <th>Vencimiento</th>
-          <th>Tipo</th>
-          <th>Estado</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for tarjeta in tarjetas %}
-        <tr>
-          <td class="mono">{{ tarjeta.card_id }}</td>
-          <td>{{ tarjeta.descripcion or 'Sin descripción' }}</td>
-          <td class="mono">{{ tarjeta.pan_enmascarado }}</td>
-          <td class="mono">{{ tarjeta.expiracion }}</td>
-          <td>
-            {% if tarjeta.sintetica %}
-            <span class="chip chip--sintetica">Sintética</span>
-            {% else %}
-            <span class="chip chip--qa">QA autorizada</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if tarjeta.activa %}
-            <span class="chip chip--activa">Activa</span>
-            {% else %}
-            <span class="chip chip--inactiva">Inactiva</span>
-            {% endif %}
-          </td>
-          <td>
-            <div class="tabla-acciones">
-              <a href="/configuracion/tarjetas/{{ tarjeta.card_id }}/editar">Editar</a>
-              <form method="post" action="/configuracion/tarjetas/{{ tarjeta.card_id }}/estado">
-                <input type="hidden" name="activa" value="{{ '0' if tarjeta.activa else '1' }}">
-                <button class="enlace-boton" type="submit">
-                  {{ 'Desactivar' if tarjeta.activa else 'Activar' }}
-                </button>
-              </form>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <div class="panel__cuerpo">
-    <p class="vacio">Todavía no hay tarjetas registradas.</p>
-  </div>
-  {% endif %}
-  <div class="acciones">
-    <a class="boton" href="/configuracion/tarjetas/nueva">Nueva tarjeta</a>
-  </div>
-</section>
+<p class="campo__pista">
+  {{ senal('enmascarado', 13) }}
+  Ambiente de pruebas: el número completo solo se recibe en su propio formulario de
+  mantenimiento; en todo el resto de la interfaz se muestra enmascarado.
+</p>
 
-<a class="volver" href="/configuracion">&larr; Volver a Configuración</a>
+{% if tarjetas %}
+<div class="rejilla-fichas">
+  {% for tarjeta in tarjetas %}
+  <article class="ficha">
+    <div class="ficha__cabecera">
+      <div>
+        <h2 class="ficha__titulo mono">{{ tarjeta.card_id }}</h2>
+        <span class="ficha__id">{{ tarjeta.descripcion or 'Sin descripción' }}</span>
+      </div>
+      {% if tarjeta.activa %}
+      <span class="chip chip--activa">Activa</span>
+      {% else %}
+      <span class="chip chip--inactiva">Inactiva</span>
+      {% endif %}
+    </div>
+    <div class="ficha__meta">
+      <span class="mono">{{ tarjeta.pan_enmascarado }}</span>
+      <span>vence <span class="mono">{{ tarjeta.expiracion }}</span></span>
+      {% if tarjeta.sintetica %}
+      <span class="chip chip--sintetica">Sintética</span>
+      {% else %}
+      <span class="chip chip--qa">QA autorizada</span>
+      {% endif %}
+    </div>
+    <div class="ficha__acciones">
+      <a href="/configuracion/tarjetas/{{ tarjeta.card_id }}/editar">Editar</a>
+      <form method="post" action="/configuracion/tarjetas/{{ tarjeta.card_id }}/estado">
+        <input type="hidden" name="activa" value="{{ '0' if tarjeta.activa else '1' }}">
+        <button class="enlace-boton" type="submit">
+          {{ 'Desactivar' if tarjeta.activa else 'Activar' }}
+        </button>
+      </form>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="estado-vacio">
+  <p class="estado-vacio__titulo">Todavía no hay tarjetas registradas</p>
+  <p class="estado-vacio__detalle">
+    Cree al menos una tarjeta sintética de prueba para poder construir una transacción.
+  </p>
+  <a class="boton" href="/configuracion/tarjetas/nueva">Nueva tarjeta</a>
+</div>
+{% endif %}
 {% endblock %}

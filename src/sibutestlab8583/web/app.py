@@ -74,6 +74,8 @@ RUTA_ESTATICA = "/estatico"
 # global de Jinja en lugar de repetirla en el contexto de cada endpoint. La
 # pantalla activa si es propia de cada ruta y viaja en su contexto (`seccion`).
 PLANTILLAS.env.globals["secciones"] = presentacion.SECCIONES
+PLANTILLAS.env.globals["grupos_nav"] = presentacion.GRUPOS_NAV
+PLANTILLAS.env.globals["ruta_activa"] = presentacion.ruta_activa
 
 enrutador = APIRouter()
 

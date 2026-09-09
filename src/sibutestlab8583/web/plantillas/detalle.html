@@ -3,6 +3,11 @@
 {% block titulo %}Ejecución #{{ ejecucion.id }} · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/historial">Historial</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">Ejecución #{{ ejecucion.id }}</span>
+</nav>
 <div class="encabezado">
   <h1>Ejecución #{{ ejecucion.id }}</h1>
   <p class="encabezado__sub">
@@ -74,27 +79,29 @@
 </div>
 {% endif %}
 
-{{ isoscopio('Solicitud ISO 8583 · ' ~ ejecucion.mti_solicitud, filas_solicitud, false,
-             'No quedó registrada ninguna representación de la solicitud.') }}
+<div class="dos-columnas">
+  {{ isoscopio('Solicitud ISO 8583 · ' ~ ejecucion.mti_solicitud, filas_solicitud, false,
+               'No quedó registrada ninguna representación de la solicitud.') }}
 
-{% if hubo_respuesta %}
-{{ isoscopio('Respuesta ISO 8583 · ' ~ ejecucion.mti_respuesta, filas_respuesta,
-             respuesta_con_crudo,
-             'Llegó una respuesta, pero no quedó registrada su representación.') }}
-{% else %}
-{# Sin respuesta no se muestra una tabla vacía: se explica el desenlace con el
-   mismo texto que usa el resultado inmediato, que ya está redactado para no
-   afirmar nada que no pueda demostrarse. #}
-<section class="panel">
-  <div class="panel__cabecera">
-    <h2 class="panel__titulo">Respuesta ISO 8583</h2>
-    <span class="panel__nota">no hubo respuesta</span>
-  </div>
-  <div class="panel__cuerpo">
-    <p class="encabezado__sub"><strong>{{ aviso.titulo }}.</strong> {{ aviso.detalle }}</p>
-  </div>
-</section>
-{% endif %}
+  {% if hubo_respuesta %}
+  {{ isoscopio('Respuesta ISO 8583 · ' ~ ejecucion.mti_respuesta, filas_respuesta,
+               respuesta_con_crudo,
+               'Llegó una respuesta, pero no quedó registrada su representación.') }}
+  {% else %}
+  {# Sin respuesta no se muestra una tabla vacía: se explica el desenlace con el
+     mismo texto que usa el resultado inmediato, que ya está redactado para no
+     afirmar nada que no pueda demostrarse. #}
+  <section class="panel">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Respuesta ISO 8583</h2>
+      <span class="panel__nota">no hubo respuesta</span>
+    </div>
+    <div class="panel__cuerpo">
+      <p class="encabezado__sub"><strong>{{ aviso.titulo }}.</strong> {{ aviso.detalle }}</p>
+    </div>
+  </section>
+  {% endif %}
+</div>
 
 {# Evidencia técnica, secundaria. `<details>` nativo: se abre y se cierra sin
    JavaScript, y llega cerrado porque no es lo primero que hay que leer. #}

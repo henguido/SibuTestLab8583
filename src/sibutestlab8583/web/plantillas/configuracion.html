@@ -1,13 +1,12 @@
 {% extends "base.html" %}
+{% from "_piezas.html" import encabezado_pagina %}
 {% block titulo %}Configuración · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
-<div class="encabezado">
-  <h1>Configuración</h1>
-  <p class="encabezado__sub">
-    Administra los catálogos que usa el simulador para armar y evaluar cada transacción.
-  </p>
-</div>
+{{ encabezado_pagina(
+  'Configuración',
+  'Administra los catálogos que usa el simulador para armar y evaluar cada transacción.'
+) }}
 
 <div class="rejilla">
   <section class="panel">

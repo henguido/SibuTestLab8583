@@ -3,6 +3,13 @@
 {% block titulo %}{{ 'Nueva tarjeta' if modo == 'nueva' else 'Editar tarjeta' }} · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/configuracion">Configuración</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <a href="/configuracion/tarjetas">Tarjetas</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">{{ 'Nueva' if modo == 'nueva' else 'Editar' }}</span>
+</nav>
 <div class="encabezado">
   <h1>{{ 'Nueva tarjeta de prueba' if modo == 'nueva' else 'Editar tarjeta de prueba' }}</h1>
   {% if modo == 'editar' %}

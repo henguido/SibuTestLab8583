@@ -26,7 +26,12 @@ from sibutestlab8583.adapters.persistence.esquema import (
 )
 from sibutestlab8583.domain.modelos import Ejecucion, EstadoEjecucion, ResultadoCompra
 from sibutestlab8583.web.app import RUTA_ESTATICA, crear_app
-from sibutestlab8583.web.presentacion import AVISOS, SECCIONES
+from sibutestlab8583.web.presentacion import AVISOS, GRUPOS_NAV, SECCIONES
+
+#: Entradas de la barra lateral, aplanadas: `GRUPOS_NAV` es la fuente real de
+#: la navegacion desde el rediseno con sidebar; `SECCIONES` se conserva para
+#: quien mas la use, pero ya no es lo que la plantilla recorre.
+ENTRADAS_NAV = [entrada for grupo in GRUPOS_NAV for entrada in grupo.entradas]
 
 #: Toda secuencia con largo de tarjeta, para revisar atributos y contenido.
 LARGO_DE_TARJETA = re.compile(r"(?<!\d)\d{12,19}(?!\d)")
@@ -107,7 +112,7 @@ def test_las_tres_pantallas_comparten_la_identidad_y_el_subtitulo():
         assert "Laboratorio de pruebas ISO 8583" in html, f"falta el subtitulo en {nombre}"
 
 
-@pytest.mark.parametrize("apartado", SECCIONES, ids=lambda s: s.clave)
+@pytest.mark.parametrize("apartado", ENTRADAS_NAV, ids=lambda s: s.clave)
 def test_toda_seccion_declarada_aparece_en_la_navegacion_y_responde(apartado):
     """Ningun enlace de la navegacion puede llevar a una ruta que no exista."""
     cliente = _cliente()
@@ -127,13 +132,13 @@ def test_la_navegacion_no_ofrece_secciones_todavia_no_servidas():
 
 @pytest.mark.parametrize(
     "ruta,clave",
-    [("/", "compra"), ("/historial", "historial"), ("/configuracion", "configuracion")],
+    [("/", "compra"), ("/historial", "historial"), ("/configuracion/conexiones", "conexiones")],
 )
 def test_cada_pantalla_marca_su_propia_seccion_como_activa(ruta, clave):
     html = _cliente().get(ruta).text
-    esperado = next(s for s in SECCIONES if s.clave == clave)
+    esperado = next(s for s in ENTRADAS_NAV if s.clave == clave)
 
-    marcado = re.findall(r'<a class="nav__enlace"[^>]*>', html)
+    marcado = re.findall(r'<a class="sidebar__enlace[^"]*"[^>]*>', html)
     activos = [etiqueta for etiqueta in marcado if 'aria-current="page"' in etiqueta]
 
     assert len(activos) == 1, "debe haber exactamente una seccion activa"
@@ -144,7 +149,7 @@ def test_el_resultado_sigue_dentro_de_la_seccion_de_transaccion():
     html = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00")).post(
         "/compra", data=FORMULARIO
     ).text
-    activos = [e for e in re.findall(r'<a class="nav__enlace"[^>]*>', html) if "aria-current" in e]
+    activos = [e for e in re.findall(r'<a class="sidebar__enlace[^"]*"[^>]*>', html) if "aria-current" in e]
     assert len(activos) == 1
     assert 'href="/"' in activos[0]
 

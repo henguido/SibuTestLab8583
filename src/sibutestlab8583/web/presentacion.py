@@ -13,7 +13,6 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence
 
-from ..application.presentacion_evaluacion import mensaje_de_discrepancia
 from ..application.serializacion import (
     AVISO_HEREDADO,
     ORIGEN_TEXTO,
@@ -78,6 +77,72 @@ SECCIONES: tuple[Seccion, ...] = (
     Seccion("suites", "/suites", "Suites"),
     Seccion("historial", "/historial", "Historial"),
     Seccion("configuracion", "/configuracion", "Configuración"),
+)
+
+
+@dataclass(frozen=True)
+class GrupoNav:
+    """Un grupo de la barra lateral: un rotulo y sus enlaces.
+
+    Puramente de presentacion: cada `ruta` ya es una ruta SERVIDA hoy por
+    `web/app.py` (nada nuevo se agrega aqui) -esto solo reagrupa enlaces que ya
+    existian sueltos dentro de las paginas (p. ej. "Ver corridas" en
+    `suites.html`, o los botones de `configuracion.html`) en una barra lateral
+    persistente. `SECCIONES` (arriba) sigue existiendo tal cual para quien lo
+    use; esto es una vista mas rica de la misma navegacion, no un reemplazo.
+    """
+
+    titulo: str
+    entradas: tuple[Seccion, ...]
+
+
+#: Barra lateral de la interfaz. El resaltado de "activo" no depende de una
+#: clave por pantalla -habria que distinguir Conexiones de Tarjetas dentro de
+#: la misma `seccion="configuracion"`, y Corridas dentro de `seccion="suites"`,
+#: cosa que el contexto actual no distingue-: la plantilla decide el activo
+#: comparando `request.url.path` contra `ruta`, con el prefijo mas largo que
+#: coincida (ver `base.html`), asi que agregar un grupo aqui no exige tocar
+#: ningun endpoint.
+def ruta_activa(path: str, grupos: Sequence[GrupoNav]) -> str | None:
+    """La ruta de `GRUPOS_NAV` que corresponde a la pantalla actual, o `None`.
+
+    Con "/suites" y "/suites/corridas" ambos en la barra, un prefijo simple
+    marcaria los dos como activos al visitar "/suites/corridas/7". Esta
+    funcion resuelve eso por texto mas largo: entre todas las entradas cuya
+    ruta coincide con `path`, gana la mas especifica. "/" solo coincide con
+    "/" exacto -de lo contrario toda la aplicacion quedaria bajo "Nueva
+    transacción"-, con una unica excepcion documentada: "/compra" (el POST
+    que ejecuta la transaccion y renderiza `resultado.html`) es, para esto,
+    la misma pantalla que "/" -exactamente el mismo par que ya distingue
+    `contexto_de_resultado` con `"seccion": "compra"`-.
+    """
+    mejor: str | None = None
+    for grupo in grupos:
+        for entrada in grupo.entradas:
+            ruta = entrada.ruta
+            if ruta == "/":
+                coincide = path in ("/", "/compra")
+            else:
+                coincide = path == ruta or path.startswith(ruta + "/")
+            if coincide and (mejor is None or len(ruta) > len(mejor)):
+                mejor = ruta
+    return mejor
+
+
+GRUPOS_NAV: tuple[GrupoNav, ...] = (
+    GrupoNav("Ejecución", (
+        Seccion("compra", "/", "Nueva transacción"),
+        Seccion("historial", "/historial", "Historial"),
+    )),
+    GrupoNav("Automatización", (
+        Seccion("escenarios", "/escenarios", "Escenarios"),
+        Seccion("suites", "/suites", "Suites"),
+        Seccion("corridas", "/suites/corridas", "Corridas"),
+    )),
+    GrupoNav("Configuración", (
+        Seccion("conexiones", "/configuracion/conexiones", "Conexiones"),
+        Seccion("tarjetas", "/configuracion/tarjetas", "Tarjetas"),
+    )),
 )
 
 
@@ -415,8 +480,25 @@ def filas_de_solicitud(
 
 
 @dataclass(frozen=True)
+class FilaDiscrepancia:
+    """Una discrepancia de Expected vs Actual, estructurada para una tabla
+    CRITERIO/ESPERADO/RECIBIDO en vez de una sola oracion -mismo contenido
+    que ya redacta `mensaje_de_discrepancia`, solo que sin unirlo en texto.
+
+    Vive aqui (presentacion web) y no en `application/presentacion_evaluacion.py`
+    a proposito: ese modulo es el que comparten CLI y exportacion CSV/JSON, y
+    su contrato (una linea de texto) no cambia. Esta forma estructurada es
+    exclusiva de la interfaz web.
+    """
+
+    criterio: str
+    esperado: str
+    recibido: str
+
+
+@dataclass(frozen=True)
 class EvaluacionMostrada:
-    """PASS/FAIL de un escenario, ya traducido a mensajes legibles.
+    """PASS/FAIL de un escenario, ya traducido para mostrarse.
 
     Se arma a partir del snapshot (`Ejecucion.evaluacion_json`), nunca del
     escenario en vivo: si el escenario se edito despues, esto sigue mostrando
@@ -424,7 +506,34 @@ class EvaluacionMostrada:
     """
 
     estado: str  # "pass" | "fail"
-    discrepancias: Sequence[str]
+    filas: Sequence[FilaDiscrepancia]
+
+
+def _fila_de_discrepancia(discrepancia: Mapping, descripciones: Mapping[str, str]) -> FilaDiscrepancia:
+    """Misma logica que `mensaje_de_discrepancia`, pero devuelve los tres
+    valores por separado en vez de unirlos en una oracion.
+    """
+    if discrepancia["criterio"] == "estado":
+        return FilaDiscrepancia(
+            criterio="Estado de la transacción",
+            esperado=discrepancia["esperado"] or "",
+            recibido=discrepancia["recibido"] or "",
+        )
+    campo = discrepancia["campo"]
+    nombre = descripciones.get(campo, f"Campo {campo}")
+    tipo = discrepancia["tipo"]
+    criterio = f"Campo {campo} · {nombre}"
+    if tipo == "igual":
+        return FilaDiscrepancia(
+            criterio=criterio,
+            esperado=discrepancia["esperado"] or "",
+            recibido=discrepancia["recibido"] or "(ausente)",
+        )
+    if tipo == "presente":
+        return FilaDiscrepancia(criterio=criterio, esperado="presente", recibido="(ausente)")
+    return FilaDiscrepancia(
+        criterio=criterio, esperado="ausente", recibido=discrepancia["recibido"] or ""
+    )
 
 
 def evaluacion_de_ejecucion(ejecucion, descripciones: Mapping[str, str]) -> EvaluacionMostrada | None:
@@ -434,10 +543,8 @@ def evaluacion_de_ejecucion(ejecucion, descripciones: Mapping[str, str]) -> Eval
     if ejecucion.evaluacion_estado is None or not ejecucion.evaluacion_json:
         return None
     datos = json.loads(ejecucion.evaluacion_json)
-    mensajes = [
-        mensaje_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])
-    ]
-    return EvaluacionMostrada(estado=ejecucion.evaluacion_estado, discrepancias=tuple(mensajes))
+    filas = [_fila_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])]
+    return EvaluacionMostrada(estado=ejecucion.evaluacion_estado, filas=tuple(filas))
 
 
 def contexto_de_resultado(
@@ -747,5 +854,5 @@ def evaluacion_de_item(item, descripciones: Mapping[str, str]) -> EvaluacionMost
     if not item.evaluacion_json:
         return None
     datos = json.loads(item.evaluacion_json)
-    mensajes = [mensaje_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])]
-    return EvaluacionMostrada(estado=datos["resultado"], discrepancias=tuple(mensajes))
+    filas = [_fila_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])]
+    return EvaluacionMostrada(estado=datos["resultado"], filas=tuple(filas))

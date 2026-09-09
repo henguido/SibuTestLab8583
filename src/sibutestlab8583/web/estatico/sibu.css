@@ -104,6 +104,38 @@
   --est-no-enviada: #455a6b;
   --est-no-enviada-f: #edf1f5;
   --est-no-enviada-b: #ccd8e1;
+
+  /* --- veredicto: PASS/FAIL de Expected vs Actual ---
+     Deliberadamente su PROPIO trio de tokens, no un alias de --est-aprobada/
+     --est-rechazada: aunque comparten la convencion universal verde=cumple,
+     rojo=no cumple, la evaluacion de una expectativa NUNCA debe pintarse con
+     el mismo par exacto que el estado ISO de la transaccion (ver seccion 6/10
+     del pedido de diseno) -aqui el verde es mas frio/azulado y el rojo mas
+     apagado, para que incluso a color el ojo note que es una familia distinta,
+     y el componente que los usa (`.veredicto`) tiene ademas una forma propia. */
+  --ver-pass: #0a6b5c;
+  --ver-pass-f: #e5f5f1;
+  --ver-pass-b: #b9e2d7;
+  --ver-fail: #9a3b3b;
+  --ver-fail-f: #fbeeed;
+  --ver-fail-b: #eec9c4;
+
+  /* --- alias semanticos en ingles -----------------------------------------
+     El resto de esta hoja nunca los usa (evita mantener dos nombres para lo
+     mismo); existen solo para quien busque el vocabulario habitual de un
+     design system (background/surface/border/text/muted/primary/success/
+     warning/danger/info) sin tener que aprender los nombres en espanol. #}
+  --color-bg: var(--lienzo);
+  --color-surface: var(--panel);
+  --color-surface-alt: var(--panel-alterno);
+  --color-border: var(--linea);
+  --color-text: var(--tinta);
+  --color-text-muted: var(--tenue);
+  --color-primary: var(--acento);
+  --color-success: var(--est-aprobada);
+  --color-warning: var(--est-invalida);
+  --color-danger: var(--est-rechazada);
+  --color-info: var(--est-timeout);
 }
 
 /* ================================================== 2. BASE Y TIPOGRAFIA === */
@@ -192,23 +224,99 @@ code,
 
 /* ========================================================= 3. ESTRUCTURA === */
 
-.cinta {
+/* Cascara de la aplicacion: barra lateral fija a la izquierda + contenido
+   ancho a la derecha. En escritorio es una rejilla de dos columnas; en
+   tableta/movil la barra lateral se vuelve un panel deslizante controlado
+   por el checkbox `#conmutador-sidebar` (ver seccion 11, RESPONSIVE). */
+.app-shell {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  align-items: start;
+  min-height: 100vh;
+}
+
+.conmutador-sidebar {
+  /* Solo existe como estado CSS (:checked). Nunca se ve ni ocupa espacio. */
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cabecera-movil {
+  display: none;
+}
+
+.sidebar__cortina {
+  display: none;
+}
+
+.sidebar {
   position: sticky;
   top: 0;
-  z-index: 20;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--e5);
+  padding: var(--e5) var(--e4);
   background: var(--cinta);
-  border-bottom: 1px solid var(--cinta-linea);
+  border-right: 1px solid var(--cinta-linea);
   color: var(--cinta-tinta);
 }
 
-.cinta__interior {
+.sidebar__nav {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--e3) var(--e5);
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: var(--e3) var(--e5);
+  flex-direction: column;
+  gap: var(--e5);
+}
+
+.sidebar__grupo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--e1);
+}
+
+.sidebar__rotulo-grupo {
+  padding: 0 var(--e3);
+  margin-bottom: var(--e1);
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-fuerte);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+  color: var(--cinta-tenue);
+}
+
+.sidebar__enlace {
+  position: relative;
+  padding: var(--e2) var(--e3);
+  border-radius: var(--r-sm);
+  color: var(--cinta-tenue);
+  font-size: var(--texto-md);
+  font-weight: var(--peso-medio);
+  text-decoration: none;
+}
+
+.sidebar__enlace:hover {
+  background: var(--cinta-velo);
+  color: var(--cinta-tinta);
+}
+
+.sidebar__enlace--activo {
+  background: var(--cinta-velo);
+  color: var(--cinta-tinta);
+  font-weight: var(--peso-fuerte);
+}
+
+.sidebar__enlace--activo::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: var(--e1);
+  bottom: var(--e1);
+  width: 3px;
+  border-radius: var(--r-pastilla);
+  background: var(--acento-cinta);
 }
 
 .marca {
@@ -252,60 +360,117 @@ code,
   color: var(--cinta-tenue);
 }
 
-/* Navegacion: el estado activo se marca con barra inferior y aria-current,
-   no unicamente con color. */
-.nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--e1);
-  margin-left: auto;
-}
-
-.nav__enlace {
-  position: relative;
-  padding: var(--e2) var(--e3);
+/* Boton "hamburguesa" que abre la barra lateral en pantallas angostas
+   (seccion 11 lo activa junto con `.cabecera-movil`); en escritorio ninguno
+   de los dos ocupa espacio. */
+.boton-menu {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
   border-radius: var(--r-sm);
-  color: var(--cinta-tenue);
-  font-size: var(--texto-md);
-  font-weight: var(--peso-medio);
-  text-decoration: none;
+  color: var(--cinta-tinta);
+  cursor: pointer;
 }
 
-.nav__enlace:hover {
+.boton-menu:hover {
   background: var(--cinta-velo);
-  color: var(--cinta-tinta);
 }
 
-.nav__enlace[aria-current="page"] {
-  color: var(--cinta-tinta);
-  font-weight: var(--peso-fuerte);
-}
-
-.nav__enlace[aria-current="page"]::after {
-  content: "";
-  position: absolute;
-  left: var(--e3);
-  right: var(--e3);
-  bottom: -1px;
+.boton-menu__icono,
+.boton-menu__icono::before,
+.boton-menu__icono::after {
+  display: block;
+  width: 20px;
   height: 2px;
   border-radius: var(--r-pastilla);
-  background: var(--acento-cinta);
+  background: currentColor;
+}
+
+.boton-menu__icono::before,
+.boton-menu__icono::after {
+  content: "";
+  position: relative;
+}
+
+.boton-menu__icono::before {
+  top: -6px;
+}
+
+.boton-menu__icono::after {
+  top: 4px;
 }
 
 .lienzo {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: var(--e6) var(--e5) var(--e7);
+  max-width: 1600px;
+  margin: 0;
+  padding: var(--e6) var(--e6) var(--e7);
 }
 
 .encabezado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--e4);
   margin-bottom: var(--e5);
+}
+
+.encabezado__texto {
+  min-width: 0;
 }
 
 .encabezado__sub {
   max-width: 68ch;
   margin-top: var(--e2);
   color: var(--tinta-media);
+}
+
+.encabezado__accion {
+  flex: 0 0 auto;
+}
+
+/* Barra de filtros compacta: una fila, no un panel apilado. Pensada para
+   reemplazar formularios de filtro que antes ocupaban un `.panel` entero
+   (ver `historial.html`). */
+.barra-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--e3) var(--e4);
+  margin-bottom: var(--e4);
+  padding: var(--e3) var(--e4);
+  background: var(--panel);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-md);
+}
+
+.barra-filtros__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--e3);
+}
+
+.barra-filtros__form .campo {
+  min-width: 9rem;
+}
+
+/* La barra de historial tiene 7 campos: se le permite partirse en dos filas
+   (rotulo encima del campo, acciones en su propia fila) en vez de forzar un
+   scroll horizontal en la barra misma -el `.desplazable` de la tabla de abajo
+   ya cubre esa necesidad para las columnas-. */
+.barra-filtros--historial {
+  align-items: flex-start;
+}
+
+.barra-filtros--historial .campo {
+  min-width: 7.5rem;
+}
+
+.barra-filtros--historial .campo--mono {
+  min-width: 8.5rem;
 }
 
 .pie {
@@ -424,6 +589,7 @@ code,
 
 input[type="text"],
 input[type="number"],
+input[type="date"],
 select {
   width: 100%;
   padding: 0.55rem 0.65rem;
@@ -436,6 +602,7 @@ select {
 }
 
 input[type="text"]:hover,
+input[type="date"]:hover,
 select:hover {
   border-color: var(--tenue);
 }
@@ -479,6 +646,43 @@ select:hover {
   font-size: var(--texto-sm);
 }
 
+/* La accion de ejecutar en el aside de Nueva transaccion: boton a todo lo
+   ancho, mas alto que el boton estandar -es la unica accion primaria de toda
+   la pantalla-, con su nota debajo en vez de al lado. */
+.acciones--columna {
+  flex-direction: column;
+  align-items: stretch;
+  background: transparent;
+  border-top: none;
+  padding: var(--e4);
+}
+
+.acciones--columna .boton {
+  justify-content: center;
+  padding: var(--e3) var(--e4);
+  font-size: var(--texto-md);
+}
+
+.acciones--columna .acciones__nota {
+  text-align: center;
+}
+
+/* Dentro de una `.rejilla` (filtros del historial), las acciones ocupan todo
+   el ancho en vez de quedar como una columna mas del formulario. */
+.rejilla > .acciones {
+  grid-column: 1 / -1;
+  background: transparent;
+  border-top: none;
+  padding: 0;
+}
+
+.paginacion {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--e4);
+}
+
 .boton {
   display: inline-flex;
   align-items: center;
@@ -500,6 +704,16 @@ select:hover {
 
 .boton:active {
   transform: translateY(1px);
+}
+
+/* Variante compacta: la accion principal de una fila (p. ej. "Ejecutar" en
+   suites/escenarios), con jerarquia visible frente a acciones secundarias
+   como Editar/Duplicar/Desactivar, que quedan como enlaces de texto. */
+.boton--sm {
+  padding: 0.3rem 0.7rem;
+  font-size: var(--texto-sm);
+  border-radius: var(--r-sm);
+  box-shadow: none;
 }
 
 /* ============================================ 6. SELECTOR DE TARJETAS === */
@@ -525,6 +739,13 @@ select:hover {
 
 .tarjeta:hover {
   border-color: var(--acento);
+}
+
+/* En la barra lateral angosta de Nueva transaccion, una sola columna: el
+   `auto-fit` de `.tarjetas` fuerza como minimo 250px por tarjeta, mas ancho
+   de lo que el aside tiene disponible. */
+.tarjetas--aside {
+  grid-template-columns: 1fr;
 }
 
 /* El radio nativo queda visible a proposito: la seleccion no depende del
@@ -566,6 +787,180 @@ select:hover {
 .tarjeta__desc {
   color: var(--tenue);
   font-size: var(--texto-xs);
+}
+
+/* ======================================================= 6b. FICHAS === */
+
+/* Ficha de listado (suites, y cualquier otro catalogo que quiera dejar de
+   ser una tabla plana): deliberadamente NO reutiliza `.tarjeta` -esa es el
+   selector de tarjeta de pago, y el nombre compartido confundiria dos
+   conceptos del dominio que no tienen nada que ver-. */
+.rejilla-fichas {
+  display: grid;
+  gap: var(--e4);
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.ficha {
+  display: flex;
+  flex-direction: column;
+  gap: var(--e3);
+  padding: var(--e4);
+  background: var(--panel);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-lg);
+  box-shadow: var(--s-1);
+}
+
+.ficha__cabecera {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--e3);
+}
+
+.ficha__titulo {
+  font-size: var(--texto-lg);
+  font-weight: var(--peso-fuerte);
+  letter-spacing: -0.01em;
+}
+
+.ficha__id {
+  display: block;
+  margin-top: var(--e1);
+  font-size: var(--texto-xs);
+  color: var(--tenue);
+}
+
+.ficha__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--e1) var(--e4);
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+.ficha__meta strong {
+  color: var(--tinta-media);
+  font-weight: var(--peso-fuerte);
+}
+
+.ficha__acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e1) var(--e3);
+  margin-top: auto;
+  padding-top: var(--e3);
+  border-top: 1px solid var(--linea-suave);
+}
+
+.ficha__acciones form {
+  display: contents;
+}
+
+/* Cabecera de un reporte de corrida: nombre de la suite + numero de corrida
+   en grande, con el veredicto global como pastilla junto al titulo -no
+   debajo, como un aviso mas- para que el desenlace se lea en el mismo
+   golpe de vista que el titulo. */
+.reporte-cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e3) var(--e4);
+  margin-bottom: var(--e4);
+}
+
+.reporte-cabecera__titulo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e3);
+}
+
+.reporte-cabecera__meta {
+  flex: 1 1 100%;
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+/* Los cuatro numeros grandes de un reporte de corrida: mismo componente que
+   `.metrica`, pero con la cifra a escala de titular -es lo primero, y casi
+   lo unico, que hace falta leer para saber si la corrida salio bien. */
+.metricas--grande {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.metrica--grande .metrica__valor {
+  font-size: 2.5rem;
+  font-weight: var(--peso-alto);
+  line-height: 1;
+}
+
+.metrica--pass .metrica__valor {
+  color: var(--ver-pass);
+}
+
+.metrica--fail .metrica__valor {
+  color: var(--ver-fail);
+}
+
+.metrica--error .metrica__valor {
+  color: var(--est-error);
+}
+
+/* Nueva transaccion: columna principal ancha (el mensaje ISO que se esta
+   construyendo) + columna lateral angosta y fija (que conexion, que tarjeta,
+   cuanto, y el boton de ejecutar) -esta ultima es corta a proposito, para que
+   quepa entera sin scroll en la mayoria de pantallas de escritorio-. Se
+   colapsa a una sola columna con `auto-fit`, igual que `.dos-columnas`. */
+.compra-shell {
+  display: grid;
+  gap: var(--e5);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  align-items: start;
+}
+
+/* El aside va primero en el HTML (mismo orden de lectura y tabulacion que
+   tenia la pantalla de una sola columna: conexion y tarjeta antes que la
+   tabla de campos), pero se dibuja a la derecha: el orden visual en un grid
+   lo decide `order`, no la posicion en el documento. */
+.compra-shell__principal {
+  order: 1;
+}
+
+.compra-shell__aside {
+  order: 2;
+}
+
+@media (max-width: 960px) {
+  .compra-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+.compra-shell__aside {
+  position: sticky;
+  top: var(--e4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--e4);
+}
+
+@media (max-width: 960px) {
+  .compra-shell__aside {
+    position: static;
+  }
+}
+
+/* Dos paneles lado a lado en escritorio (Solicitud | Respuesta), una sola
+   columna en tableta/movil (ver seccion 11). Los dos elementos hijos ya son
+   `.panel` -esto solo decide como se reparten el ancho-. */
+.dos-columnas {
+  display: grid;
+  gap: var(--e4);
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  align-items: start;
 }
 
 /* ==================================================== 7. ESTADO / AVISO === */
@@ -662,12 +1057,16 @@ select:hover {
 
 .metricas {
   display: grid;
-  gap: var(--e4);
+  gap: var(--e3);
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .metrica {
   min-width: 0;
+  padding: var(--e3);
+  background: var(--panel-alterno);
+  border: 1px solid var(--linea-suave);
+  border-radius: var(--r-md);
 }
 
 .metrica__rotulo {
@@ -712,6 +1111,91 @@ select:hover {
 
 .motivos li + li {
   margin-top: var(--e1);
+}
+
+/* ================================================ 8b. VEREDICTO (E-v-A) === */
+
+/* Expected vs Actual. Forma propia y deliberadamente distinta de `.aviso`:
+   una franja rectangular con acento lateral, no una pastilla con icono
+   circular -para que jamas se confunda con el estado ISO de la transaccion,
+   aunque ambas puedan usar tonos verde/rojo. */
+.veredicto {
+  border: 1px solid var(--linea);
+  border-left-width: 4px;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: var(--s-1);
+  margin-bottom: var(--e4);
+  overflow: hidden;
+}
+
+.veredicto--pass {
+  border-left-color: var(--ver-pass);
+}
+
+.veredicto--fail {
+  border-left-color: var(--ver-fail);
+}
+
+.veredicto--vacio {
+  border-left-color: var(--linea);
+}
+
+.veredicto__cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--e2) var(--e4);
+  padding: var(--e3) var(--e4);
+  background: var(--panel-alterno);
+  border-bottom: 1px solid var(--linea-suave);
+}
+
+.veredicto__rotulo {
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-alto);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+  color: var(--tenue);
+}
+
+.veredicto__resultado {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--e1);
+  font-size: var(--texto-md);
+  font-weight: var(--peso-alto);
+}
+
+.veredicto--pass .veredicto__resultado {
+  color: var(--ver-pass);
+}
+
+.veredicto--fail .veredicto__resultado {
+  color: var(--ver-fail);
+}
+
+.veredicto--vacio .veredicto__resultado {
+  color: var(--tenue);
+}
+
+.veredicto__nota {
+  padding: var(--e3) var(--e4);
+  color: var(--tinta-media);
+}
+
+.tabla--veredicto {
+  min-width: 520px;
+}
+
+.tabla--veredicto th,
+.tabla--veredicto td {
+  padding-left: var(--e4);
+}
+
+.tabla--veredicto thead {
+  background: transparent;
 }
 
 /* =========================================================== 9. TABLAS === */
@@ -992,6 +1476,22 @@ select:hover {
   border-color: var(--linea);
 }
 
+/* Veredicto de expectativa en una celda de tabla (historial, corridas). Sus
+   propios tonos -ver seccion 1-, nunca `chip--activa`/`chip--inactiva`: esas
+   dicen "administrativamente activo", esto dice "cumplió lo esperado", y son
+   preguntas distintas aunque ambas quepan en una celda angosta. */
+.chip--pass {
+  color: var(--ver-pass);
+  background: var(--ver-pass-f);
+  border-color: var(--ver-pass-b);
+}
+
+.chip--fail {
+  color: var(--ver-fail);
+  background: var(--ver-fail-f);
+  border-color: var(--ver-fail-b);
+}
+
 /* Fila de casilla de confirmacion: la etiqueta va al lado, no encima. */
 .campo--casilla {
   display: flex;
@@ -1006,26 +1506,192 @@ select:hover {
   height: 1rem;
 }
 
+/* ================================================= 10b. ESTADO VACIO === */
+
+/* Reemplaza el `<p class="vacio">` suelto en las pantallas con catalogo
+   (escenarios, suites, conexiones, tarjetas, corridas, historial): mismo
+   mensaje breve, pero con jerarquia propia y una accion util al lado, no
+   solo texto en cursiva. */
+.estado-vacio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e3);
+  padding: var(--e6) var(--e5);
+  text-align: center;
+  color: var(--tenue);
+}
+
+.estado-vacio__icono {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--linea);
+  border-radius: var(--r-pastilla);
+  background: var(--panel-alterno);
+  color: var(--tenue);
+}
+
+.estado-vacio__titulo {
+  font-weight: var(--peso-fuerte);
+  color: var(--tinta-media);
+}
+
+.estado-vacio__detalle {
+  max-width: 48ch;
+  font-size: var(--texto-sm);
+}
+
+/* ===================================================== 10c. RECORRIDO === */
+
+/* Nueva transaccion se lee como un recorrido de cuatro pasos, no como un
+   scroll plano de paneles sueltos: CONFIGURACION -> MENSAJE -> EJECUCION ->
+   RESULTADO. Puramente visual -una eyebrow encima de cada seccion existente,
+   nada que ya no estuviera ahi cambia de lugar ni de logica. */
+.recorrido__paso {
+  display: flex;
+  align-items: center;
+  gap: var(--e2);
+  margin: var(--e5) 0 var(--e2);
+  color: var(--tenue);
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-alto);
+  letter-spacing: var(--traqueo-rotulo);
+  text-transform: uppercase;
+}
+
+.recorrido__paso:first-child {
+  margin-top: 0;
+}
+
+.recorrido__numero {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-pastilla);
+  background: var(--acento);
+  color: var(--panel);
+  font-size: 0.6875rem;
+}
+
+.recorrido__linea {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--linea);
+}
+
+/* Subgrupo de campos ISO por origen (editable/derivado/automatico) dentro del
+   constructor: mismo dato que `fila.origen` ya traia, solo agrupado. */
+.grupo-campos + .grupo-campos {
+  margin-top: var(--e5);
+}
+
+.grupo-campos__titulo {
+  margin-bottom: var(--e2);
+  font-size: var(--texto-sm);
+  font-weight: var(--peso-fuerte);
+  color: var(--tinta-media);
+}
+
+.grupo-campos__nota {
+  font-weight: var(--peso-medio);
+  color: var(--tenue);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* ==================================================== 10d. BREADCRUMB === */
+
+.migas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e1);
+  margin-bottom: var(--e2);
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+.migas a {
+  color: var(--tenue);
+  text-decoration: none;
+}
+
+.migas a:hover {
+  color: var(--acento);
+  text-decoration: underline;
+}
+
+.migas__separador {
+  color: var(--linea);
+}
+
+.migas__actual {
+  color: var(--tinta-media);
+  font-weight: var(--peso-fuerte);
+}
+
 /* ==================================================== 11. RESPONSIVE === */
 
-/* Tableta: la cinta deja de competir por el ancho y la navegacion baja. */
+/* Tableta y movil: la barra lateral deja de competir por el ancho. Se
+   convierte en un panel deslizante fuera de pantalla, abierto por
+   `#conmutador-sidebar` (un checkbox, sin JavaScript) desde el boton
+   "hamburguesa" de `.cabecera-movil`. */
 @media (max-width: 860px) {
-  .cinta__interior {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .cabecera-movil {
+    position: sticky;
+    top: 0;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--e3);
     padding: var(--e3) var(--e4);
+    background: var(--cinta);
+    border-bottom: 1px solid var(--cinta-linea);
+    color: var(--cinta-tinta);
   }
 
-  .nav {
-    width: 100%;
-    margin-left: 0;
+  .marca--compacta .marca__nombre {
+    font-size: var(--texto-md);
   }
 
-  /* Desde aqui la navegacion ocupa su propia fila y el dispositivo suele ser
-     tactil: 44 px de alto, no los 39 del relleno de escritorio. */
-  .nav__enlace {
-    padding: var(--e3);
+  .sidebar {
+    position: fixed;
+    z-index: 40;
+    inset: 0 0 0 auto;
+    width: min(320px, 82vw);
+    height: 100vh;
+    box-shadow: var(--s-3);
+    transform: translateX(100%);
+    transition: transform 0.18s ease-out;
+  }
+
+  .conmutador-sidebar:checked ~ .app-shell .sidebar {
+    transform: translateX(0);
+  }
+
+  .sidebar__cortina {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: rgba(12, 27, 38, 0.45);
+  }
+
+  .conmutador-sidebar:checked ~ .app-shell .sidebar__cortina {
+    display: block;
   }
 
   .lienzo {
+    max-width: none;
     padding: var(--e5) var(--e4) var(--e6);
   }
 }
@@ -1036,19 +1702,8 @@ select:hover {
     --texto-2xl: 1.4375rem;
   }
 
-  .cinta {
-    position: static;
-  }
-
-  .nav {
-    gap: 0;
-    border-top: 1px solid var(--cinta-linea);
-    padding-top: var(--e2);
-  }
-
-  .nav__enlace {
-    flex: 1 1 auto;
-    text-align: center;
+  .sidebar {
+    width: 88vw;
   }
 
   .panel__cabecera,
@@ -1102,12 +1757,17 @@ select:hover {
 /* Impresion: una ejecucion es evidencia de una prueba y se archiva en papel
    o en PDF con cierta frecuencia. */
 @media print {
-  .cinta,
-  .nav,
+  .sidebar,
+  .cabecera-movil,
+  .sidebar__cortina,
   .acciones,
   .volver,
   .salto {
     display: none !important;
+  }
+
+  .app-shell {
+    display: block;
   }
 
   body {
@@ -1180,15 +1840,22 @@ select:hover {
   margin-top: var(--e3);
 }
 
-/* Los enlaces de conexion reutilizan `.tarjeta` pero no llevan radio: sin esa
-   primera columna, todo el contenido va en una sola. */
-.cambiar-conexion a.tarjeta {
+/* Los controles de conexion reutilizan `.tarjeta` pero no llevan radio: sin
+   esa primera columna, todo el contenido va en una sola. Son un `<button>`
+   -no un `<a>`- porque someten el formulario que los envuelve (GET, con todo
+   lo ya escrito en el constructor); `.tarjeta--boton` deshace los estilos por
+   defecto del navegador para que se vean igual que antes. */
+.cambiar-conexion .tarjeta--boton {
   grid-template-columns: 1fr;
   text-decoration: none;
   color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  appearance: none;
 }
 
-.cambiar-conexion a.tarjeta.tarjeta--seleccionada {
+.cambiar-conexion .tarjeta--boton.tarjeta--seleccionada {
   border-color: var(--acento);
   box-shadow: 0 0 0 2px var(--acento-claro), var(--s-1);
   background: var(--acento-claro);

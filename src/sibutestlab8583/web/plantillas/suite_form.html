@@ -3,6 +3,11 @@
 {% block titulo %}{{ 'Editar suite' if suite_actual else 'Nueva suite' }} · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/suites">Suites</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">{{ 'Editar' if suite_actual else 'Nueva' }}</span>
+</nav>
 <div class="encabezado">
   <h1>{{ 'Editar suite' if suite_actual else 'Nueva suite' }}</h1>
   <p class="encabezado__sub">

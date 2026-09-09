@@ -1,15 +1,13 @@
 {% extends "base.html" %}
-{% from "_piezas.html" import senal %}
+{% from "_piezas.html" import senal, encabezado_pagina %}
 {% block titulo %}Suites · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
-<div class="encabezado">
-  <h1>Suites</h1>
-  <p class="encabezado__sub">
-    Un grupo reutilizable de escenarios, en un orden fijo. Ejecutar una suite corre cada
-    escenario en orden y da un resumen PASS/FAIL/ERROR por escenario y un resultado global.
-  </p>
-</div>
+{{ encabezado_pagina(
+  'Suites de regresión',
+  'Agrupa escenarios y ejecútalos en un orden fijo, como una batería automatizada con un resultado global PASS/FAIL/ERROR.',
+  'Nueva suite', '/suites/nueva'
+) }}
 
 {% if error %}
 <div class="aviso error">
@@ -19,83 +17,63 @@
 </div>
 {% endif %}
 
-<section class="panel">
-  <div class="panel__cabecera">
-    <h2 class="panel__titulo">Catálogo</h2>
-    <span class="panel__nota">
-      {{ suites|length }} {{ 'suite' if suites|length == 1 else 'suites' }}
-    </span>
-  </div>
-  <div class="panel__cuerpo">
-    <form method="get" action="/suites" class="rejilla">
-      <div class="campo campo--mono">
-        <label class="campo__rotulo" for="buscar">Buscar por nombre</label>
-        <input type="text" id="buscar" name="buscar" autocomplete="off" value="{{ buscar }}">
-      </div>
-      <div class="acciones">
-        <button class="boton" type="submit">Buscar</button>
-      </div>
-    </form>
-  </div>
-  {% if suites %}
-  <div class="desplazable" tabindex="0" role="region" aria-label="Suites">
-    <table class="tabla">
-      <thead>
-        <tr>
-          <th>Nombre</th>
-          <th class="num">Escenarios</th>
-          <th>Estado</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for suite in suites %}
-        <tr>
-          <td>{{ suite.nombre }}</td>
-          <td class="num">{{ suite.escenarios|length }}</td>
-          <td>
-            {% if suite.activa %}
-            <span class="chip chip--activa">Activa</span>
-            {% else %}
-            <span class="chip chip--inactiva">Inactiva</span>
-            {% endif %}
-          </td>
-          <td>
-            <div class="tabla-acciones">
-              <a href="/suites/{{ suite.suite_id }}/editar">Editar</a>
-              <form method="post" action="/suites/{{ suite.suite_id }}/ejecutar">
-                <button class="enlace-boton" type="submit">Ejecutar</button>
-              </form>
-              <form method="post" action="/suites/{{ suite.suite_id }}/duplicar">
-                <button class="enlace-boton" type="submit">Duplicar</button>
-              </form>
-              <form method="post" action="/suites/{{ suite.suite_id }}/estado">
-                <input type="hidden" name="activa" value="{{ '0' if suite.activa else '1' }}">
-                <button class="enlace-boton" type="submit">
-                  {{ 'Desactivar' if suite.activa else 'Reactivar' }}
-                </button>
-              </form>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <div class="panel__cuerpo">
-    <p class="vacio">
-      {% if buscar %}
-      Ninguna suite coincide con «{{ buscar }}».
+<div class="barra-filtros">
+  <form method="get" action="/suites" class="barra-filtros__form">
+    <div class="campo campo--mono">
+      <label class="campo__rotulo" for="buscar">Buscar por nombre</label>
+      <input type="text" id="buscar" name="buscar" autocomplete="off" value="{{ buscar }}">
+    </div>
+    <button class="boton boton--sm" type="submit">Buscar</button>
+  </form>
+  <a class="enlace-boton" href="/suites/corridas">Ver corridas &rarr;</a>
+</div>
+
+{% if suites %}
+<div class="rejilla-fichas">
+  {% for suite in suites %}
+  <article class="ficha">
+    <div class="ficha__cabecera">
+      <h2 class="ficha__titulo">{{ suite.nombre }}</h2>
+      {% if suite.activa %}
+      <span class="chip chip--activa">Activa</span>
       {% else %}
-      Todavía no hay suites guardadas.
+      <span class="chip chip--inactiva">Inactiva</span>
       {% endif %}
-    </p>
-  </div>
+    </div>
+    <div class="ficha__meta">
+      <span><strong>{{ suite.escenarios|length }}</strong> escenario{{ 's' if suite.escenarios|length != 1 }}</span>
+    </div>
+    <div class="ficha__acciones">
+      <form method="post" action="/suites/{{ suite.suite_id }}/ejecutar">
+        <button class="boton boton--sm" type="submit">{{ senal('transmision', 13) }} Ejecutar</button>
+      </form>
+      <a href="/suites/{{ suite.suite_id }}/editar">Editar</a>
+      <form method="post" action="/suites/{{ suite.suite_id }}/duplicar">
+        <button class="enlace-boton" type="submit">Duplicar</button>
+      </form>
+      <form method="post" action="/suites/{{ suite.suite_id }}/estado">
+        <input type="hidden" name="activa" value="{{ '0' if suite.activa else '1' }}">
+        <button class="enlace-boton" type="submit">
+          {{ 'Desactivar' if suite.activa else 'Reactivar' }}
+        </button>
+      </form>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="estado-vacio">
+  {% if buscar %}
+  <p class="estado-vacio__titulo">Sin coincidencias</p>
+  <p class="estado-vacio__detalle">Ninguna suite coincide con «{{ buscar }}».</p>
+  {% else %}
+  <p class="estado-vacio__titulo">Todavía no hay suites guardadas</p>
+  <p class="estado-vacio__detalle">
+    Agrupe escenarios ya guardados en una suite para ejecutarlos en orden y ver un resultado
+    global PASS/FAIL/ERROR.
+  </p>
+  <a class="boton" href="/suites/nueva">Nueva suite</a>
   {% endif %}
-  <div class="acciones">
-    <a class="boton" href="/suites/nueva">Nueva suite</a>
-    <a href="/suites/corridas">Ver corridas</a>
-  </div>
-</section>
+</div>
+{% endif %}
 {% endblock %}

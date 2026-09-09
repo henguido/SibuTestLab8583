@@ -5,9 +5,16 @@
    solo con estructura. El icono si va en linea, como data URI, para no pedir
    un segundo archivo por una marca de 32 px.
 
-   La navegacion la define `presentacion.SECCIONES` y llega como global de
-   Jinja. Anadir una seccion es una linea en un solo lugar; aqui no hay ninguna
-   lista que mantener en paralelo.
+   La navegacion la define `presentacion.GRUPOS_NAV` (agrupada, para la barra
+   lateral) y llega como global de Jinja, igual que `secciones` (sin agrupar,
+   se conserva por si algo mas la usa). Anadir una entrada es una linea en un
+   solo lugar; aqui no hay ninguna lista que mantener en paralelo. El activo se
+   calcula con `ruta_activa(request.url.path, grupos_nav)`, tambien registrada
+   como global: ninguna ruta de `app.py` necesita saber en que pantalla esta.
+
+   El interruptor de la barra lateral en pantallas angostas es un
+   `<input type="checkbox">` mas CSS (":checked ~ ..."), sin una linea de
+   JavaScript: no hay estado que perder ni script que cargar aparte.
 #}
 <!doctype html>
 <html lang="es">
@@ -21,9 +28,30 @@
 </head>
 <body>
 <a class="salto" href="#contenido">Ir al contenido</a>
+{% set activa = ruta_activa(request.url.path, grupos_nav) %}
+<input type="checkbox" id="conmutador-sidebar" class="conmutador-sidebar">
 
-<header class="cinta">
-  <div class="cinta__interior">
+<div class="app-shell">
+  <header class="cabecera-movil">
+    <a class="marca marca--compacta" href="/">
+      <span class="marca__sello" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true" focusable="false">
+          <path d="M6.4 4.4 3.2 8l3.2 3.6"/>
+          <path d="M9.6 4.4 12.8 8l-3.2 3.6"/>
+        </svg>
+      </span>
+      <span class="marca__nombre">SibuTestLab<span class="marca__sufijo">8583</span></span>
+    </a>
+    <label for="conmutador-sidebar" class="boton-menu" aria-label="Abrir navegación">
+      <span class="boton-menu__icono" aria-hidden="true"></span>
+    </label>
+  </header>
+
+  <label for="conmutador-sidebar" class="sidebar__cortina" aria-hidden="true"></label>
+
+  <aside class="sidebar" aria-label="Navegación principal">
     <a class="marca" href="/">
       <span class="marca__sello" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -39,22 +67,28 @@
       </span>
     </a>
 
-    <nav class="nav" aria-label="Secciones">
-      {%- for apartado in secciones %}
-      <a class="nav__enlace" href="{{ apartado.ruta }}"
-         {% if apartado.clave == seccion|default('') %}aria-current="page"{% endif %}>{{ apartado.texto }}</a>
+    <nav class="sidebar__nav" aria-label="Secciones">
+      {%- for grupo in grupos_nav %}
+      <div class="sidebar__grupo">
+        <p class="sidebar__rotulo-grupo">{{ grupo.titulo }}</p>
+        {%- for entrada in grupo.entradas %}
+        <a class="sidebar__enlace{{ ' sidebar__enlace--activo' if entrada.ruta == activa else '' }}"
+           href="{{ entrada.ruta }}"
+           {% if entrada.ruta == activa %}aria-current="page"{% endif %}>{{ entrada.texto }}</a>
+        {%- endfor %}
+      </div>
       {%- endfor %}
     </nav>
-  </div>
-</header>
+  </aside>
 
-<main class="lienzo" id="contenido">
-{% block contenido %}{% endblock %}
-  <p class="pie">
-    Ambiente de pruebas. Las tarjetas se identifican por <code>card_id</code> y su número se
-    muestra siempre enmascarado, fuera de su propia pantalla de mantenimiento: ahí, y solo ahí,
-    se recibe completo para poder guardarlo.
-  </p>
-</main>
+  <main class="lienzo" id="contenido">
+  {% block contenido %}{% endblock %}
+    <p class="pie">
+      Ambiente de pruebas. Las tarjetas se identifican por <code>card_id</code> y su número se
+      muestra siempre enmascarado, fuera de su propia pantalla de mantenimiento: ahí, y solo ahí,
+      se recibe completo para poder guardarlo.
+    </p>
+  </main>
+</div>
 </body>
 </html>
