@@ -512,6 +512,14 @@ class Ejecucion:
     #: expectativas del escenario despues no puede alterar este snapshot.
     evaluacion_estado: str | None = None
     evaluacion_json: str | None = None
+    #: Causa concreta del desenlace, ya en texto seguro para mostrar (los
+    #: mismos `motivos` que ya se muestran en la pantalla de resultado
+    #: inmediato: nombres de campo, codigos de catalogo, texto de socket -
+    #: nunca una excepcion cruda ni un mensaje ISO completo). `None` en dos
+    #: casos que no deben confundirse: una ejecucion APROBADA (no hay motivo
+    #: que registrar) y una fila anterior a que este campo existiera (no es
+    #: demostrable que no lo tuviera, simplemente no se conserva).
+    motivo_detalle: str | None = None
     creada_en: datetime = field(default_factory=_ahora)
     id: int | None = None
 

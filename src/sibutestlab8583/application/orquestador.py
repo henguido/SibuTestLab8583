@@ -313,6 +313,14 @@ class Orquestador:
         # implicito. El snapshot completo (expectativa original + resultado +
         # discrepancias) es lo unico que se persiste; editar el escenario
         # despues no puede alterar esta fila.
+        # Causa concreta del desenlace, para poder consultarla despues del
+        # historial: los mismos `motivos` que ya se muestran en la pantalla de
+        # resultado inmediato (ver docstrings de validar_envio/evaluar_respuesta/
+        # FalloDeConexion/FalloDeTransmision/TiempoAgotado: texto ya redactado
+        # para ser seguro, nunca una excepcion cruda ni un mensaje ISO completo).
+        # `None` para APROBADA -no hay nada que explicar-, nunca cadena vacia.
+        motivo_detalle = "; ".join(motivos) if motivos else None
+
         resultado_evaluacion = evaluar_expectativas(expectativas, estado, respuesta_enmascarada)
         evaluacion_estado = resultado_evaluacion.estado.value if resultado_evaluacion else None
         evaluacion_json = (
@@ -354,6 +362,7 @@ class Orquestador:
             escenario_nombre=escenario_nombre,
             evaluacion_estado=evaluacion_estado,
             evaluacion_json=evaluacion_json,
+            motivo_detalle=motivo_detalle,
             creada_en=self._reloj(),
         )
         await self._ejecuciones.guardar(ejecucion)

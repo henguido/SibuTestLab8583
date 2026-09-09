@@ -147,6 +147,15 @@ async def test_rn2_el_timeout_se_persiste_y_se_cuenta_aparte_del_rechazo(base, d
     assert estados.count(EstadoEjecucion.TIMEOUT) == 1
     assert estados.count(EstadoEjecucion.RECHAZADA) == 1
 
+    # Mejora posterior: el motivo persistido de cada una es distinto y
+    # corresponde a su propia causa -nunca el mismo texto para TIMEOUT y
+    # RECHAZADA, que son desenlaces distintos con causas distintas.
+    por_estado = {e.estado: e.motivo_detalle for e in guardadas}
+    assert por_estado[EstadoEjecucion.TIMEOUT] is not None
+    assert "0.01" in por_estado[EstadoEjecucion.TIMEOUT] or "s" in por_estado[EstadoEjecucion.TIMEOUT]
+    assert por_estado[EstadoEjecucion.RECHAZADA] is not None
+    assert por_estado[EstadoEjecucion.TIMEOUT] != por_estado[EstadoEjecucion.RECHAZADA]
+
 
 async def test_rn2_el_limite_por_defecto_de_la_demostracion_es_diez_segundos():
     from sibutestlab8583.adapters.transporte.tcp import TIEMPO_LIMITE_POR_DEFECTO, TransporteTcp
@@ -204,6 +213,40 @@ def test_rn3_una_respuesta_sin_campos_obligatorios_es_invalida():
     assert estado is EstadoEjecucion.INVALIDA
 
 
+async def test_rn3_invalida_persiste_un_motivo_distinto_del_de_timeout_o_rechazo(
+    base, datos_compra
+):
+    """Diagnostico historico: INVALIDA (RN-3, correlacion rota) debe quedar
+    con su propio motivo persistido -distinto del de TIMEOUT/RECHAZADA/
+    ERROR_CONEXION-, para que el historial pueda diferenciar realmente los
+    cuatro tipos de fallo, no solo por el `estado` sino tambien por la causa.
+    """
+
+    class TransporteRespuestaNoCorrelacionada:
+        """Devuelve una respuesta 0110 real, pero con el STAN (campo 11)
+        cambiado -misma tecnica que ya usa
+        `test_rn3_alterar_cualquier_campo_de_correlacion_invalida_la_respuesta`,
+        aqui contra el orquestador completo en vez de la funcion pura."""
+
+        async def enviar(self, payload, destino, tiempo_limite=None):
+            solicitud = CODEC.decodificar(payload, PERFIL_GENERICO).como_mensaje()
+            respuesta = _respuesta_correlacionada(solicitud, "00")
+            alterada = MensajeIso(
+                mti=respuesta.mti,
+                campos={**dict(respuesta.campos), "11": "999999"},
+            )
+            return CODEC.codificar(alterada, PERFIL_GENERICO)
+
+    orquestador = construir_orquestador(base, TransporteRespuestaNoCorrelacionada())
+    resultado = await orquestador.ejecutar_compra(datos_compra)
+
+    assert resultado.estado is EstadoEjecucion.INVALIDA
+    guardada = (await RepositorioEjecucionesSQLite(base).listar())[0]
+    assert guardada.motivo_detalle is not None
+    assert "11" in guardada.motivo_detalle
+    assert "no corresponde a la solicitud" in guardada.motivo_detalle
+
+
 # ---------------------------------------------------------------- RN-4 -------
 
 
@@ -246,3 +289,86 @@ async def test_rn4_la_ejecucion_no_enviada_queda_persistida(base, datos_compra):
     guardadas = await RepositorioEjecucionesSQLite(base).listar()
     assert guardadas[0].estado is EstadoEjecucion.NO_ENVIADA
     assert guardadas[0].destino_host is None, "no se envio: no hay destino que registrar"
+    # Mejora posterior: la causa concreta tambien queda persistida (antes solo
+    # se mostraba en la pantalla de resultado inmediato, nunca se guardaba).
+    assert guardadas[0].motivo_detalle is not None
+    assert "14" in guardadas[0].motivo_detalle
+    assert "Traceback" not in guardadas[0].motivo_detalle
+
+
+async def test_motivo_detalle_de_un_error_de_codec_es_texto_propio_no_de_la_libreria(
+    base, datos_compra
+):
+    """Un campo manual que no cabe en el ancho fijo que exige el perfil hace
+    fallar la codificacion (pyiso8583.EncodeError).
+
+    `CodecIso8583.codificar` NO debe persistir `str(error)`/`error.msg` -el
+    texto libre que redacta pyiso8583-: eso es un contrato de una dependencia
+    externa que este proyecto no controla ni puede auditar hacia adelante
+    (una version futura podria describir el fallo citando el propio valor
+    del campo). El motivo persistido debe ser texto REDACTADO POR ESTE
+    PROYECTO, usando solo `error.field` (el numero de campo, un dato
+    estructural) -nunca el mensaje de la libreria, sea cual sea su forma en
+    la version instalada.
+    """
+    orquestador = construir_orquestador(base, TransporteFalso())
+    # DE37 (numero de referencia de recuperacion) exige 12 caracteres exactos
+    # en el perfil generico; 3 es deliberadamente invalido.
+    resultado = await orquestador.ejecutar_compra(
+        replace(datos_compra, campos_manuales={"37": "ABC"})
+    )
+
+    assert resultado.estado is EstadoEjecucion.NO_ENVIADA
+    guardada = (await RepositorioEjecucionesSQLite(base).listar())[0]
+    assert guardada.motivo_detalle is not None
+    assert guardada.motivo_detalle == (
+        "no se pudo codificar el campo 37 para el MTI 0100 con el perfil 'generico'"
+    ), "debe ser EXACTAMENTE el texto propio, no el de pyiso8583"
+    assert "ABC" not in guardada.motivo_detalle, "el valor rechazado no debe quedar en el motivo"
+    assert "Traceback" not in guardada.motivo_detalle
+    # Ninguna palabra de la redaccion de la libreria para este caso concreto
+    # (verificado leyendo su fuente instalada: "Field data is N bytes,
+    # expecting M") debe sobrevivir al mensaje persistido.
+    assert "expecting" not in guardada.motivo_detalle
+    assert "bytes" not in guardada.motivo_detalle
+
+
+async def test_motivo_detalle_de_un_fallo_de_conexion_es_el_texto_de_socket_no_una_traza(
+    base, datos_compra
+):
+    """`FalloDeConexion.detalle` (host/puerto y el error de red) es lo que
+    debe quedar persistido para ERROR_CONEXION -nunca una excepcion cruda de
+    asyncio, que el transporte real ya convierte en este resultado antes de
+    que llegue al orquestador (ver `domain.puertos.Transporte`)."""
+
+    class TransporteQueRechaza:
+        async def enviar(self, payload, destino, tiempo_limite=None):
+            from sibutestlab8583.domain.modelos import FalloDeConexion
+
+            return FalloDeConexion(
+                f"no se pudo establecer la conexión con {destino}: conexión rechazada"
+            )
+
+    orquestador = construir_orquestador(base, TransporteQueRechaza())
+    resultado = await orquestador.ejecutar_compra(datos_compra)
+
+    assert resultado.estado is EstadoEjecucion.ERROR_CONEXION
+    guardada = (await RepositorioEjecucionesSQLite(base).listar())[0]
+    assert guardada.motivo_detalle == (
+        f"no se pudo establecer la conexión con {orquestador._destino}: conexión rechazada"
+    )
+    assert "Traceback" not in guardada.motivo_detalle
+    assert "Exception" not in guardada.motivo_detalle
+
+
+async def test_una_aprobada_no_persiste_ningun_motivo(base, datos_compra):
+    """APROBADA no tiene nada que explicar: `motivo_detalle` debe quedar
+    `None`, nunca una cadena vacia -distincion ya establecida en
+    `presentacion.motivo_de` y en el esquema-.
+    """
+    orquestador = construir_orquestador(base, TransporteFalso(codigo="00"))
+    resultado = await orquestador.ejecutar_compra(datos_compra)
+
+    assert resultado.estado is EstadoEjecucion.APROBADA
+    guardada = (await RepositorioEjecucionesSQLite(base).listar())[0]
+    assert guardada.motivo_detalle is None

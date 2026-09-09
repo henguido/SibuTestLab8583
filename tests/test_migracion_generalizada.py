@@ -18,6 +18,7 @@ from sibutestlab8583.adapters.persistence.esquema import (
     COLUMNAS_AGREGADAS_DESTINOS,
     COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO,
     COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION,
+    COLUMNAS_AGREGADAS_EJECUCIONES_MOTIVO,
     COLUMNAS_AGREGADAS_ESCENARIOS,
     COLUMNAS_AGREGADAS_TARJETAS,
     inicializar,
@@ -785,6 +786,113 @@ def _crear_base_anterior_a_suites(ruta) -> None:
             "INSERT INTO tarjetas_prueba (card_id, creada_en)"
             " VALUES ('VIEJA-SUITE', '2026-01-01T00:00:00+00:00')"
         )
+
+
+
+# ------------------------------------------- mejora posterior: motivo_detalle ----
+
+
+def _crear_base_anterior_a_motivo_detalle(ruta) -> None:
+    """Reproduce el esquema COMPLETO de justo antes de esta mejora: con todo lo
+    de Bloques 1-3 (incluidas las columnas de evaluacion), pero sin
+    `motivo_detalle` en `ejecuciones`. Trae una ejecucion historica real -con
+    un estado que normalmente llevaria motivo (`no_enviada`)- para comprobar
+    que migrar no le inventa una causa que nunca se registro.
+    """
+    ddl_anterior = """
+    CREATE TABLE tarjetas_prueba (
+        card_id   TEXT PRIMARY KEY,
+        creada_en TEXT NOT NULL
+    );
+    CREATE TABLE ejecuciones (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        creada_en          TEXT    NOT NULL,
+        card_id            TEXT    NOT NULL REFERENCES tarjetas_prueba(card_id),
+        mti_solicitud      TEXT    NOT NULL,
+        mti_respuesta      TEXT,
+        monto              TEXT    NOT NULL,
+        moneda             TEXT    NOT NULL,
+        stan               TEXT    NOT NULL,
+        destino_host       TEXT,
+        destino_puerto     INTEGER,
+        estado             TEXT    NOT NULL,
+        codigo_respuesta   TEXT,
+        evaluacion_estado  TEXT,
+        evaluacion_json    TEXT
+    );
+    """
+    with sqlite3.connect(ruta) as conexion:
+        conexion.executescript(ddl_anterior)
+        conexion.execute(
+            "INSERT INTO tarjetas_prueba (card_id, creada_en)"
+            " VALUES ('VIEJA-MOTIVO', '2026-01-01T00:00:00+00:00')"
+        )
+        conexion.execute(
+            "INSERT INTO ejecuciones"
+            " (creada_en, card_id, mti_solicitud, mti_respuesta, monto, moneda, stan,"
+            "  destino_host, destino_puerto, estado, codigo_respuesta)"
+            " VALUES ('2026-01-01T00:00:00+00:00', 'VIEJA-MOTIVO', '0100', NULL,"
+            "         '10.00', '188', '000001', NULL, NULL, 'no_enviada', NULL)"
+        )
+
+
+async def test_una_base_anterior_sin_motivo_detalle_la_recibe_migrada(tmp_path):
+    ruta = tmp_path / "sin_motivo.db"
+    _crear_base_anterior_a_motivo_detalle(ruta)
+
+    await inicializar(ruta, con_datos_demo=False)
+
+    with sqlite3.connect(ruta) as conexion:
+        conexion.row_factory = sqlite3.Row
+        columnas = {f[1] for f in conexion.execute("PRAGMA table_info(ejecuciones)")}
+        fila = conexion.execute(
+            "SELECT * FROM ejecuciones WHERE card_id = 'VIEJA-MOTIVO'"
+        ).fetchone()
+
+    assert "motivo_detalle" in columnas
+    assert fila is not None, "la fila anterior se conserva"
+    assert fila["motivo_detalle"] is None, "una fila migrada no inventa un motivo"
+    assert fila["estado"] == "no_enviada", "ninguna otra columna se modifica"
+    assert fila["stan"] == "000001"
+
+
+async def test_la_migracion_de_motivo_detalle_es_idempotente(tmp_path):
+    ruta = tmp_path / "sin_motivo_repetida.db"
+    _crear_base_anterior_a_motivo_detalle(ruta)
+
+    await inicializar(ruta, con_datos_demo=False)
+    fila_tras_primera = None
+    with sqlite3.connect(ruta) as conexion:
+        conexion.row_factory = sqlite3.Row
+        fila_tras_primera = dict(
+            conexion.execute(
+                "SELECT * FROM ejecuciones WHERE card_id = 'VIEJA-MOTIVO'"
+            ).fetchone()
+        )
+
+    await inicializar(ruta, con_datos_demo=False)  # segunda vez: no debe duplicar ni tocar nada
+
+    with sqlite3.connect(ruta) as conexion:
+        columnas = [f[1] for f in conexion.execute("PRAGMA table_info(ejecuciones)")]
+        conexion.row_factory = sqlite3.Row
+        fila_tras_segunda = dict(
+            conexion.execute(
+                "SELECT * FROM ejecuciones WHERE card_id = 'VIEJA-MOTIVO'"
+            ).fetchone()
+        )
+    assert columnas.count("motivo_detalle") == 1
+    assert fila_tras_segunda == fila_tras_primera
+
+
+async def test_una_base_nueva_no_necesita_migrar_motivo_detalle(base):
+    """El DDL ya trae la columna: `_migrar` sobre una base nueva no agrega nada."""
+    from sibutestlab8583.adapters.persistence.esquema import _migrar
+
+    async with aiosqlite.connect(base) as conexion:
+        agregadas = await _migrar(
+            conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_MOTIVO
+        )
+    assert agregadas == ()
 
 
 async def test_una_base_anterior_a_suites_recibe_las_cuatro_tablas_nuevas(tmp_path):

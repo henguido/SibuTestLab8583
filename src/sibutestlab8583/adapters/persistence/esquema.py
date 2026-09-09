@@ -136,7 +136,11 @@ CREATE TABLE IF NOT EXISTS ejecuciones (
     -- por omision"-. `evaluacion_json` guarda la expectativa ORIGINAL usada,
     -- no una referencia al escenario: editarlo despues no altera esta fila.
     evaluacion_estado       TEXT,
-    evaluacion_json         TEXT
+    evaluacion_json         TEXT,
+    -- Causa concreta y segura del desenlace (ver Ejecucion.motivo_detalle en
+    -- domain/modelos.py). NULL para una APROBADA (no aplica) y para filas
+    -- anteriores a que este campo existiera (no se reconstruye).
+    motivo_detalle          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_creada_en ON ejecuciones(creada_en);
@@ -321,6 +325,12 @@ COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION: tuple[tuple[str, str], ...] = (
     ("evaluacion_json", "TEXT"),
 )
 
+#: Lo mismo para `ejecuciones`: `motivo_detalle` es posterior (diagnostico
+#: historico de fallos, mejora funcional posterior al cierre).
+COLUMNAS_AGREGADAS_EJECUCIONES_MOTIVO: tuple[tuple[str, str], ...] = (
+    ("motivo_detalle", "TEXT"),
+)
+
 #: Lo mismo para `escenarios`: `expected_json` es posterior (Bloque 3).
 COLUMNAS_AGREGADAS_ESCENARIOS: tuple[tuple[str, str], ...] = (
     ("expected_json", "TEXT"),
@@ -411,6 +421,7 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS)
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO)
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION)
+        await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_MOTIVO)
         await _migrar(conexion, "escenarios", COLUMNAS_AGREGADAS_ESCENARIOS)
         await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
         await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)

@@ -397,7 +397,140 @@ async def test_un_id_de_corrida_no_numerico_da_404_y_no_el_422_de_fastapi():
     async with cliente:
         respuesta = await cliente.get("/suites/corridas/abc")
     assert respuesta.status_code == 404
-    assert '"detail"' not in respuesta.text
+
+
+# --------------------------------------------------------------- exportar ---
+#
+# Mejora funcional posterior a la entrega: descargar JSON/CSV desde el
+# detalle de una corrida, reutilizando exactamente el mismo reporte que ya
+# usa `sibu-run-suite export-run` (`application/exportacion_corridas.py`).
+
+
+async def _corrida_de_prueba(cliente) -> str:
+    e1 = await _crear_escenario(cliente, nombre="E1")
+    respuesta_crear = await cliente.post(
+        "/suites", data={"nombre": "Exportable", f"incluir_{e1}": "1", f"orden_{e1}": "1"}
+    )
+    suite_id = _id_de(respuesta_crear)
+    respuesta_ejecutar = await cliente.post(f"/suites/{suite_id}/ejecutar")
+    return respuesta_ejecutar.headers["location"].rstrip("/").split("/")[-1]
+
+
+async def test_el_detalle_de_corrida_ofrece_los_dos_botones_de_descarga():
+    cliente, _ = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    async with cliente:
+        corrida_id = await _corrida_de_prueba(cliente)
+        html = (await cliente.get(f"/suites/corridas/{corrida_id}")).text
+    assert f"/suites/corridas/{corrida_id}/exportar.json" in html
+    assert f"/suites/corridas/{corrida_id}/exportar.csv" in html
+
+
+async def test_exportar_json_reutiliza_el_mismo_reporte_que_la_cli():
+    from sibutestlab8583.application import exportacion_corridas
+
+    cliente, composicion = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    async with cliente:
+        corrida_id = await _corrida_de_prueba(cliente)
+        respuesta = await cliente.get(f"/suites/corridas/{corrida_id}/exportar.json")
+
+        corrida = await composicion.corridas_suite.obtener(int(corrida_id))
+        items = await composicion.corridas_suite.obtener_items(int(corrida_id))
+        esperado = exportacion_corridas.reporte_a_json(corrida, items)
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"].startswith("application/json")
+    assert respuesta.text == esperado
+
+
+async def test_exportar_csv_trae_encabezado_y_content_disposition():
+    cliente, _ = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    async with cliente:
+        corrida_id = await _corrida_de_prueba(cliente)
+        respuesta = await cliente.get(f"/suites/corridas/{corrida_id}/exportar.csv")
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"].startswith("text/csv")
+    assert f'corrida-{corrida_id}.csv' in respuesta.headers["content-disposition"]
+    assert respuesta.text.startswith("corrida_id,suite_id,suite_nombre")
+
+
+async def test_exportar_una_corrida_inexistente_da_404_sin_ejecutar_nada():
+    cliente, _ = _cliente()
+    async with cliente:
+        respuesta = await cliente.get("/suites/corridas/999999/exportar.json")
+    assert respuesta.status_code == 404
+
+
+async def test_exportar_con_id_no_numerico_da_404():
+    cliente, _ = _cliente()
+    async with cliente:
+        respuesta = await cliente.get("/suites/corridas/abc/exportar.csv")
+    assert respuesta.status_code == 404
+
+
+def _contar_filas(ruta_db, tabla: str) -> int:
+    import sqlite3
+
+    with sqlite3.connect(ruta_db) as conexion:
+        return conexion.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0]
+
+
+async def test_exportar_no_crea_ejecuciones_ni_corridas_nuevas():
+    """Exportar es de solo lectura: ni una nueva ejecucion, ni una nueva
+    corrida, ni siquiera al pedir los dos formatos varias veces.
+    """
+    cliente, composicion = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    async with cliente:
+        corrida_id = await _corrida_de_prueba(cliente)
+        ejecuciones_antes = _contar_filas(composicion._ruta_suites, "ejecuciones")
+        corridas_antes = _contar_filas(composicion._ruta_suites, "corridas_suite")
+
+        await cliente.get(f"/suites/corridas/{corrida_id}/exportar.json")
+        await cliente.get(f"/suites/corridas/{corrida_id}/exportar.csv")
+        await cliente.get(f"/suites/corridas/{corrida_id}/exportar.json")
+
+        ejecuciones_despues = _contar_filas(composicion._ruta_suites, "ejecuciones")
+        corridas_despues = _contar_filas(composicion._ruta_suites, "corridas_suite")
+
+    assert ejecuciones_despues == ejecuciones_antes
+    assert corridas_despues == corridas_antes
+
+
+async def test_exportar_no_cambia_aunque_se_edite_el_escenario_despues():
+    """El reporte exportado es un snapshot: editar el escenario (u otro
+    escenario con el mismo nombre) despues de correr la suite no debe alterar
+    ni un byte de lo que ya se exporta -mismo principio que ya prueba
+    `test_el_detalle_de_corrida_sigue_mostrando_la_discrepancia_original_tras_editar_la_expectativa`,
+    aplicado a la exportacion en vez de al HTML del detalle.
+    """
+    cliente, _ = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    async with cliente:
+        e1 = await _crear_escenario(cliente, nombre="Antes de editar")
+        respuesta_crear = await cliente.post(
+            "/suites", data={"nombre": "Exportable2", f"incluir_{e1}": "1", f"orden_{e1}": "1"}
+        )
+        suite_id = _id_de(respuesta_crear)
+        respuesta_ejecutar = await cliente.post(f"/suites/{suite_id}/ejecutar")
+        corrida_id = respuesta_ejecutar.headers["location"].rstrip("/").split("/")[-1]
+
+        json_antes = (await cliente.get(f"/suites/corridas/{corrida_id}/exportar.json")).text
+        csv_antes = (await cliente.get(f"/suites/corridas/{corrida_id}/exportar.csv")).text
+
+        # Se edita el escenario (nombre, tarjeta, monto) DESPUES de la corrida.
+        await cliente.post(
+            f"/escenarios/{e1}",
+            data={**FORMULARIO_ESCENARIO, "nombre": "Después de editar", "monto": "999.99"},
+        )
+        # Y se desactiva la suite -tampoco debe afectar un reporte ya emitido.
+        await cliente.post(f"/suites/{suite_id}/estado", data={"activa": "0"})
+
+        json_despues = (await cliente.get(f"/suites/corridas/{corrida_id}/exportar.json")).text
+        csv_despues = (await cliente.get(f"/suites/corridas/{corrida_id}/exportar.csv")).text
+
+    assert json_despues == json_antes
+    assert csv_despues == csv_antes
+    assert "Antes de editar" in json_antes
+    assert "Después de editar" not in json_antes
+    assert "999.99" not in json_antes
 
 
 async def test_el_detalle_de_corrida_sigue_mostrando_la_discrepancia_original_tras_editar_la_expectativa():

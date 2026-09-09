@@ -29,9 +29,16 @@ class CodecIso8583:
         try:
             crudo, _ = iso8583.encode(documento, perfil.especificacion)
         except iso8583.EncodeError as error:
+            # Nunca `str(error)`/`error.msg`: ese texto lo redacta pyiso8583 y no
+            # es un contrato que este proyecto controle ni pueda auditar hacia
+            # adelante -una version futura de la libreria podria describir el
+            # fallo citando el propio valor del campo, y este codigo no tiene
+            # forma de saberlo de antemano-. Solo se usa `error.field`, el
+            # numero de campo ISO donde fallo: un dato estructural, nunca el
+            # contenido. El mensaje final es texto propio, no el de la libreria.
             raise ErrorDeCodificacion(
-                f"no se pudo codificar el MTI {mensaje.mti} con el perfil "
-                f"{perfil.nombre!r}: {error}"
+                f"no se pudo codificar el campo {error.field} para el MTI "
+                f"{mensaje.mti} con el perfil {perfil.nombre!r}"
             ) from error
         return bytes(crudo)
 
@@ -39,9 +46,11 @@ class CodecIso8583:
         try:
             decodificado, codificado = iso8583.decode(bytes(payload), perfil.especificacion)
         except iso8583.DecodeError as error:
+            # Mismo criterio que en `codificar`: solo `error.field`, nunca el
+            # texto libre de la excepcion de la libreria.
             raise ErrorDeDecodificacion(
-                f"no se pudo interpretar la respuesta con el perfil "
-                f"{perfil.nombre!r}: {error}"
+                f"no se pudo interpretar el campo {error.field} de la respuesta "
+                f"con el perfil {perfil.nombre!r}"
             ) from error
 
         campos = {

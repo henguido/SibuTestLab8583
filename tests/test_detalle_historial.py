@@ -423,7 +423,33 @@ async def test_sin_respuesta_no_se_muestra_una_tabla_vacia(base, estado):
     assert "<table" not in respuesta, "no debe haber tabla de respuesta"
     assert AVISOS[estado].titulo in html
     assert AVISOS[estado].detalle[:60] in html, "la explicacion del estado"
-    assert "no se persiste" in respuesta, "debe declarar que el motivo concreto no se guarda"
+    # La fila se inserto sin motivo_detalle (columna anterior a este campo):
+    # debe declararse que no esta disponible, nunca inventar una causa.
+    assert "no está disponible" in html, "debe declarar que el motivo no se conserva"
+
+
+async def test_el_motivo_persistido_se_muestra_en_el_detalle(base):
+    """Una fila CON `motivo_detalle` (a partir de este bloque) muestra la
+    causa concreta, no el aviso generico de "no disponible".
+    """
+    identificador = _insertar(
+        base,
+        estado=EstadoEjecucion.ERROR_CONEXION.value,
+        mti_respuesta=None,
+        motivo_detalle="no se pudo establecer la conexión con 127.0.0.1:9 (rechazada)",
+    )
+    html = (await _obtener(base, f"/historial/{identificador}")).text
+
+    assert "no se pudo establecer la conexión con 127.0.0.1:9" in html
+    assert "no está disponible" not in html
+
+
+async def test_una_aprobada_no_muestra_seccion_por_que(base):
+    """APROBADA no tiene motivo que explicar: la seccion ni aparece."""
+    resultado = await _compra(base)
+    assert resultado.ejecucion.estado == EstadoEjecucion.APROBADA
+    html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+    assert "Por qué" not in html
 
 
 async def test_un_timeout_reutiliza_el_texto_ya_verificado_y_no_lo_reescribe(base):

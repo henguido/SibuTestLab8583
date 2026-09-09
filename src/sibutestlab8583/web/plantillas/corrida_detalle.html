@@ -103,5 +103,18 @@
   </div>
 </section>
 
+{# Reutiliza el mismo reporte que `sibu-run-suite export-run`: descarga el
+   snapshot ya persistido de esta corrida, nunca la vuelve a ejecutar ni
+   depende de como esten configurados hoy sus escenarios. #}
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Exportar</h2>
+  </div>
+  <div class="acciones">
+    <a class="boton" href="/suites/corridas/{{ corrida.corrida_id }}/exportar.json">Descargar JSON</a>
+    <a class="boton" href="/suites/corridas/{{ corrida.corrida_id }}/exportar.csv">Descargar CSV</a>
+  </div>
+</section>
+
 <a class="volver" href="/suites/corridas">&larr; Corridas</a>
 {% endblock %}

@@ -244,6 +244,33 @@ def aviso_de(resultado: ResultadoCompra) -> Aviso:
     return AVISOS[resultado.estado]
 
 
+#: Estados que llevan una causa que explicar. APROBADA queda fuera a
+#: proposito -no hay nada que diagnosticar-, y eso no debe confundirse con una
+#: fila antigua sin `motivo_detalle`: la plantilla distingue ambos casos con
+#: `motivo_esperado`.
+ESTADOS_CON_MOTIVO = frozenset({
+    EstadoEjecucion.RECHAZADA,
+    EstadoEjecucion.INVALIDA,
+    EstadoEjecucion.TIMEOUT,
+    EstadoEjecucion.ERROR_CONEXION,
+    EstadoEjecucion.ERROR_TRANSMISION,
+    EstadoEjecucion.NO_ENVIADA,
+})
+
+
+def motivo_de(ejecucion) -> str | None:
+    """El motivo persistido de una ejecucion historica, ya seguro para
+    mostrar -es el mismo texto que ya redacta el dominio (nombres de campo,
+    codigos de catalogo, texto de socket), nunca una excepcion cruda ni un
+    mensaje ISO completo-. `None` cuando el estado no tiene motivo que
+    explicar (APROBADA); una fila anterior a que este campo existiera
+    tambien da `None` aqui, y la plantilla lo distingue con `motivo_esperado`.
+    """
+    if ejecucion.estado not in ESTADOS_CON_MOTIVO:
+        return None
+    return ejecucion.motivo_detalle
+
+
 def aviso_de_error(error: Exception) -> Aviso:
     """Convierte una excepcion tecnica en algo que el usuario pueda entender.
 
@@ -487,6 +514,8 @@ def contexto_de_detalle(detalle, descripciones: Mapping[str, str]) -> dict:
         in (detalle.solicitud.origen, detalle.respuesta.origen),
         "avisos_tecnicos": _avisos_tecnicos(detalle.solicitud, detalle.respuesta),
         "evaluacion": evaluacion_de_ejecucion(ejecucion, descripciones),
+        "motivo_esperado": ejecucion.estado in ESTADOS_CON_MOTIVO,
+        "motivo_detalle": motivo_de(ejecucion),
     }
 
 

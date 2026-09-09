@@ -23,10 +23,11 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, FastAPI, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from ..application import exportacion_corridas
 from ..application.conexiones import (
     ConexionNoEncontrada,
     DatosEdicionConexion,
@@ -1196,6 +1197,64 @@ async def corrida_detalle(
             ),
         },
     )
+
+
+@enrutador.get("/suites/corridas/{corrida_id}/exportar.json", response_class=PlainTextResponse)
+async def corrida_exportar_json(
+    corrida_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    return await _exportar_corrida(composicion, corrida_id, formato="json")
+
+
+@enrutador.get("/suites/corridas/{corrida_id}/exportar.csv", response_class=PlainTextResponse)
+async def corrida_exportar_csv(
+    corrida_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    return await _exportar_corrida(composicion, corrida_id, formato="csv")
+
+
+async def _exportar_corrida(composicion: Composicion, corrida_id: str, *, formato: str):
+    """Descarga el reporte de una corrida YA PERSISTIDA -nunca la ejecuta de
+    nuevo, y nunca depende de como esten configurados hoy sus escenarios: lee
+    unicamente el snapshot ya guardado (`CorridaSuite` + sus
+    `ItemCorridaSuite`), exactamente igual que `sibu-run-suite export-run`.
+    Es la MISMA funcion de `application/exportacion_corridas.py` -ningun
+    calculo propio de esta ruta, solo resolver el identificador, elegir el
+    tipo de contenido y devolver la respuesta.
+    """
+    try:
+        numero = int(corrida_id)
+    except ValueError:
+        return _corrida_no_encontrada_texto()
+
+    corrida = await composicion.corridas_suite.obtener(numero)
+    if corrida is None:
+        return _corrida_no_encontrada_texto()
+
+    items = await composicion.corridas_suite.obtener_items(numero)
+    descripciones = composicion.descripciones_de_campos
+
+    if formato == "csv":
+        contenido = exportacion_corridas.reporte_a_csv(corrida, items, descripciones)
+        tipo = "text/csv; charset=utf-8"
+        nombre_archivo = f"corrida-{numero}.csv"
+    else:
+        contenido = exportacion_corridas.reporte_a_json(corrida, items)
+        tipo = "application/json; charset=utf-8"
+        nombre_archivo = f"corrida-{numero}.json"
+
+    return PlainTextResponse(
+        contenido,
+        media_type=tipo,
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+def _corrida_no_encontrada_texto() -> PlainTextResponse:
+    """404 en texto plano para una exportacion -no HTML: es una descarga, no
+    una pantalla-. Mismo mensaje que ya usa la CLI para el mismo caso.
+    """
+    return PlainTextResponse("La corrida solicitada no existe o ya no está disponible.", status_code=404)
 
 
 async def _formulario_suite(

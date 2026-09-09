@@ -221,8 +221,9 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                 "  destino_host, destino_puerto, estado, codigo_respuesta,"
                 "  solicitud_enmascarada, respuesta_enmascarada,"
                 "  solicitud_json, respuesta_json, latencia_ms,"
-                "  escenario_id, escenario_nombre, evaluacion_estado, evaluacion_json)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  escenario_id, escenario_nombre, evaluacion_estado, evaluacion_json,"
+                "  motivo_detalle)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ejecucion.creada_en.isoformat(),
                     ejecucion.card_id,
@@ -244,6 +245,7 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                     ejecucion.escenario_nombre,
                     ejecucion.evaluacion_estado,
                     ejecucion.evaluacion_json,
+                    ejecucion.motivo_detalle,
                 ),
             )
             await conexion.commit()
@@ -805,4 +807,5 @@ def _a_ejecucion(fila: aiosqlite.Row) -> Ejecucion:
         escenario_nombre=_opcional(fila, "escenario_nombre"),
         evaluacion_estado=_opcional(fila, "evaluacion_estado"),
         evaluacion_json=_opcional(fila, "evaluacion_json"),
+        motivo_detalle=_opcional(fila, "motivo_detalle"),
     )
