@@ -1973,3 +1973,189 @@ de concurrencia, scheduler, autenticación, productización y perfiles Visa/Mast
 Verificación final tras ambas decisiones: `pytest -q` → 897 passed; guardia PAN
 (`test_seguridad_auditoria.py`) → 3 passed; `git diff --check` limpio. Sin commit ni push
 a `main` todavía -queda para la etapa de staging, fuera de esta revisión.
+
+## 2026-09-07 · Cinco mejoras funcionales posteriores a la entrega
+
+Trabajo pedido explícitamente por el usuario como iteración posterior al cierre académico,
+sobre hallazgos de una revisión estática confirmados contra el código antes de implementar
+nada. Cinco bloques, en el orden solicitado; cada uno con pruebas nuevas y verificación
+manual en navegador (host simulado + web en puertos aislados, base SQLite propia, sin tocar
+datos locales existentes).
+
+**1. Diagnóstico histórico de fallos.** `ResultadoCompra.motivos` ya se calculaba y se
+mostraba en la pantalla de resultado inmediato, pero nunca se persistía -`detalle.html`
+lo declaraba explícitamente: "el motivo concreto no se conserva"-. Se agrega
+`Ejecucion.motivo_detalle` (columna nueva, migración aditiva idempotente), poblada en
+`Orquestador._registrar` con el mismo texto ya redactado como seguro (nombres de campo,
+códigos de catálogo, texto de socket -nunca una excepción cruda ni un mensaje ISO
+completo). `APROBADA` nunca lleva motivo; una fila anterior a este campo se distingue de
+una `APROBADA` y se explica como "no disponible", nunca como "sin problema".
+
+**2. Filtros y paginación del historial.** `ejecuciones_recientes(limite=20)` no tenía
+filtros ni páginas. Se agrega `FiltroHistorial` (dominio, compartido por el puerto y su
+adaptador SQLite) y `RepositorioEjecuciones.buscar(filtro, pagina, tam_pagina)` con
+`WHERE` parametrizado (nunca interpolado) y `COUNT(*)` aparte del `LIMIT/OFFSET`, para
+distinguir historial vacío de búsqueda sin resultados. Filtros: fecha, estado
+transaccional, PASS/FAIL/sin expectativas, tarjeta, destino, STAN. La paginación
+preserva los filtros en la propia URL, sin sesión ni cookie.
+
+**3. Conservar datos del formulario.** Diagnóstico confirmado: el bloque "Cambiar
+conexión" vivía FUERA del `<form>` del constructor -un simple `<a href>`-, así que
+cambiar de conexión perdía tarjeta, monto, campos editables, expectativas y nombre de
+escenario. Se movió dentro del formulario como botones `formmethod="get"` con nombre
+propio (`ir_a_conexion`, para no chocar con el campo oculto `conexion_id`); al someter,
+el navegador arma la querystring con todo el formulario, y `pantalla_compra` la lee
+igual que ya leía un reintento tras error de validación (`_leer_enviado`, factorizada
+para que compra/escenarios/conexión-nueva compartan una sola implementación). Se
+corrigió también que un error al guardar una suite perdiera los escenarios ya marcados
+y su orden -`_formulario_suite` ahora reconstruye la selección desde el formulario
+rechazado, no desde la `Suite` (que puede no existir todavía).
+
+**4. Reutilizar una transacción desde su resultado.** "Editar y volver a ejecutar" y
+"Guardar como escenario" en `resultado.html`, resueltos por `GET /?ejecucion_id={id}`.
+Recupera `card_id` (nunca el PAN), monto, campos editables (leídos de la solicitud ya
+persistida) y expectativas (reconstruidas de `evaluacion_json`). La conexión usada se
+resuelve por `destino_host:puerto` contra las conexiones administradas activas; si no
+hay match único, se explica y se deja sin preseleccionar -nunca se sustituye en
+silencio, mismo principio que ya aplicaba a escenarios-. Cada reejecución es un POST
+normal a `/compra`: STAN e id nuevos siempre, sin mecanismo de reenvío.
+
+**5. Exportación desde la web.** Dos rutas nuevas (`/suites/corridas/{id}/exportar.json`
+y `.csv`) y sus botones en `corrida_detalle.html`, reutilizando literalmente
+`application/exportacion_corridas.py` -el mismo módulo que ya usa `sibu-run-suite
+export-run`-. Nunca vuelve a ejecutar la suite: lee únicamente el snapshot ya
+persistido (`CorridaSuite` + `ItemCorridaSuite`).
+
+Verificado en navegador de punta a punta contra host simulado y web reales, en puertos y
+base SQLite aislados (no los del entorno habitual del usuario): construir → ejecutar
+(NO_ENVIADA por un campo mal armado, causa visible en "Por qué") → ejecutar de nuevo con
+datos válidos (APROBADA) → cambiar de conexión sin perder lo escrito → "Editar y volver
+a ejecutar" recupera tarjeta/monto/campo/conexión exactos → historial filtrado por
+estado → guardar escenario → correr suite → exportar JSON y CSV desde el detalle de la
+corrida, verificando que el JSON coincide byte a byte con `reporte_a_json()`.
+
+Suite completa: 921 passed, 2 skipped (antes 897 passed) -24 pruebas nuevas en
+`tests/test_web.py`, `tests/test_detalle_historial.py` (una reescrita, dos agregadas),
+`tests/test_web_suites.py`, `tests/test_historial_filtros.py` (nuevo) y
+`tests/test_reutilizar_ejecucion.py` (nuevo). Ningún archivo de prueba nuevo ni
+modificado contiene un PAN de 12 a 19 dígitos; la guardia de secretos sigue en verde.
+Sin commit ni push -pendiente de que el usuario lo pida.
+
+## 2026-09-07 · Revisión crítica de las cinco mejoras, antes de darlas por cerradas
+
+A pedido explícito del usuario: revisar el diff completo contra cinco puntos concretos,
+con pruebas de comportamiento donde corresponda, sin ampliar alcance. Se encontraron y
+corrigieron tres defectos reales; se investigó y se documentó (sin corregir, por ser un
+rediseño desproporcionado al hallazgo) una exposición de datos no sensibles en URLs.
+Detalle completo en el informe entregado al usuario en esa misma conversación; aquí solo
+el registro de gobernanza.
+
+**Hallazgos corregidos:**
+1. **Reutilizar una ejecución no explicaba por qué no se podía ejecutar.** Si la tarjeta
+   de una ejecución pasada ya estaba desactivada o eliminada, `_reconstruir_desde_ejecucion`
+   dejaba `conexion_id`/tarjeta sin resolver -correcto- pero nunca lo decía: la persona veía
+   el botón "Ejecutar transacción" deshabilitado sin ninguna explicación. Corregido para que
+   la tarjeta no disponible y la conexión no resoluble se expliquen juntas, sin sustitución
+   silenciosa. Además, una ejecución del formato de texto heredado (anterior a la
+   persistencia estructurada, `MensajeSerializado.fiel=False`) no avisaba que sus campos
+   editables recuperados no son demostrablemente exactos; ahora sí.
+2. **Los botones de "Cambiar conexión" no llevaban `formnovalidate` verificado con un clic
+   real.** Ya se había agregado el atributo, pero solo se había probado disparando el envío
+   por JavaScript (`.click()` sin passar por la validación nativa real). Se verificó con
+   clics reales de mouse en navegador, con `monto` vacío y con `monto` inválido: el cambio
+   de conexión no se bloquea y no se pierde lo escrito. Se agregó un test que verifica que
+   el atributo siga presente en el marcado (`TestClient` no ejecuta validación HTML5, así
+   que solo un test de marcado -o el navegador real- puede detectar una regresión aquí).
+3. **Faltaba la prueba de migración para `motivo_detalle`.** Todas las demás columnas
+   agregadas en la historia del proyecto tienen su propia prueba en
+   `test_migracion_generalizada.py` contra una base anterior real; esta, agregada en la
+   iteración anterior, no la tenía. Se agregó siguiendo el mismo patrón (fila preexistente
+   conservada, migración idempotente, sin inventar un motivo para una fila que nunca lo tuvo).
+
+**Hallazgo documentado en esta entrada -- RESUELTO en la revisión del mismo día, ver la
+entrada siguiente ("Cierre del hallazgo de datos del formulario en la URL"):** cambiar de
+conexión sometía el formulario completo por GET, así que `monto`, los campos editables y
+el nombre del escenario viajaban en la URL, visibles en el historial del navegador y en
+los logs de acceso por defecto del servidor. La corrección finalmente adoptada -POST en
+vez de GET, sin sessionStorage ni borrador alguno- se explica en esa entrada.
+
+**Pruebas nuevas de esta revisión:** 16 (`test_reutilizar_ejecucion.py` +4,
+`test_reglas_negocio.py` +4 y refuerzo de 1 existente, `test_migracion_generalizada.py` +3,
+`test_web.py` +2, `test_web_suites.py` +2, `test_historial_filtros.py` +1). Suite completa
+tras la revisión: **937 passed, 2 skipped** (antes 921). Verificado también en navegador
+real (no solo `pytest`): clic real en "Cambiar conexión" con monto vacío/inválido: la
+conexión cambia y nada se pierde; confirmado en un log de acceso real (descartado al
+cerrar) que la URL completa, incluida cualquier referencia libre escrita por la persona,
+quedaba en el log de acceso -este es precisamente el hallazgo que la entrada siguiente
+resuelve-. Guardia de PAN (`test_seguridad_auditoria.py` y equivalentes) sigue en verde.
+Sin commit ni push.
+
+## 2026-09-07 · Cierre del hallazgo de datos del formulario en la URL, y refuerzo de `motivo_detalle`
+
+A pedido explícito del usuario, tras la revisión anterior: no dejar el hallazgo de la URL
+solo documentado, sino resolverlo dentro del propio alcance de "conservar datos al cambiar
+de conexión". Además, revisar si `motivo_detalle` persiste alguna vez texto crudo de una
+excepción de terceros, en vez de solo confiar en haber leído el código de la versión
+instalada de `pyiso8583`.
+
+**1. Cambiar de conexión pasa de GET a POST.** Solución más simple compatible con la
+arquitectura existente, evaluada y preferida sobre `sessionStorage`: el botón "Cambiar"
+ya vivía dentro del mismo `<form>` (`method="post" action="/compra"`); le bastaba con NO
+llevar `formmethod="get"` -sin ese atributo, el botón hereda el método POST del propio
+formulario- y con seguir llevando `formnovalidate` (para que un `monto` vacío o inválido,
+campo `required`, no bloquee el cambio). Se agregó la ruta `POST /`
+(`cambiar_conexion` en `web/app.py`), que lee el mismo `request.form()` que ya sabía leer
+`_leer_enviado`, resuelve la conexión destino desde `ir_a_conexion` y vuelve a renderizar
+`compra.html` con `_formulario` -sin invocar el orquestador ni `ServicioEscenarios` en
+ningún caso-. No hizo falta `sessionStorage` ni ningún borrador persistido: el propio
+cuerpo del POST, mas la re-renderización del lado del servidor, alcanzan. `GET /` se
+simplificó de vuelta: ya no necesita distinguir "vino de un resubmit" leyendo si `monto`
+aparece en la querystring, porque esa querystring ya no existe.
+
+Verificado con clics reales de mouse en un navegador (no simulados por JavaScript), con
+`monto` vacío y con `monto` inválido, en un servidor y una base SQLite aislados
+(`SIBU_DB_PATH` propio, puertos propios, host simulado propio): la conexión cambia, nada
+de lo escrito se pierde, la URL del navegador permanece exactamente en `/` sin querystring,
+y la línea del log de acceso del servidor queda como `"POST / HTTP/1.1" 200 OK` -sin
+ningún valor del formulario-. Se confirmó además, leyendo la base SQLite aislada
+directamente, que ningún cambio de conexión creó una fila en `ejecuciones` ni en
+`escenarios`.
+
+**2. Las expectativas se recuperan de la ejecución, nunca del escenario editado después.**
+Ya estaba implementado así (`_expectativas_de_ejecucion` lee `evaluacion_json`, el
+snapshot propio de la ejecución), pero no había ninguna prueba que lo demostrara con datos
+reales -solo el docstring lo afirmaba-. Se agregó
+`test_las_expectativas_se_recuperan_de_la_ejecucion_no_del_escenario_editado`: un
+escenario que HOY espera "rechazada" (edición posterior), pero cuya ejecución reutilizada
+evaluó "aprobada" + campo 39 igual a "00" en su momento, muestra "aprobada" al recuperarse
+-nunca "rechazada"-. Se agregó también el caso complementario: una ejecución sin
+expectativas no debe heredar las del escenario actual aunque exista.
+
+**3. `motivo_detalle` sí persistía texto crudo de una excepción de terceros.**
+Confirmado: `CodecIso8583.codificar()`/`decodificar()` envolvían `iso8583.EncodeError`/
+`DecodeError` con `f"...: {error}"`, incrustando el mensaje LIBRE que redacta la librería
+`pyiso8583` -no un contrato que este proyecto controle ni pueda auditar hacia adelante-.
+La revisión anterior había dado esto por seguro leyendo el código fuente de la versión
+instalada (`EncodeError.__init__`/`DecodeError.__init__` solo concatenan `msg` y el
+número de campo, nunca el valor), pero eso es una observación puntual sobre una versión,
+no una garantía. Corregido para no depender en absoluto del texto de la librería: ambos
+métodos ahora usan únicamente `error.field` (el número de campo ISO, un atributo
+estructural que la librería expone en su `__init__`) para redactar un mensaje **propio**
+de este proyecto -`"no se pudo codificar el campo {N} para el MTI {mti} con el perfil
+{perfil!r}"`-, sin ninguna palabra de la librería. Verificado con una prueba que compara
+el mensaje persistido contra el texto exacto esperado y confirma que ninguna palabra de la
+redacción original de `pyiso8583` para ese caso ("expecting", "bytes") sobrevive. Revisados
+también los demás orígenes de `motivo_detalle` (`FalloDeConexion`/`FalloDeTransmision` en
+`adapters/transporte/tcp.py`, `ErrorDeFraming` en `framing_demo.py`): son texto propio de
+este proyecto, o -para las excepciones `OSError`/`TimeoutError` de socket que sí se
+interpolan- errores que por su propia naturaleza describen solo el fallo de la conexión
+(actor "Connection refused", "Broken pipe", agotamiento de tiempo), nunca el contenido de
+la aplicación que se estaba transmitiendo; no se cambiaron.
+
+**Pruebas nuevas de este cierre:** 6 (`test_reutilizar_ejecucion.py` +2 sobre
+expectativas, `test_web.py` +1, `test_web_escenarios.py` +1, y `test_reglas_negocio.py`
+reescribe -no agrega- la prueba de `motivo_detalle` de codec para que verifique el texto
+exacto en vez de un fragmento heredado de la librería). Suite completa: **941 passed, 2
+skipped** (antes 937). Guardia de PAN sigue en verde. Verificado en navegador real (host
+simulado + web en puertos y base SQLite aislados, descartados al cerrar; la base local
+real del usuario no se tocó). Sin commit ni push.

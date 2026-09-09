@@ -4,9 +4,31 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-07
+**Última actualización:** 2026-09-07 (cinco mejoras funcionales posteriores al cierre, revisadas
+críticamente y con el hallazgo de exposición en la URL ya resuelto)
 
 ## Estado actual
+
+**Iteración posterior al cierre (2026-09-07):** cinco mejoras funcionales pedidas explícitamente
+por el usuario después de la entrega académica, ya implementadas y verificadas (código,
+`pytest -q` y navegador): (1) el historial persiste `Ejecucion.motivo_detalle` -causa concreta
+y segura de un fallo, distinta de "no disponible" para filas anteriores a este campo; nunca
+texto crudo de una excepción de terceros, ver más abajo-; (2) `/historial` admite filtros
+(fecha, estado, PASS/FAIL/sin expectativas, tarjeta, destino, STAN) y paginación
+(`FiltroHistorial` en el dominio, `RepositorioEjecuciones.buscar`); (3) el constructor conserva
+tarjeta/monto/campos/expectativas/nombre al cambiar de conexión -el botón "Cambiar" somete el
+formulario por **POST** a `/` (`cambiar_conexion` en `web/app.py`), nunca por GET: los valores
+viajan en el cuerpo de la petición, nunca en la URL ni en el historial del navegador ni en los
+logs de acceso del servidor- y una suite con orden inválido conserva los escenarios ya marcados;
+(4) `resultado.html` ofrece "Editar y volver a ejecutar" y "Guardar como escenario"
+(`GET /?ejecucion_id={id}`), que recuperan la configuración usada sin tocar el PAN -incluidas
+las expectativas, tomadas del snapshot propio de la ejecución (`evaluacion_json`), nunca del
+escenario que la originó aunque éste se haya editado después-; (5) `corrida_detalle.html`
+descarga JSON/CSV reutilizando `application/exportacion_corridas.py` sin re-ejecutar la suite.
+Detalle completo, archivo por archivo, en `BITACORA.md` (entradas "Cinco mejoras funcionales
+posteriores a la entrega", "Revisión crítica de las cinco mejoras" y "Cierre del hallazgo de
+datos del formulario en la URL"). Suite: **941 passed, 2 skipped** (antes 897). Sin commit ni
+push.
 
 **Fase:** la Fase 1 (módulo de Configuración) queda **funcionalmente congelada para esta
 entrega** (decisión del 2026-08-26). Los sub-bloques pendientes —exponer los ocho campos de
@@ -55,10 +77,11 @@ paquete se instala en modo editable y `sibu-init-db` inicializa la base de forma
 Y desde el navegador: pantalla de nueva transacción, resultado con resumen e isoscopio
 enmascarado, e historial **navegable**: cada ejecución tiene su detalle en `/historial/{id}`,
 con los campos ISO de la solicitud y de la respuesta. **897 pruebas en verde — cifra de
-cierre que se publica**, con Bloque 7, el fix de Python 3.12 y las cuatro correcciones del
-Ciclo 6 ya incluidas (decisión tomada en la revisión final del 2026-09-07; ver «Historial de
-avances» para el detalle de cada corrección), incluidas 29 específicas de RN-1 a RN-4
-(`tests/test_reglas_negocio.py`). El CI ejecuta la suite en Python
+cierre que se publicó académicamente**, con Bloque 7, el fix de Python 3.12 y las cuatro
+correcciones del Ciclo 6 ya incluidas (decisión tomada en la revisión final del 2026-09-07;
+ver «Historial de avances» para el detalle de cada corrección), incluidas 29 específicas de
+RN-1 a RN-4 (`tests/test_reglas_negocio.py`). **Superada por la iteración posterior al
+cierre** descrita arriba: la suite actual da 941 passed, 2 skipped. El CI ejecuta la suite en Python
 3.11, 3.12 y 3.13, corre aparte las cuatro reglas de negocio, y en un job propio
 (`clon-limpio`) comprueba que el repositorio no contenga artefactos locales versionados y que
 se instale respetando el metadata declarado. Aparte de eso, y de forma manual —no es
@@ -274,6 +297,9 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-09-06 | Hallazgo de CI: el job "Suite en Python 3.12" de `tests.yml` se colgaba indefinidamente. Causa raíz: `tests/test_conexiones_administracion.py` usaba un handler de conexión (`lambda r, w: None`) que nunca cerraba el `writer`; bajo Python 3.11 `asyncio.Server.wait_closed()` no esperaba de verdad las conexiones activas (casi no-op), y Python 3.12 lo corrigió (CPython gh-123720, mismo problema real ya parcheado en uvicorn), por lo que una conexión sin cerrar cuelga `async with servidor:` para siempre. Reproducido en real en GitHub Actions (rama temporal `diagnostico/python312-hang`); corregido cerrando el writer explícitamente en el handler. Mismo nodeid verificado PASS en 3.11.16, 3.12.14 y 3.13.15 tras el fix |
 | 2026-09-06 | Bloque 7: reporte portable de una corrida ya persistida, JSON (versión 1) y CSV, vía `sibu-run-suite export-run CORRIDA_ID --format json|csv [--out ARCHIVO]`, en el servicio neutral nuevo `application/exportacion_corridas.py`, reutilizado por `cli.py` sin acoplar interfaces entre sí. Sin PDF/Excel/HTML. Auditado en paralelo (arquitectura, seguridad, CSV/JSON, CLI/Windows, persistencia, calidad de tests), sin hallazgos P0 |
 | 2026-09-07 | Ciclo 6 de cierre: cuatro correcciones puntuales sobre Bloque 7 y su cobertura. (1) `export-run --format csv` a stdout imprimía una línea en blanco de más (doble salto de línea); corregido en `cli.py`. (2) La CLI mostraba el mensaje genérico de fallo técnico cuando `evaluacion_json` de una corrida persistida no era JSON válido; se agrega `MENSAJE_EVALUACION_CORRUPTA` para ese caso específico. (3) `tests/test_politica_campos.py::test_la_capa_estructural_gana_aunque_la_validacion_no_existiera` era tautológico -armaba el merge a mano en vez de invocar `armar_compra`-; reescrito para invocar `armar_compra` real, neutralizando `validar_campos_manuales` con `monkeypatch` para poder ejercer el camino que esa validación normalmente bloquea. (4) `export-run --out archivo` en Windows traducía cada `\n` a `\r\n` pese al `lineterminator="\n"` explícito de `reporte_a_csv` (`Path.write_text()` sin `newline=""`); corregido agregando `newline=""`. Suite completa: 897 pruebas (antes 895) |
+| 2026-09-07 | Iteración posterior al cierre, cinco mejoras funcionales pedidas por el usuario: (1) `Ejecucion.motivo_detalle` persiste la causa concreta de un fallo (antes solo se mostraba en el resultado inmediato); (2) `FiltroHistorial` + `RepositorioEjecuciones.buscar` dan filtros y paginación a `/historial`; (3) el selector de conexión pasa a vivir dentro del `<form>` del constructor (conserva tarjeta/monto/campos/expectativas al cambiar de conexión) y `_formulario_suite` conserva la selección de escenarios tras un error de validación; (4) `GET /?ejecucion_id={id}` recupera la configuración de una ejecución pasada para "Editar y volver a ejecutar"/"Guardar como escenario" en `resultado.html`, sin tocar el PAN; (5) `/suites/corridas/{id}/exportar.json`/`.csv` descargan el reporte ya persistido, reutilizando `application/exportacion_corridas.py` sin re-ejecutar la suite. Verificado en navegador de punta a punta (host simulado + web en puertos y base aislados). Suite: 921 passed, 2 skipped (antes 897). Sin commit. Detalle completo en `BITACORA.md` |
+| 2026-09-07 | Revisión crítica de las cinco mejoras: 3 defectos corregidos (reutilizar ejecución no explicaba tarjeta/conexión no disponible ni advertía sobre datos del formato heredado; `formnovalidate` verificado con clic real, no solo JS; faltaba prueba de migración de `motivo_detalle`) y 1 hallazgo documentado sin corregir todavía (datos del formulario viajando en la URL al cambiar de conexión). Suite: 937 passed, 2 skipped |
+| 2026-09-07 | Cierre del hallazgo de la URL: "Cambiar conexión" pasa de GET a **POST** (`POST /`, `cambiar_conexion` en `web/app.py`) -sin sessionStorage ni borrador alguno-, así que monto/campos/nombre viajan en el cuerpo de la petición, nunca en la URL, el historial del navegador ni el log de acceso del servidor; verificado con clics reales y con el log de un servidor aislado. Se verificó además que las expectativas recuperadas de una ejecución nunca dependen del escenario que la originó, aunque éste se edite después (antes solo lo afirmaba el docstring, sin prueba). `motivo_detalle`: se confirmó que `CodecIso8583` sí incrustaba el texto libre de `pyiso8583` (`EncodeError`/`DecodeError`); corregido para usar solo `error.field` y redactar el mensaje enteramente con texto propio del proyecto. Suite: 941 passed, 2 skipped |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 
@@ -304,10 +330,12 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-El trabajo activo es el cierre académico: documentación final, documento de negocio,
-arquitectura, presentación y revisión contra la consigna de `PROYECTO.md`. Ya resuelto dentro
-de ese cierre: reproducibilidad desde clon limpio (`README.md`, `demo.cmd`) y el skill de
-Claude Code `levantar-demo`.
+Las cinco mejoras funcionales pedidas el 2026-09-07 (ver «Estado actual» e «Historial de
+avances») están implementadas y verificadas, pero **sin commit ni push todavía** -queda para
+cuando el usuario lo pida-. Aparte de eso, el trabajo activo sigue siendo el cierre académico:
+documentación final, documento de negocio, arquitectura, presentación y revisión contra la
+consigna de `PROYECTO.md`. Ya resuelto dentro de ese cierre: reproducibilidad desde clon limpio
+(`README.md`, `demo.cmd`) y el skill de Claude Code `levantar-demo`.
 
 La Fase 1 (módulo de Configuración) quedó cerrada en el sub-bloque 6 (**derivación pura de
 Track 1 y Track 2**) y congelada para esta entrega junto con el motor de carga (ver «Fase»,
