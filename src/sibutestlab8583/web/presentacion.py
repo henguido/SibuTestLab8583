@@ -13,11 +13,13 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence
 
+from ..application.vista_previa import VistaPreviaMensaje
 from ..application.serializacion import (
     AVISO_HEREDADO,
     ORIGEN_TEXTO,
     MensajeSerializado,
 )
+from ..domain.comparacion_mensajes import comparar_campos
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
@@ -173,16 +175,24 @@ class FilaConstructor:
     obligatorio: bool
 
 
-def filas_constructor(perfil, mti: str, descripciones: Mapping[str, str]) -> Sequence[FilaConstructor]:
+def filas_constructor(
+    perfil, mti: str, descripciones: Mapping[str, str], opcionales_activos: frozenset[str] = frozenset()
+) -> Sequence[FilaConstructor]:
     """Las filas del constructor para un MTI, gobernadas enteramente por el perfil.
 
     No hardcodea ningún número de campo: recorre lo que `perfil.politica(mti)`
     declara. Agregar un campo editable nuevo al perfil lo agrega aquí sin
     tocar esta función.
+
+    Los `opcionales` del perfil solo aparecen como fila si el llamador los
+    declara activos -a diferencia de derivado/automatico/editable, que
+    siempre forman parte del mensaje, un opcional no agregado no es una fila
+    del constructor: es un candidato de `campos_opcionales_disponibles`-.
     """
     politica = perfil.politica(mti)
     obligatorios = perfil.obligatorios(mti)
     numeros = politica.derivados | politica.automaticos | politica.editables
+    numeros |= politica.opcionales & opcionales_activos
     return [
         FilaConstructor(
             numero=numero,
@@ -193,6 +203,138 @@ def filas_constructor(perfil, mti: str, descripciones: Mapping[str, str]) -> Seq
         )
         for numero in sorted(numeros, key=int)
     ]
+
+
+@dataclass(frozen=True)
+class CampoOpcionalDisponible:
+    """Un candidato para '+ Agregar campo': el perfil lo conoce como opcional
+    para este MTI, y el usuario todavia no lo agrego."""
+
+    numero: str
+    descripcion: str
+
+
+def campos_opcionales_disponibles(
+    perfil, mti: str, descripciones: Mapping[str, str], opcionales_activos: frozenset[str] = frozenset()
+) -> Sequence[CampoOpcionalDisponible]:
+    """El catálogo para ofrecer en '+ Agregar campo': los opcionales del
+    perfil que el usuario todavía no agregó a este mensaje."""
+    politica = perfil.politica(mti)
+    disponibles = politica.opcionales - opcionales_activos
+    return [
+        CampoOpcionalDisponible(numero=numero, descripcion=descripciones.get(numero, f"Campo {numero}"))
+        for numero in sorted(disponibles, key=int)
+    ]
+
+
+#: Rotulo humano por origen, para la vista previa (Bloque 7). Coherente con
+#: las etiquetas que ya usa `compra.html` para las mismas categorias.
+ETIQUETAS_ORIGEN_VISTA_PREVIA: Mapping[str, str] = {
+    "derivado": "De la tarjeta",
+    "automatico": "Automático",
+    "editable": "Editable",
+    "opcional": "Opcional agregado",
+    "estructural": "Del monto indicado",
+}
+
+
+@dataclass(frozen=True)
+class FilaVistaPrevia:
+    """Una fila de la vista previa del mensaje (Bloque 7): igual forma que
+    `FilaConstructor`, mas si el valor mostrado es DEFINITIVO -ver
+    `application.vista_previa`- o solo una forma valida que se reemplazara al
+    enviar (los automaticos: DE7/11/12/13).
+    """
+
+    numero: str
+    descripcion: str
+    valor: str
+    origen: str
+    etiqueta_origen: str
+    es_valor_definitivo: bool
+
+
+#: Etiqueta y tono por `EstadoComparacionCampo` (Bloque 8/9). Deliberadamente
+#: NUNCA usa el par pass/fail: "diferente" no es un veredicto de error -DE41
+#: puede cambiar porque el host reescribe el terminal, sin que eso sea un
+#: fallo-, asi que usa un tono neutro ("qa"), igual que "solo_request"/
+#: "solo_response" (p.ej. DE39, que por protocolo solo viaja en la respuesta).
+ETIQUETAS_COMPARACION_CAMPO: Mapping[str, str] = {
+    "coincide": "Coincide",
+    "diferente": "Diferente",
+    "solo_request": "Solo en la solicitud",
+    "solo_response": "Solo en la respuesta",
+}
+
+TONOS_COMPARACION_CAMPO: Mapping[str, str] = {
+    "coincide": "activa",
+    "diferente": "qa",
+    "solo_request": "sintetica",
+    "solo_response": "sintetica",
+}
+
+
+@dataclass(frozen=True)
+class FilaComparacionIso:
+    """Una fila de la comparacion descriptiva Request vs Response (Bloque 9).
+
+    Distinta, a proposito, de `FilaDiscrepancia` (Expected vs Actual): esta
+    fila nunca lleva un juicio de "esperado" -solo describe los dos mensajes
+    tal como quedaron, sin decir si eso esta bien o mal-.
+    """
+
+    numero: str
+    descripcion: str
+    request: str | None
+    response: str | None
+    estado: str
+    etiqueta_estado: str
+    tono_estado: str
+
+
+def filas_comparacion_iso(
+    campos_request: Mapping[str, str],
+    campos_response: Mapping[str, str],
+    descripciones: Mapping[str, str],
+) -> Sequence[FilaComparacionIso]:
+    """Arma la comparacion Request vs Response ya traducida para la plantilla.
+
+    Reutilizable desde el resultado inmediato (campos de `MensajeIso`/
+    `MensajeInterpretado`, ya enmascarados) y desde el detalle historico
+    (campos de `MensajeSerializado`): ambos llamadores solo necesitan pasar
+    `Mapping[str, str]` planos, sin conocer esta funcion nada de su origen.
+    """
+    return [
+        FilaComparacionIso(
+            numero=campo.numero,
+            descripcion=descripciones.get(campo.numero, f"Campo {campo.numero}"),
+            request=campo.request,
+            response=campo.response,
+            estado=campo.estado.value,
+            etiqueta_estado=ETIQUETAS_COMPARACION_CAMPO[campo.estado.value],
+            tono_estado=TONOS_COMPARACION_CAMPO[campo.estado.value],
+        )
+        for campo in comparar_campos(campos_request, campos_response)
+    ]
+
+
+def contexto_de_vista_previa(vista: VistaPreviaMensaje, descripciones: Mapping[str, str]) -> dict:
+    """Traduce `VistaPreviaMensaje` (aplicacion) a lo que `compra.html` necesita."""
+    return {
+        "mti": vista.mti,
+        "bitmap": vista.bitmap,
+        "filas": [
+            FilaVistaPrevia(
+                numero=campo.numero,
+                descripcion=descripciones.get(campo.numero, f"Campo {campo.numero}"),
+                valor=campo.valor,
+                origen=campo.origen,
+                etiqueta_origen=ETIQUETAS_ORIGEN_VISTA_PREVIA.get(campo.origen, campo.origen),
+                es_valor_definitivo=campo.es_valor_definitivo,
+            )
+            for campo in vista.campos
+        ],
+    }
 
 
 @dataclass(frozen=True)
@@ -547,13 +689,38 @@ def evaluacion_de_ejecucion(ejecucion, descripciones: Mapping[str, str]) -> Eval
     return EvaluacionMostrada(estado=ejecucion.evaluacion_estado, filas=tuple(filas))
 
 
+@dataclass(frozen=True)
+class RawSeguro:
+    """HEX + longitud de un mensaje, SIEMPRE reconstruido desde el mensaje ya
+    enmascarado -nunca los bytes reales transmitidos-. Ver
+    `CodecIso8583.raw_hex_seguro` para la estrategia de sanitizacion completa.
+    """
+
+    hex: str
+    longitud_bytes: int
+
+
+def _raw_seguro(par: tuple[str, int] | None) -> RawSeguro | None:
+    return RawSeguro(hex=par[0], longitud_bytes=par[1]) if par else None
+
+
 def contexto_de_resultado(
-    resultado: ResultadoCompra, destino, descripciones: Mapping[str, str]
+    resultado: ResultadoCompra,
+    destino,
+    descripciones: Mapping[str, str],
+    *,
+    bitmap_solicitud: str | None = None,
+    bitmap_respuesta: str | None = None,
+    raw_solicitud: tuple[str, int] | None = None,
+    raw_respuesta: tuple[str, int] | None = None,
 ) -> dict:
     """Arma lo que la plantilla de resultado necesita.
 
     Vive aqui y no en el endpoint para que este ultimo se limite a orquestar la
     peticion: validar la entrada, delegar el recorrido y elegir la plantilla.
+
+    Los bitmaps se calculan afuera (`composicion.bitmap_hex`, que si conoce el
+    codec) y llegan ya resueltos: esta funcion no importa `adapters.iso8583`.
     """
     return {
         # El resultado es el desenlace de la pantalla de transaccion: la
@@ -562,9 +729,19 @@ def contexto_de_resultado(
         "resultado": resultado,
         "aviso": aviso_de(resultado),
         "destino": destino,
+        "bitmap_solicitud": bitmap_solicitud,
+        "bitmap_respuesta": bitmap_respuesta,
+        "raw_solicitud": _raw_seguro(raw_solicitud),
+        "raw_respuesta": _raw_seguro(raw_respuesta),
+        "raw_es_reconstruido": True,
         "filas_solicitud": filas_de_solicitud(resultado.solicitud, descripciones),
         "filas_respuesta": (
             filas_de_respuesta(resultado.respuesta) if resultado.respuesta else []
+        ),
+        "filas_comparacion_iso": filas_comparacion_iso(
+            dict(resultado.solicitud.campos),
+            {n: c.valor for n, c in resultado.respuesta.campos.items()} if resultado.respuesta else {},
+            descripciones,
         ),
         "evaluacion": evaluacion_de_ejecucion(resultado.ejecucion, descripciones),
     }
@@ -592,7 +769,15 @@ def filas_de_persistido(
     ]
 
 
-def contexto_de_detalle(detalle, descripciones: Mapping[str, str]) -> dict:
+def contexto_de_detalle(
+    detalle,
+    descripciones: Mapping[str, str],
+    *,
+    bitmap_solicitud: str | None = None,
+    bitmap_respuesta: str | None = None,
+    raw_solicitud: tuple[str, int] | None = None,
+    raw_respuesta: tuple[str, int] | None = None,
+) -> dict:
     """Arma lo que la plantilla del detalle historico necesita.
 
     La respuesta se considera existente por el MTI persistido y no por si la
@@ -600,6 +785,11 @@ def contexto_de_detalle(detalle, descripciones: Mapping[str, str]) -> dict:
     no obtuvo respuesta, y ahi la pantalla debe explicar el estado en lugar de
     mostrar una tabla vacia. Distinguirlo por el numero de campos confundiria
     "no hubo respuesta" con "la representacion no se pudo leer".
+
+    Los bitmaps llegan ya resueltos (o `None`) -mismo criterio que
+    `contexto_de_resultado`-: el llamador solo los calcula cuando la
+    representacion persistida es `disponible` y `fiel` (ver `MensajeSerializado`),
+    nunca a partir del formato de texto heredado.
     """
     ejecucion = detalle.ejecucion
     filas_respuesta = filas_de_persistido(detalle.respuesta, descripciones)
@@ -609,8 +799,18 @@ def contexto_de_detalle(detalle, descripciones: Mapping[str, str]) -> dict:
         "aviso": AVISOS[ejecucion.estado],
         "solicitud": detalle.solicitud,
         "respuesta": detalle.respuesta,
+        "bitmap_solicitud": bitmap_solicitud,
+        "bitmap_respuesta": bitmap_respuesta,
+        "raw_solicitud": _raw_seguro(raw_solicitud),
+        "raw_respuesta": _raw_seguro(raw_respuesta),
+        "raw_es_reconstruido": True,
         "filas_solicitud": filas_de_persistido(detalle.solicitud, descripciones),
         "filas_respuesta": filas_respuesta,
+        "filas_comparacion_iso": filas_comparacion_iso(
+            {c.numero: c.valor for c in detalle.solicitud.campos},
+            {c.numero: c.valor for c in detalle.respuesta.campos},
+            descripciones,
+        ),
         "hubo_respuesta": ejecucion.mti_respuesta is not None,
         # La solicitud nunca trae representacion transmitida; la respuesta solo
         # si se leyo del JSON. Se decide por el contenido, no por suposicion.

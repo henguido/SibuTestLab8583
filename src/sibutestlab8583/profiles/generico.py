@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from ..domain.campos_iso import TIPO_ALFANUMERICO, TIPO_NUMERICO, MetadatoCampo
 from ..domain.modelos import MTI_COMPRA, MTI_RESPUESTA_COMPRA
 
 NOMBRE_PERFIL_GENERICO = "generico"
@@ -38,30 +39,39 @@ class PoliticaCamposMti:
       de texto libre. DE2 y DE14 en la compra.
     - ``automaticos``: los genera el sistema en el momento de armar el mensaje
       (reloj, secuencia de STAN). DE7, DE11, DE12, DE13 en la compra.
-    - ``editables``: el usuario puede fijarlos. ``valores_por_defecto`` trae un
-      valor razonable para los que no traiga el usuario; un campo editable sin
-      entrada en ese mapa simplemente no tiene default y debe informarse.
+    - ``editables``: el usuario puede fijarlos, y viajan SIEMPRE en el mensaje:
+      ``valores_por_defecto`` trae un valor razonable para los que no traiga el
+      usuario; un campo editable sin entrada en ese mapa simplemente no tiene
+      default y debe informarse.
+    - ``opcionales``: el usuario TAMBIEN puede fijarlos, pero -a diferencia de
+      un editable- no viajan a menos que el usuario los agregue de forma
+      explicita: no tienen (ni pueden tener) un valor por defecto, asi que si
+      no aparecen en ``campos_manuales`` simplemente no forman parte del
+      mensaje armado. Es la categoria que sostiene "+ Agregar campo": el
+      catalogo de candidatos a ofrecer es exactamente esta lista menos los que
+      el usuario ya agrego.
 
-    Un numero que no aparece en ninguna de las tres listas no es parte de este
-    MTI segun este perfil: intentar fijarlo manualmente se rechaza igual que un
-    intento de fijar uno derivado o automatico, aunque el motivo se distingue
-    (ver `domain/armado.py`).
+    Un numero que no aparece en ninguna de las cuatro listas no es parte de
+    este MTI segun este perfil: intentar fijarlo manualmente se rechaza igual
+    que un intento de fijar uno derivado o automatico, aunque el motivo se
+    distingue (ver `domain/armado.py`).
     """
 
     derivados: frozenset[str] = frozenset()
     automaticos: frozenset[str] = frozenset()
     editables: frozenset[str] = frozenset()
+    opcionales: frozenset[str] = frozenset()
     valores_por_defecto: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "valores_por_defecto", MappingProxyType(dict(self.valores_por_defecto))
         )
-        solapa = (
-            (self.derivados & self.automaticos)
-            | (self.derivados & self.editables)
-            | (self.automaticos & self.editables)
-        )
+        categorias = (self.derivados, self.automaticos, self.editables, self.opcionales)
+        solapa: set[str] = set()
+        for i, categoria_a in enumerate(categorias):
+            for categoria_b in categorias[i + 1 :]:
+                solapa |= categoria_a & categoria_b
         if solapa:
             raise ValueError(
                 f"un campo no puede pertenecer a más de una categoría: {sorted(solapa)}"
@@ -74,13 +84,16 @@ class PoliticaCamposMti:
             )
 
     def origen(self, numero: str) -> str:
-        """``"derivado"``, ``"automatico"``, ``"editable"`` o ``"no_permitido"``."""
+        """``"derivado"``, ``"automatico"``, ``"editable"``, ``"opcional"`` o
+        ``"no_permitido"``."""
         if numero in self.derivados:
             return "derivado"
         if numero in self.automaticos:
             return "automatico"
         if numero in self.editables:
             return "editable"
+        if numero in self.opcionales:
+            return "opcional"
         return "no_permitido"
 
 
@@ -155,12 +168,68 @@ ESPECIFICACION_GENERICA: dict[str, dict[str, Any]] = {
     "12": _fijo(6, "Hora local (hhmmss)"),
     "13": _fijo(4, "Fecha local (MMDD)"),
     "14": _fijo(4, "Fecha de vencimiento (AAMM)"),
+    "18": _fijo(4, "Tipo de comercio (Merchant Type / MCC)"),
     "22": _fijo(3, "Modo de captura en el punto de venta"),
+    "25": _fijo(2, "Código de condición del punto de servicio (POS)"),
+    "32": _llvar(11, "Identificador de la institución adquirente"),
     "37": _fijo(12, "Número de referencia de recuperación"),
     "38": _fijo(6, "Código de autorización"),
     "39": _fijo(2, "Código de respuesta"),
     "41": _fijo(8, "Identificador del terminal"),
+    "42": _fijo(15, "Identificador del comercio (Card Acceptor ID)"),
+    "43": _fijo(40, "Nombre y ubicación del comercio (Card Acceptor Name/Location)"),
     "49": _fijo(3, "Código de moneda (ISO 4217 numérico)"),
+}
+
+#: Metadata de UI/validacion de forma para los campos que este perfil conoce
+#: para el 0100 -obligatorios, editables y opcionales-. Automaticos/derivados
+#: no necesitan entrada aqui: la UI nunca ofrece escribirlos a mano.
+#:
+#: Los cinco opcionales (18/25/32/42/43) son un conjunto ISO 8583:1987 generico
+#: y de uso comun -no una especificacion de marca-, elegido para tener un
+#: primer catalogo razonable de "+ Agregar campo"; ampliarlo mas adelante es
+#: solo agregar una entrada aqui y en `ESPECIFICACION_GENERICA`, nunca tocar
+#: una plantilla.
+METADATOS_CAMPOS_0100: dict[str, MetadatoCampo] = {
+    "3": MetadatoCampo("3", "Processing Code", "Código de proceso", TIPO_NUMERICO, True, 6, False),
+    "18": MetadatoCampo(
+        "18", "Merchant Type", "Tipo de comercio (Merchant Type / MCC)",
+        TIPO_NUMERICO, True, 4, False,
+        ayuda="Código de categoría de comercio de 4 dígitos (MCC), p. ej. 5411.",
+    ),
+    "22": MetadatoCampo(
+        "22", "POS Entry Mode", "Modo de captura en el punto de venta",
+        TIPO_NUMERICO, True, 3, False,
+    ),
+    "25": MetadatoCampo(
+        "25", "POS Condition Code", "Código de condición del punto de servicio (POS)",
+        TIPO_NUMERICO, True, 2, False,
+    ),
+    "32": MetadatoCampo(
+        "32", "Acquiring Institution ID", "Identificador de la institución adquirente",
+        TIPO_NUMERICO, False, 11, False,
+    ),
+    "37": MetadatoCampo(
+        "37", "Retrieval Reference Number", "Número de referencia de recuperación",
+        TIPO_ALFANUMERICO, True, 12, False,
+    ),
+    "41": MetadatoCampo(
+        "41", "Card Acceptor Terminal ID", "Identificador del terminal",
+        TIPO_ALFANUMERICO, True, 8, False,
+    ),
+    "42": MetadatoCampo(
+        "42", "Card Acceptor ID", "Identificador del comercio (Card Acceptor ID)",
+        TIPO_ALFANUMERICO, True, 15, False,
+    ),
+    "43": MetadatoCampo(
+        "43", "Card Acceptor Name/Location",
+        "Nombre y ubicación del comercio (Card Acceptor Name/Location)",
+        TIPO_ALFANUMERICO, True, 40, False,
+    ),
+    "49": MetadatoCampo(
+        "49", "Transaction Currency Code", "Código de moneda (ISO 4217 numérico)",
+        TIPO_NUMERICO, True, 3, False,
+    ),
 }
 
 # Obligatorios de la solicitud de compra: lo minimo para que el mensaje describa
@@ -197,6 +266,7 @@ _POLITICA_COMPRA = PoliticaCamposMti(
     derivados=frozenset({"2", "14"}),
     automaticos=frozenset({"7", "11", "12", "13"}),
     editables=frozenset({"3", "22", "37", "41", "49"}),
+    opcionales=frozenset({"18", "25", "32", "42", "43"}),
     valores_por_defecto={
         "3": CODIGO_PROCESO_COMPRA,
         "22": MODO_CAPTURA_DEMOSTRACION,

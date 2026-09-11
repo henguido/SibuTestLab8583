@@ -1280,6 +1280,17 @@ select:hover {
   word-break: break-all;
 }
 
+/* Comparacion Request/Response (Bloque 8/9): dos columnas de valor lado a
+   lado son mas angostas que la unica columna del isoscopio -"break-all"
+   ahi cortaba valores cortos (STAN, monto) a la mitad de una palabra, sin
+   necesidad, porque la tabla ya se desplaza horizontalmente dentro de
+   `.desplazable`-. Aqui el valor no se parte: si no entra, se ve completo
+   via el scroll horizontal del contenedor, no cortado en dos lineas. */
+.tabla--comparacion-iso .valor-iso {
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .enmascarado {
   display: inline-flex;
   align-items: center;
@@ -1789,6 +1800,116 @@ select:hover {
 .campo-tabla {
   width: 100%;
   min-width: 8ch;
+}
+
+/* Vista previa del mensaje (Bloque 7): <details> plegable justo antes del
+   boton de ejecutar, visible sin pasos extra pero colapsable. */
+.vista-previa > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--e4);
+  list-style: none;
+}
+
+.vista-previa > summary::-webkit-details-marker {
+  display: none;
+}
+
+.vista-previa__resumen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--e4);
+  margin-bottom: var(--e3);
+  padding-bottom: var(--e3);
+  border-bottom: 1px solid var(--linea-suave);
+}
+
+.vista-previa__rotulo {
+  display: block;
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+.vista-previa__nota-campo {
+  display: block;
+  color: var(--tenue);
+  font-size: var(--texto-xs);
+  margin-top: var(--e1);
+}
+
+/* "+ Agregar campo" opcional: selector de candidatos + boton, en una fila. */
+.agregar-campo {
+  display: flex;
+  align-items: center;
+  gap: var(--e3);
+  margin-top: var(--e3);
+  flex-wrap: wrap;
+}
+
+.agregar-campo select {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--linea);
+  background: var(--panel);
+  color: inherit;
+  min-width: 18rem;
+  max-width: 100%;
+}
+
+/* Bitmap primario de un mensaje ISO 8583, dentro del isoscopio (resultado.html
+   y detalle.html comparten el macro `isoscopio` de _piezas.html). */
+.bitmap {
+  display: flex;
+  align-items: center;
+  gap: var(--e3);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--linea-suave);
+}
+
+.bitmap__rotulo {
+  font-weight: var(--peso-fuerte);
+  color: var(--tenue);
+}
+
+.bitmap__hex {
+  font-size: var(--texto-lg);
+  letter-spacing: 0.05em;
+}
+
+.bitmap__nota {
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+.bitmap__hex--raw {
+  font-size: var(--texto-sm);
+  word-break: break-all;
+  max-width: 100%;
+}
+
+.raw__aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--e2);
+  padding: 0 var(--e4) var(--e4);
+  color: var(--tenue);
+  font-size: var(--texto-sm);
+}
+
+/* Utilidad estandar: visible para lectores de pantalla, invisible en pantalla. */
+.visualmente-oculto {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Barra de contexto de conexion en Nueva transaccion: informacion secundaria,

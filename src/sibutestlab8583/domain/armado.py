@@ -23,7 +23,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Mapping
 
-from .errores import CampoNoPermitido, CampoProtegido
+from .campos_iso import MetadatoCampo
+from .errores import CampoConFormaInvalida, CampoNoPermitido, CampoProtegido
 from .modelos import MTI_COMPRA, DatosCompra, MensajeIso, TarjetaPrueba
 
 #: Un monto ISO viaja en unidades minimas, sin separador decimal, en 12 digitos.
@@ -84,6 +85,32 @@ def valores_efectivos_editables(
     return efectivos
 
 
+def validar_forma_de_opcionales(
+    campos_manuales: Mapping[str, str], perfil, mti: str, metadatos: Mapping[str, MetadatoCampo]
+) -> None:
+    """Revienta con un mensaje especifico si un campo OPCIONAL agregado no
+    tiene la forma que su metadata declara (tipo, longitud).
+
+    Deliberadamente **no** se aplica a los editables preexistentes del 0100
+    (3/22/37/41/49): esos ya tenian su propio contrato -sin esta validacion de
+    forma- antes de este modulo existir, y endurecerlo ahora podria rechazar
+    en la entrada un valor que la aplicacion ya aceptaba. Los opcionales son
+    nuevos en esta iteracion: no hay comportamiento previo que romper, y sin
+    esta validacion un valor con la longitud incorrecta llegaria al codec como
+    un `ErrorDeCodificacion` generico en vez de un mensaje que nombre el campo.
+    """
+    politica = perfil.politica(mti)
+    for numero, valor in campos_manuales.items():
+        if politica.origen(numero) != "opcional" or not valor:
+            continue
+        metadato = metadatos.get(numero)
+        if metadato is None:
+            continue
+        mensaje = metadato.validar_forma(valor)
+        if mensaje is not None:
+            raise CampoConFormaInvalida(mensaje)
+
+
 def incompatibilidades_escenario(
     campos: Mapping[str, str], perfil, mti: str
 ) -> tuple[str, ...]:
@@ -100,8 +127,10 @@ def incompatibilidades_escenario(
     problemas: list[str] = []
     for numero in sorted(campos, key=int):
         origen = politica.origen(numero)
-        if origen != "editable":
-            problemas.append(f"el campo {numero} ya no es editable en el perfil actual (es {origen})")
+        if origen not in ("editable", "opcional"):
+            problemas.append(
+                f"el campo {numero} ya no es editable ni opcional en el perfil actual (es {origen})"
+            )
     return tuple(problemas)
 
 

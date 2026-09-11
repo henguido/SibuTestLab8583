@@ -46,6 +46,11 @@
 <form method="post" action="/compra" id="formulario-constructor">
   <input type="hidden" name="conexion_id" value="{{ conexion_id }}">
   <input type="hidden" name="escenario_id" value="{{ escenario_actual.escenario_id if escenario_actual else '' }}">
+  {# Fuente de verdad de que opcionales se muestran como fila -independiente
+     de si ya tienen un valor escrito-. "+ Agregar campo"/"Quitar" reenvian
+     todo el formulario a "/" (mismo mecanismo que "Cambiar conexion"), que
+     recalcula este CSV con el campo agregado/quitado y vuelve a renderizar. #}
+  <input type="hidden" name="opcionales_activos" value="{{ opcionales_activos_csv }}">
 
   {# El selector de conexion vive DENTRO del formulario a proposito: el boton
      "Cambiar" somete el formulario entero por POST a "/" (hereda el metodo
@@ -147,6 +152,71 @@
         </div>
       </section>
 
+      <section class="panel">
+        <details class="vista-previa" open>
+          <summary>
+            <span class="panel__titulo">Vista previa del mensaje</span>
+            {% if vista_previa %}<span class="panel__nota">{{ vista_previa.mti }}</span>{% endif %}
+          </summary>
+          <div class="panel__cuerpo">
+            {# Sin JavaScript, elegir tarjeta o escribir el monto no recarga la
+               pantalla por si solo: este boton somete el formulario completo
+               a "/" -mismo mecanismo sin efectos que ya usa "Cambiar
+               conexion"- para refrescar la vista previa con lo que este
+               escrito en este momento, sin ejecutar nada. #}
+            <button type="submit" formaction="/" formnovalidate class="boton boton--sm">
+              Actualizar vista previa
+            </button>
+            {% if vista_previa %}
+            <div class="vista-previa__resumen">
+              <div>
+                <span class="vista-previa__rotulo">MTI</span>
+                <span class="mono">{{ vista_previa.mti }}</span>
+              </div>
+              {% if vista_previa.bitmap %}
+              <div>
+                <span class="vista-previa__rotulo">Bitmap</span>
+                <span class="mono">{{ vista_previa.bitmap }}</span>
+              </div>
+              {% endif %}
+              <div>
+                <span class="vista-previa__rotulo">Campos activos</span>
+                <span class="mono">{{ vista_previa.filas|map(attribute='numero')|join(', ') }}</span>
+              </div>
+            </div>
+            <div class="desplazable" tabindex="0" role="region" aria-label="Campos de la vista previa">
+              <table class="tabla">
+                <thead>
+                  <tr><th>DE</th><th>Nombre</th><th>Valor</th><th>Origen</th></tr>
+                </thead>
+                <tbody>
+                  {% for fila in vista_previa.filas %}
+                  <tr>
+                    <td><span class="campo-iso">{{ fila.numero }}</span></td>
+                    <td>{{ fila.descripcion }}</td>
+                    <td><span class="valor-iso">{{ fila.valor }}</span></td>
+                    <td>
+                      <span class="chip chip--qa">{{ fila.etiqueta_origen }}</span>
+                      {%- if not fila.es_valor_definitivo %}
+                      <span class="vista-previa__nota-campo">se generará al enviar</span>
+                      {%- endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="campo__pista">
+              El STAN y la fecha/hora mostrados son solo una forma válida de ejemplo: el valor
+              real se genera recién al ejecutar, nunca antes.
+            </p>
+            {% else %}
+            <p class="vacio">{{ vista_previa_no_disponible }}</p>
+            {% endif %}
+          </div>
+        </details>
+      </section>
+
       <p class="recorrido__paso">
         <span class="recorrido__numero">3</span> Ejecución
         <span class="recorrido__linea" aria-hidden="true"></span>
@@ -181,13 +251,15 @@
              "qué se resuelve solo" despues, sin reordenar ni recalcular nada. #}
           {% for grupo_origen, etiqueta_grupo, nota_grupo in [
                ('editable', 'Editables', 'usted decide el valor'),
+               ('opcional', 'Opcionales agregados', 'usted decide el valor, y puede quitarlos'),
                ('derivado', 'Derivados de la tarjeta', 'se resuelven solos'),
                ('automatico', 'Automáticos', 'se generan al enviar'),
              ] %}
           {% set filas_grupo = filas_constructor|selectattr('origen', 'equalto', grupo_origen)|list %}
-          {% if filas_grupo %}
+          {% if filas_grupo or (grupo_origen == 'opcional' and campos_opcionales_disponibles) %}
           <div class="grupo-campos">
             <p class="grupo-campos__titulo">{{ etiqueta_grupo }} <span class="grupo-campos__nota">· {{ nota_grupo }}</span></p>
+            {% if filas_grupo %}
             <div class="desplazable" tabindex="0" role="region" aria-label="Campos {{ etiqueta_grupo|lower }}">
               <table class="tabla">
                 <thead>
@@ -196,6 +268,7 @@
                     <th>Nombre</th>
                     <th>Valor</th>
                     <th>Estado</th>
+                    {% if grupo_origen == 'opcional' %}<th><span class="visualmente-oculto">Acción</span></th>{% endif %}
                   </tr>
                 </thead>
                 <tbody>
@@ -204,7 +277,7 @@
                     <td><span class="campo-iso">{{ fila.numero }}</span></td>
                     <td>{{ fila.descripcion }}</td>
                     <td>
-                      {% if fila.origen == 'editable' %}
+                      {% if fila.origen == 'editable' or fila.origen == 'opcional' %}
                       <input type="text" name="campo_{{ fila.numero }}" class="campo-tabla" autocomplete="off"
                              value="{{ campos_manuales.get(fila.numero, fila.valor) }}">
                       {% else %}
@@ -220,17 +293,51 @@
                       <span class="chip chip--qa">Derivado</span>
                       {% elif fila.origen == 'automatico' %}
                       <span class="chip chip--sintetica">Automático</span>
+                      {% elif fila.origen == 'opcional' %}
+                      <span class="chip chip--activa">Opcional agregado</span>
                       {% elif fila.obligatorio %}
                       <span class="chip chip--inactiva">Requerido</span>
                       {% else %}
                       <span class="chip chip--activa">Opcional</span>
                       {% endif %}
                     </td>
+                    {% if grupo_origen == 'opcional' %}
+                    <td>
+                      <button type="submit" formaction="/" formnovalidate
+                              name="quitar_opcional" value="{{ fila.numero }}"
+                              class="boton boton--sm">
+                        Quitar
+                      </button>
+                    </td>
+                    {% endif %}
                   </tr>
                   {% endfor %}
                 </tbody>
               </table>
             </div>
+            {% endif %}
+            {% if grupo_origen == 'opcional' and campos_opcionales_disponibles %}
+            <div class="agregar-campo">
+              {# `candidato_opcional` (el <select>) viaja SIEMPRE que se somete
+                 el formulario, sin importar que boton se haya pulsado -asi
+                 funciona un <select> dentro de un <form> con varios
+                 submits-. Por eso el disparador real es el propio boton,
+                 `agregar_opcional` -solo un boton aporta su name=value
+                 cuando ES el que se pulsa-: sin esta separacion, pulsar
+                 "Quitar" en otra fila reenviaria tambien el candidato que
+                 haya quedado seleccionado aqui, agregandolo por error. #}
+              <label class="visualmente-oculto" for="candidato_opcional">Agregar campo opcional</label>
+              <select id="candidato_opcional" name="candidato_opcional">
+                {% for candidato in campos_opcionales_disponibles %}
+                <option value="{{ candidato.numero }}">DE{{ candidato.numero }} — {{ candidato.descripcion }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" formaction="/" formnovalidate
+                      name="agregar_opcional" value="1" class="boton boton--sm">
+                + Agregar campo
+              </button>
+            </div>
+            {% endif %}
           </div>
           {% endif %}
           {% endfor %}

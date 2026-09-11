@@ -44,9 +44,12 @@ from .application.escenarios import ServicioEscenarios
 from .application.orquestador import Orquestador
 from .application.suites import ServicioSuites
 from .application.tarjetas import ServicioTarjetas
+from .application.vista_previa import ServicioVistaPrevia
 from .domain.catalogo import NOMBRE_CATALOGO_GENERICO
-from .domain.modelos import DestinoTcp
-from .profiles.generico import perfil_activo
+from .domain.errores import ErrorDeCodificacion
+from .domain.modelos import DestinoTcp, MensajeIso
+from .domain.campos_iso import MetadatoCampo
+from .profiles.generico import METADATOS_CAMPOS_0100, perfil_activo
 
 VARIABLE_HOST = "SIBU_HOST_DESTINO"
 VARIABLE_PUERTO = "SIBU_PUERTO_DESTINO"
@@ -111,6 +114,12 @@ class Composicion:
     @property
     def administracion_tarjetas(self) -> ServicioTarjetas:
         return ServicioTarjetas(self._tarjetas)
+
+    @property
+    def vista_previa(self) -> ServicioVistaPrevia:
+        """Arma la vista previa del 0100 -Bloque 7-, reusando el mismo
+        `armar_compra` y el mismo codec que la ejecucion real."""
+        return ServicioVistaPrevia(self._tarjetas, self._codec, self._perfil)
 
     @property
     def administracion_conexiones(self) -> ServicioConexiones:
@@ -190,6 +199,42 @@ class Composicion:
             for numero, definicion in self._perfil.especificacion.items()
             if numero.isdigit()
         }
+
+    def bitmap_hex(self, mensaje: MensajeIso) -> str | None:
+        """El bitmap primario en hex de un mensaje, con el perfil activo.
+
+        `None` en vez de propagar `ErrorDeCodificacion`: para el isoscopio,
+        no poder calcular el bitmap de un mensaje que sea el que sea (p. ej.
+        una reconstruccion historica con datos parciales) es una limitacion a
+        mostrar, no un fallo que deba interrumpir la pantalla.
+        """
+        try:
+            return self._codec.bitmap_hex(mensaje, self._perfil)
+        except ErrorDeCodificacion:
+            return None
+
+    def raw_hex_seguro(self, mensaje: MensajeIso) -> tuple[str, int] | None:
+        """`(hex, longitud_bytes)` de un mensaje YA enmascarado, o `None` si
+        no se pudo calcular. Mismo criterio de tolerancia que `bitmap_hex`.
+
+        Ver `CodecIso8583.raw_hex_seguro` para la estrategia de sanitizacion:
+        nunca se recodifica el mensaje real, solo el ya enmascarado.
+        """
+        try:
+            return self._codec.raw_hex_seguro(mensaje, self._perfil)
+        except ErrorDeCodificacion:
+            return None
+
+    @property
+    def metadatos_de_campos_0100(self) -> Mapping[str, MetadatoCampo]:
+        """Metadata de UI/validacion de forma (tipo, longitud) para el 0100.
+
+        Hoy es siempre `METADATOS_CAMPOS_0100` del perfil generico -no hay
+        otro perfil todavia-, pero se expone como propiedad de la composicion,
+        no como import directo en la web, por el mismo motivo que
+        `descripciones_de_campos`: la web no debe importar `profiles.generico`.
+        """
+        return METADATOS_CAMPOS_0100
 
     async def orquestador(
         self, destino: DestinoTcp, *, tiempo_limite: float | None = None

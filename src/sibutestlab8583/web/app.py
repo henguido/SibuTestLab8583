@@ -51,13 +51,15 @@ from ..application.escenarios import (
 )
 from ..application.orquestador import TarjetaDesconocida
 from ..application.suites import DatosEdicionSuite, DatosNuevaSuite, SuiteNoEncontrada
+from ..application.vista_previa import TarjetaNoDisponibleParaVistaPrevia
 from ..application.tarjetas import (
     DatosEdicionTarjeta,
     DatosNuevaTarjeta,
     TarjetaNoEncontrada,
 )
 from ..composicion import Composicion, Configuracion
-from ..domain.errores import ErrorDelSimulador
+from ..domain.armado import validar_forma_de_opcionales
+from ..domain.errores import ErrorDeCamposManuales, ErrorDelSimulador
 from ..domain.expectativas import (
     campos_permitidos_expectativa,
     expectativas_desde_dict,
@@ -71,6 +73,7 @@ from ..domain.modelos import (
     EstadoEjecucion,
     ExpectativaCampo,
     Expectativas,
+    MensajeIso,
 )
 from . import presentacion
 
@@ -184,6 +187,28 @@ async def cambiar_conexion(
     ir_a_conexion = (formulario_bruto.get("ir_a_conexion", "") or "").strip() or None
     escenario_id = (formulario_bruto.get("escenario_id", "") or "").strip() or None
 
+    # "+ Agregar campo"/"Quitar" tambien resuelven por este mismo POST -mismo
+    # criterio que "Cambiar conexion": todo el formulario viaja en el cuerpo,
+    # se reconstruye la pantalla con el estado actualizado, y no se ejecuta
+    # ninguna transaccion. Solo tocan que filas se MUESTRAN; el perfil sigue
+    # siendo quien decide que numeros son validos -ver `_leer_opcionales_activos`-.
+    politica = composicion.perfil.politica(MTI_COMPRA)
+    opcionales_activos = set(enviado["opcionales_activos"])
+    # `candidato_opcional` (el <select>) viaja siempre que se somete el
+    # formulario, pulse el usuario el boton que pulse: por eso el disparador
+    # real es la presencia del propio boton "agregar_opcional" -solo aporta
+    # su name=value cuando ES el que se pulso-, nunca el valor del select por
+    # si solo.
+    if "agregar_opcional" in formulario_bruto:
+        candidato = (formulario_bruto.get("candidato_opcional", "") or "").strip()
+        if candidato in politica.opcionales:
+            opcionales_activos.add(candidato)
+    quitar = (formulario_bruto.get("quitar_opcional", "") or "").strip()
+    if quitar:
+        opcionales_activos.discard(quitar)
+        enviado["campos_manuales"].pop(quitar, None)
+    enviado["opcionales_activos"] = frozenset(opcionales_activos)
+
     return await _formulario(
         request,
         composicion,
@@ -284,7 +309,17 @@ async def ejecutar_compra(
         request=request,
         name="resultado.html",
         context=presentacion.contexto_de_resultado(
-            resultado, destino, composicion.descripciones_de_campos
+            resultado, destino, composicion.descripciones_de_campos,
+            bitmap_solicitud=composicion.bitmap_hex(resultado.solicitud),
+            bitmap_respuesta=(
+                composicion.bitmap_hex(resultado.respuesta.como_mensaje())
+                if resultado.respuesta else None
+            ),
+            raw_solicitud=composicion.raw_hex_seguro(resultado.solicitud),
+            raw_respuesta=(
+                composicion.raw_hex_seguro(resultado.respuesta.como_mensaje())
+                if resultado.respuesta else None
+            ),
         ),
     )
 
@@ -366,13 +401,38 @@ async def detalle_ejecucion(
     if detalle is None:
         return _no_encontrado(request)
 
+    mensaje_solicitud = _reconstruir_mensaje_persistido(
+        detalle.ejecucion.mti_solicitud, detalle.solicitud
+    )
+    mensaje_respuesta = _reconstruir_mensaje_persistido(
+        detalle.ejecucion.mti_respuesta, detalle.respuesta
+    )
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="detalle.html",
         context=presentacion.contexto_de_detalle(
-            detalle, composicion.descripciones_de_campos
+            detalle, composicion.descripciones_de_campos,
+            bitmap_solicitud=composicion.bitmap_hex(mensaje_solicitud) if mensaje_solicitud else None,
+            bitmap_respuesta=composicion.bitmap_hex(mensaje_respuesta) if mensaje_respuesta else None,
+            raw_solicitud=composicion.raw_hex_seguro(mensaje_solicitud) if mensaje_solicitud else None,
+            raw_respuesta=composicion.raw_hex_seguro(mensaje_respuesta) if mensaje_respuesta else None,
         ),
     )
+
+
+def _reconstruir_mensaje_persistido(mti: str | None, serializado) -> MensajeIso | None:
+    """Reconstruye un `MensajeIso` a partir de un `MensajeSerializado`
+    historico, SOLO cuando es demostrable -ver `MensajeSerializado.fiel`-, o
+    `None` en cualquier otro caso (sin MTI, sin representacion, o formato de
+    texto heredado que no puede demostrar que ningun valor haya quedado
+    partido por el separador sin escape).
+
+    Es la base compartida para bitmap y RAW/HEX historicos: ambos son
+    exactamente la misma reconstruccion, solo cambia que hacen con ella.
+    """
+    if mti is None or not serializado.disponible or not serializado.fiel:
+        return None
+    return MensajeIso(mti=mti, campos={c.numero: c.valor for c in serializado.campos})
 
 
 @enrutador.get("/configuracion", response_class=HTMLResponse)
@@ -985,7 +1045,17 @@ async def escenario_ejecutar(
         request=request,
         name="resultado.html",
         context=presentacion.contexto_de_resultado(
-            resultado, destino, composicion.descripciones_de_campos
+            resultado, destino, composicion.descripciones_de_campos,
+            bitmap_solicitud=composicion.bitmap_hex(resultado.solicitud),
+            bitmap_respuesta=(
+                composicion.bitmap_hex(resultado.respuesta.como_mensaje())
+                if resultado.respuesta else None
+            ),
+            raw_solicitud=composicion.raw_hex_seguro(resultado.solicitud),
+            raw_respuesta=(
+                composicion.raw_hex_seguro(resultado.respuesta.como_mensaje())
+                if resultado.respuesta else None
+            ),
         ),
     )
 
@@ -1582,6 +1652,30 @@ def _leer_expectativas(formulario_bruto, perfil) -> Expectativas | None:
     return Expectativas(estado=estado, campos=campos)
 
 
+def _leer_opcionales_activos(mapping, perfil) -> frozenset[str]:
+    """El conjunto de opcionales que la pantalla debe seguir mostrando como
+    fila, tras este envio: los que ya venian marcados en el campo oculto
+    `opcionales_activos` (CSV), mas cualquiera que ya traiga un valor escrito
+    -asi un campo agregado y llenado no desaparece si por algun motivo el
+    campo oculto no lo incluyera-. Nunca incluye numeros que el perfil no
+    reconozca como opcional: un CSV manipulado a mano no puede reintroducir un
+    campo protegido por esta via -`filas_constructor`/`validar_campos_manuales`
+    igual lo rechazarian, pero esto evita mostrar una fila que no correspondia-.
+    """
+    politica = perfil.politica(MTI_COMPRA)
+    desde_csv = {
+        numero.strip()
+        for numero in (mapping.get("opcionales_activos", "") or "").split(",")
+        if numero.strip()
+    }
+    desde_valores = {
+        numero
+        for numero in politica.opcionales
+        if (mapping.get(f"campo_{numero}", "") or "").strip()
+    }
+    return frozenset((desde_csv | desde_valores) & politica.opcionales)
+
+
 def _leer_enviado(mapping, perfil) -> dict:
     """Extrae card_id/monto/conexion_id/campos_manuales/expectativas/nombre de
     un mapping tipo formulario -o de una querystring, que expone la misma
@@ -1593,10 +1687,12 @@ def _leer_enviado(mapping, perfil) -> dict:
     exactamente lo mismo que ya conservaba un error de validacion -mismo
     criterio de lectura, sin una segunda implementacion que pudiera divergir.
     """
-    editables = perfil.politica(MTI_COMPRA).editables
+    politica = perfil.politica(MTI_COMPRA)
+    opcionales_activos = _leer_opcionales_activos(mapping, perfil)
+    numeros_a_leer = politica.editables | opcionales_activos
     campos_manuales = {
         numero: valor
-        for numero in editables
+        for numero in numeros_a_leer
         if (valor := (mapping.get(f"campo_{numero}", "") or "").strip())
     }
     try:
@@ -1608,6 +1704,7 @@ def _leer_enviado(mapping, perfil) -> dict:
         "monto": (mapping.get("monto", "") or ""),
         "conexion_id": (mapping.get("conexion_id", "") or ""),
         "campos_manuales": campos_manuales,
+        "opcionales_activos": opcionales_activos,
         "nombre_escenario": (mapping.get("nombre", "") or ""),
         "expectativas": expectativas,
     }
@@ -1663,17 +1760,19 @@ async def _reconstruir_desde_ejecucion(
         return None
 
     ejecucion = detalle.ejecucion
-    editables = composicion.perfil.politica(MTI_COMPRA).editables
+    politica = composicion.perfil.politica(MTI_COMPRA)
     campos_manuales = {
         numero: valor
-        for numero in editables
+        for numero in (politica.editables | politica.opcionales)
         if (valor := detalle.solicitud.valor(numero)) is not None
     }
+    opcionales_activos = frozenset(n for n in campos_manuales if n in politica.opcionales)
     enviado = {
         "card_id": ejecucion.card_id,
         "monto": str(ejecucion.monto),
         "conexion_id": "",
         "campos_manuales": campos_manuales,
+        "opcionales_activos": opcionales_activos,
         "nombre_escenario": "",
         "expectativas": _expectativas_de_ejecucion(ejecucion),
     }
@@ -1744,6 +1843,9 @@ async def _interpretar_formulario(
     """
     if not card_id.strip():
         raise ValueError("Seleccione una tarjeta de prueba.")
+    validar_forma_de_opcionales(
+        campos_manuales, composicion.perfil, MTI_COMPRA, composicion.metadatos_de_campos_0100
+    )
     datos = DatosCompra(
         card_id=card_id.strip(),
         monto=presentacion.validar_monto(monto),
@@ -1797,10 +1899,15 @@ async def _formulario(
                 escenario_actual
             )
 
+    politica_compra = composicion.perfil.politica(MTI_COMPRA)
+
     if enviado:
         card_id = enviado.get("card_id", "")
         monto = enviado.get("monto", "")
         campos_manuales_enviados = enviado.get("campos_manuales", {})
+        opcionales_activos = enviado.get("opcionales_activos") or frozenset(
+            n for n in campos_manuales_enviados if politica_compra.origen(n) == "opcional"
+        )
         conexion_id_solicitada = (
             conexion_id if conexion_id is not None else enviado.get("conexion_id")
         )
@@ -1814,6 +1921,9 @@ async def _formulario(
         card_id = escenario_actual.card_id
         monto = str(escenario_actual.monto)
         campos_manuales_enviados = dict(escenario_actual.campos_manuales)
+        opcionales_activos = frozenset(
+            n for n in campos_manuales_enviados if politica_compra.origen(n) == "opcional"
+        )
         conexion_id_solicitada = (
             conexion_id if conexion_id is not None else escenario_actual.conexion_id
         )
@@ -1823,6 +1933,7 @@ async def _formulario(
         card_id = ""
         monto = ""
         campos_manuales_enviados = {}
+        opcionales_activos = frozenset()
         conexion_id_solicitada = conexion_id
         nombre_escenario = ""
         expectativas_actuales = None
@@ -1869,6 +1980,10 @@ async def _formulario(
         else ""
     )
 
+    vista_previa, vista_previa_no_disponible = await _construir_vista_previa(
+        composicion, card_id, monto, campos_manuales_enviados
+    )
+
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="compra.html",
@@ -1883,8 +1998,14 @@ async def _formulario(
             "monto": monto,
             "card_id": card_id,
             "filas_constructor": presentacion.filas_constructor(
-                composicion.perfil, MTI_COMPRA, composicion.descripciones_de_campos
+                composicion.perfil, MTI_COMPRA, composicion.descripciones_de_campos,
+                opcionales_activos,
             ),
+            "campos_opcionales_disponibles": presentacion.campos_opcionales_disponibles(
+                composicion.perfil, MTI_COMPRA, composicion.descripciones_de_campos,
+                opcionales_activos,
+            ),
+            "opcionales_activos_csv": ",".join(sorted(opcionales_activos, key=int)),
             "campos_manuales": campos_manuales_enviados,
             "error": error,
             "aviso": aviso,
@@ -1899,9 +2020,39 @@ async def _formulario(
                 composicion.perfil, MTI_RESPUESTA_COMPRA, composicion.descripciones_de_campos,
                 campos_esperados,
             ),
+            "vista_previa": presentacion.contexto_de_vista_previa(
+                vista_previa, composicion.descripciones_de_campos
+            ) if vista_previa else None,
+            "vista_previa_no_disponible": vista_previa_no_disponible,
         },
         status_code=estado_http,
     )
+
+
+async def _construir_vista_previa(
+    composicion: Composicion, card_id: str, monto: str, campos_manuales: dict[str, str]
+):
+    """Vista previa (Bloque 7) para la pantalla de compra: `None` con un
+    motivo explicado en vez de una excepcion, en CUALQUIER estado incompleto
+    de la pantalla -sin tarjeta todavia, monto invalido, un campo manual con
+    forma incorrecta mientras se escribe-. Es solo lectura: nunca reserva
+    STAN, nunca toca la red, nunca persiste nada.
+    """
+    if not card_id.strip():
+        return None, "Seleccione una tarjeta de prueba para ver la vista previa."
+    try:
+        monto_valido = presentacion.validar_monto(monto)
+    except ValueError:
+        return None, "Indique un monto válido para ver la vista previa."
+    try:
+        vista = await composicion.vista_previa.construir(
+            DatosCompra(card_id=card_id, monto=monto_valido, campos_manuales=campos_manuales)
+        )
+    except TarjetaNoDisponibleParaVistaPrevia:
+        return None, "La tarjeta elegida no está disponible."
+    except ErrorDeCamposManuales as error:
+        return None, str(error)
+    return vista, None
 
 
 def crear_app(composicion: Composicion | None = None) -> FastAPI:

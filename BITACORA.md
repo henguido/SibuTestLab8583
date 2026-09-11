@@ -2315,3 +2315,196 @@ haciendo, porque ninguno era sensible. Suite completa: **995 passed** (antes 994
 con `pytest --collect-only -q`). Guardia de PAN en verde. `git diff --check` sin conflictos.
 Sin commit ni push.
 
+## 2026-09-11 · Inicio de SibuTestLab Core 2.0: editor ISO8583 universal (Bloques 1-6)
+
+Nueva iteración pedida explícitamente por el usuario: evolucionar la pantalla de compra de
+"formulario fijo con algunos campos" a un editor gobernado por el perfil. Auditoría previa
+confirmó que buena parte del principio ya estaba aplicada -`PerfilDeMarca`/`PoliticaCamposMti`
+ya gobernaban `filas_constructor` y `_leer_enviado` sin hardcodear números de campo-, así que
+esta iteración extiende esa base en vez de reescribirla.
+
+**Bloque 1 (modelo universal de campos).** Nuevo `domain/campos_iso.py::MetadatoCampo`
+(tipo/longitud/sensible/ayuda + `validar_forma()`). `PoliticaCamposMti` gana una 4ª categoría,
+`opcionales`: campos que el perfil conoce para el MTI pero que -a diferencia de `editables`- no
+tienen valor por defecto y no viajan en el mensaje a menos que el usuario los agregue
+explícitamente.
+
+**Bloque 2/3 (agregar/quitar campos opcionales).** Cinco campos nuevos en el perfil genérico -
+DE18, DE25, DE32, DE42, DE43, ISO 8583:1987 genérico, no de marca-, verificados con round-trip
+real de `pyiso8583` (`test_la_especificacion_codifica_y_decodifica_los_opcionales_del_bloque_1`).
+UI en `compra.html`: fila "Opcionales agregados" + "+ Agregar campo"/"Quitar", reusando el mismo
+POST `/` sin ejecutar nada (igual que "Cambiar conexión"). **Bug real encontrado y corregido en
+verificación de navegador:** el `<select>` de candidatos viaja siempre en el POST sin importar
+qué botón se pulsó -al hacer clic en "Quitar" se agregaba solo el candidato que hubiera quedado
+seleccionado-; corregido distinguiendo el disparo real por la presencia del botón
+`agregar_opcional`, cubierto con test de regresión.
+
+**Bloque 13 (parcial).** Validación de forma (`validar_forma_de_opcionales`) aplicada **solo**
+a los opcionales nuevos -nunca retrofitteada a los 5 editables preexistentes (3/22/37/41/49):
+un test existente ya enviaba un DE37 de 9 caracteres en vez de 12, así que aplicarla ahí
+habría sido una regresión, no una mejora-.
+
+**Bloque 6 (bitmap).** `CodecIso8583.bitmap_hex()` (nuevo, aditivo: no cambia el contrato de
+`codificar()` que ya usa el orquestador) calcula el bitmap primario en hex reencodando con
+`iso8583.encode` -función pura, sin E/S-. El bitmap solo depende de qué campos están presentes,
+nunca de sus valores, así que es seguro calcularlo sobre el mensaje ya enmascarado. Visible en
+"Resultado de la transacción" (siempre) y en el detalle histórico (`/historial/{id}`, solo
+cuando la representación persistida es `disponible` y `fiel` -nunca reconstruido del formato de
+texto heredado-). Bug encontrado y corregido durante la implementación: un campo histórico que
+el perfil vigente ya no conoce (drift) lanzaba un `KeyError` sin capturar en vez de un error
+controlado; ahora se traduce a `ErrorDeCodificacion` igual que un `EncodeError`.
+
+**Verificación.** 1026 passed (antes 995), confirmado con `pytest --collect-only -q` -incluye
+una corrección de la guardia de PAN misma: dos literales de 12 dígitos en tests nuevos
+(`monto_iso("15000")`/`"99999"` sin usar el generador, escritos a mano) que la propia guardia
+detectó y se corrigieron con el helper `monto_iso()`, no relajando la guardia-. Verificado en
+navegador real (agregar/quitar opcionales, error de forma específico sin traceback, ejecución
+con DE18 incluido, bitmap visible en resultado y en el historial reconstruido). Sin commit ni
+push. Pendiente en ese momento: Bloque 5 (override de automáticos), Bloque 7 (preview),
+Bloques 8-10 (Isoscopio 2.0 completo). Ver la entrada siguiente para su cierre.
+
+## 2026-09-11 · Core 2.0: Bloques 7-10 (preview, Isoscopio 2.0, comparación, RAW/HEX)
+
+Continuación directa de la entrada anterior, misma iteración. El usuario aprobó seguir sin
+pausa, con una precisión explícita: **Bloque 5 (override de DE7/DE11/DE12/DE13) sigue sin
+implementarse**, documentado como pendiente -riesgo no resuelto sobre la unicidad del STAN y
+el comportamiento actual de los automáticos-, no se toca `armar_compra` en ese aspecto.
+
+**Bloque 7 (vista previa).** Nuevo `application/vista_previa.py::ServicioVistaPrevia`, que
+reusa el mismo `armar_compra` y el mismo `CodecIso8583` que la ejecución real -nunca una
+segunda implementación del builder-. **Decisión arquitectónica explícita** (pedida por el
+usuario, documentada en el docstring del módulo): los automáticos (DE7/11/12/13) se calculan
+con un STAN/momento MARCADOR (`"000000"` + reloj inyectable), nunca el STAN real, y la UI los
+etiqueta "se generará al enviar". Se descartó la alternativa de reservar el STAN real de
+antemano: eso introduciría un efecto secundario (consumir la secuencia SQLite) y una posible
+carrera bajo uso concurrente, exactamente lo que el usuario pidió evitar. Sin JavaScript: dado
+que el proyecto no tiene JS y la pantalla es 100% server-rendered, agregar/quitar un campo
+opcional o cambiar de conexión ya refrescan la vista previa (mismo mecanismo que "Cambiar
+conexión"); se agregó un botón explícito "Actualizar vista previa" para cuando solo cambian
+tarjeta/monto sin tocar campos.
+
+**Bloque 8/9 (comparación Request vs Response, reutilizable).** Nuevo
+`domain/comparacion_mensajes.py::comparar_campos()` (puro, sin dependencias): compara dos
+`Mapping[str,str]` por unión de sus números y clasifica cada campo en
+COINCIDE/DIFERENTE/SOLO_REQUEST/SOLO_RESPONSE, sin ningún juicio de correctitud -un campo
+"diferente" no es un error; DE39 apareciendo "solo en la respuesta" es la norma, no una
+anomalía-. **Deliberadamente separado de Expected vs Actual** (que sigue intacto, sin tocar su
+semántica): esta comparación es descriptiva de un intercambio de protocolo, no una aserción de
+prueba contra un escenario. Envoltorio de presentación reutilizable
+(`FilaComparacionIso`/`filas_comparacion_iso`) usado tanto por el resultado inmediato como por
+el detalle histórico -una sola implementación, nunca dos que puedan divergir-, con tonos de
+UI deliberadamente neutros (nunca el par pass/fail).
+
+**Bloque 10 (RAW/HEX).** Auditoría previa a implementar: hoy NO se captura en ningún momento
+el RAW real transmitido -ni siquiera en la ejecución inmediata-: el orquestador arma los bytes
+reales (con el PAN en claro) solo para transmitirlos, y los descarta de inmediato; lo único que
+persiste (`solicitud_json`/`respuesta_json`) es la representación estructurada YA enmascarada.
+**Decisión de diseño explícita, la más importante de este bloque**: en vez de capturar los
+bytes reales y redactar despues un rango de bytes (técnica frágil: un error de cálculo de
+offset/longitud dejaría un fragmento de PAN filtrado), `CodecIso8583.raw_hex_seguro()` **nunca
+recibe el mensaje real**: siempre recodifica el mensaje YA `enmascarado()` desde cero. El
+resultado nunca puede contener un PAN ni un Track completo porque nunca se codifican -no se
+sanitiza un dump que los tuviera, se construye uno que nunca los tuvo-. Consecuencia importante
+y respondida explícitamente: **NINGUNA parte del RAW/HEX mostrado es "capturada": absolutamente
+todo -tanto en la ejecución inmediata como en el histórico- es una reconstrucción segura**,
+rotulada así en pantalla sin excepción ("Representación reconstruida y segura... no son los
+bytes exactamente transmitidos"). La longitud en bytes SÍ es fiel a la transmitida de verdad
+(enmascarar preserva el largo de cada campo). Sin migración de esquema: no hizo falta ninguna
+columna nueva, todo se deriva de datos ya persistidos o ya disponibles en memoria. Para el
+histórico, el RAW (igual que el bitmap) solo se muestra cuando la representación persistida es
+`disponible` y `fiel` (nunca del formato de texto heredado) -degradación elegante documentada
+en pantalla, sin inventar exactitud-.
+
+**Bug de UI encontrado y corregido durante la verificación en navegador** (además del ya
+corregido en la entrada anterior): ninguno nuevo en este bloque -el mecanismo de "Actualizar
+vista previa" y el de agregar/quitar opcionales reusan exactamente el POST `/` ya verificado-.
+
+**Verificación de seguridad de punta a punta** (test nuevo, no solo unitario): se ejecuta una
+compra REAL con el PAN real sembrado de `CARD_ID_DEMO`, se toma `resultado.solicitud` (ya
+enmascarado por el orquestador), se calcula su RAW/HEX, se decodifica de vuelta a texto ASCII,
+y se confirma que el PAN real NO aparece en ningún lado mientras que la versión enmascarada sí
+-`test_raw_hex_seguro_de_un_mensaje_enmascarado_nunca_contiene_el_pan_real`-.
+
+**Verificación en navegador real, con host simulado real levantado** (no solo `ERROR_CONEXION`):
+recorrido completo pedido por el usuario -agregar DE18, vista previa con MTI/bitmap/DE18
+correctos, ejecutar contra `sibu-host-demo` real, 0100→0110 real con STAN real distinto del
+marcador del preview, comparación Request/Response mostrando DE39/DE38 "solo en la respuesta"
+y DE2 "solo en la solicitud" (el perfil genérico no lo devuelve en el 0110), RAW/HEX de
+solicitud y respuesta con su longitud, reabrir la misma ejecución en el historial y confirmar
+que bitmap/RAW/comparación son IDÉNTICOS a los del resultado inmediato-. Un efecto secundario
+real de esta verificación: quedó una fila nueva en el historial de la base real del usuario
+(ejecución aprobada, sin datos sensibles nuevos), documentado aquí por transparencia.
+
+**Tests:** 1059 passed (antes 1039 al cierre del bloque anterior), confirmado con
+`pytest --collect-only -q`. Guardia de PAN en verde (se corrigió, de paso, un literal de 12
+dígitos escrito a mano en un test nuevo, con el mismo `monto_iso()` de siempre). `git diff
+--check` sin conflictos. Sin `git add`, sin commit, sin push. Pendiente explícito: Bloque 5
+(override de automáticos) queda sin decidir; historial avanzado, más MTI, variables, Host
+Simulator 2.0 y motor de carga quedan fuera de esta iteración, por instrucción expresa del
+usuario, hasta la próxima revisión.
+
+## 2026-09-11 · Auditoría técnica/funcional/visual de Core 2.0 (sin nuevas capacidades)
+
+Pedido explícito del usuario antes de decidir si se cierra la iteración: auditar TODO el
+working tree (reconciliando qué es de la sesión anterior de "Gestión avanzada de corridas" y
+qué es de Core 2.0), sin implementar nada nuevo, corrigiendo solo defectos reales.
+
+**Hallazgos reales encontrados y corregidos:**
+
+1. **Drift real entre `ESPECIFICACION_GENERICA` y `METADATOS_CAMPOS_0100`.** Estos dos
+   diccionarios (uno para pyiso8583, el otro para UI/validación) son necesariamente autónomos
+   -describen cosas distintas: codificación binaria vs. validación de forma/descripción en
+   pantalla-, pero la descripción de texto SÍ debería coincidir siempre, y no lo hacía: DE25,
+   DE42 y DE43 tenían la descripción recortada en `METADATOS_CAMPOS_0100` respecto de la
+   especificación real. Corregido (3 strings). Se agregó
+   `test_metadatos_0100_coincide_con_la_especificacion_en_longitud_y_descripcion` -que
+   encontró el defecto real, no hipotético- como red de seguridad permanente contra futuro
+   drift, más `test_todo_editable_u_opcional_del_perfil_tiene_metadata`.
+2. **`bitmap_hex`/`raw_hex_seguro` NO eran seguros por construcción.** Dependían enteramente
+   de que cada llamador recordara pasar el mensaje ya `enmascarado()` -exactamente el defecto
+   arquitectónico que el usuario pidió descartar-. Corregido con
+   `CodecIso8583._verificar_enmascarado_para_inspeccion()`: revienta
+   (`MensajeSinEnmascararError`) si un campo sensible todavía parece un número real, antes de
+   codificar nada. Cubierto con 2 tests que confirman el rechazo, y de paso se eliminó en
+   `application/vista_previa.py` la referencia viva al mensaje real bajo un nombre distinto
+   (`mensaje = mensaje.enmascarado()`, reasignado a la MISMA variable) que era el único punto
+   real donde un descuido futuro podía pasar el mensaje equivocado.
+3. **UX: valores cortos partidos a la mitad en la tabla de comparación Request/Response**
+   (`word-break: break-all` heredado del isoscopio de una sola columna, demasiado agresivo
+   para dos columnas de valor lado a lado). Corregido con una regla CSS acotada
+   (`.tabla--comparacion-iso .valor-iso { white-space: nowrap; ... }`); el fix quedó
+   verificado correcto en el archivo servido (`curl`, `fetch({cache:'no-store'})`), pero la
+   confirmación visual en el navegador de este mismo entorno no fue concluyente -el panel de
+   previsualización mostró la tabla sin el cambio incluso tras reiniciar el servidor y abrir
+   una pestaña nueva, y hasta con `!important` (que por definición del cascada CSS no puede
+   perder ante una regla sin `!important`)-, lo que apunta a un artefacto de cacheo del propio
+   entorno de previsualización, no a un defecto del código. Se revirtió el `!important`
+   -innecesario una vez descartado como problema real de especificidad- y se deja la regla
+   normal en el archivo. Recomendado confirmar con un refresco fuerte en un navegador real.
+
+**Verificación de seguridad end-to-end nueva:** `test_e2e_core_2_0_el_pan_completo_nunca_aparece_fuera_de_memoria`
+(`tests/test_seguridad_auditoria.py`) siembra un PAN sintético conocido, ejecuta una compra
+real con un campo opcional agregado contra la app web completa (no un doble), y busca ese PAN
+-en claro y en hex- en el HTML de resultado/historial/detalle y en la tabla `ejecuciones` del
+SQLite real (deliberadamente NO en el archivo completo: `tarjetas_prueba` sí puede contener el
+PAN completo, es la única excepción documentada en CLAUDE.md). Nunca aparece; la versión
+enmascarada sí, confirmando que el enmascarado realmente corrió.
+
+**Verificado matemáticamente (script ad-hoc, no en el repo):** para el mensaje mínimo, cada
+uno de los 5 opcionales por separado, y los 5 juntos: campos declarados = bits activos del
+bitmap = campos que devuelve `pyiso8583.decode`. Sin discrepancias.
+
+**Confirmado por inspección de código (sin nuevo test dedicado):** `comparar_campos()` no
+importa nada de `perfil`/`validacion`/`expectativas` -estructuralmente inmune al drift del
+perfil-; `domain/expectativas.py`, `application/orquestador.py`, `cli.py` y
+`application/suites.py` no fueron tocados por Core 2.0 (confirmado con `git diff --name-only`),
+y sus 91 tests relacionados pasan; `consultas.detalle_ejecucion` hace una sola consulta SQL,
+bitmap/RAW/comparación son cómputo puro en memoria sobre ese único resultado -sin N+1-;
+`resultado.html`/`detalle.html` comparten toda la lógica pesada vía macros de `_piezas.html`
+(`isoscopio`, `comparacion_iso`, `evaluacion`), sin duplicación sustancial que valga la pena
+extraer más.
+
+**Tests:** 1066 passed (antes 1059 al cierre del checkpoint anterior; +7 reales: 2 de
+consistencia de metadata, 2 adversariales de POST manipulado, 2 de "seguro por construcción",
+1 E2E de seguridad). Confirmado con `pytest --collect-only -q`. Guardia de PAN en verde.
+`git diff --check` sin conflictos. Sin `git add`, sin commit, sin push.

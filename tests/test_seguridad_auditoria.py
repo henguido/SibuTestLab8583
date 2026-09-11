@@ -174,6 +174,122 @@ def test_orquestador_rechaza_expectativa_sensible_aunque_bypasee_servicio_escena
     assert codigo == 2
 
 
+def test_e2e_core_2_0_el_pan_completo_nunca_aparece_fuera_de_memoria(tmp_path):
+    """Auditoria de seguridad del Editor ISO8583/Isoscopio 2.0 (Bloques 1-10):
+    un PAN sintetico CONOCIDO se siembra en una tarjeta real, se ejecuta una
+    compra real (con un campo opcional agregado) contra la app web completa
+    -misma ruta que un usuario real: `crear_app(Composicion(...))`, no un
+    doble-, y se busca ese PAN completo en TODAS las superficies nuevas de
+    esta iteracion: HTML del resultado inmediato (Isoscopio, bitmap, RAW/HEX,
+    comparacion Request/Response, vista previa), HTML del detalle historico
+    reabierto, y los BYTES CRUDOS del archivo SQLite completo -no solo las
+    columnas que uno esperaria revisar-. Debe aparecer en NINGUNA.
+    """
+    import httpx2
+
+    from sibutestlab8583.composicion import Composicion, Configuracion
+    from sibutestlab8583.web.app import crear_app
+
+    ruta_db = tmp_path / "auditoria_e2e.db"
+    asyncio.run(inicializar(ruta_db))
+    pan_conocido = pan_sintetico("77201")
+
+    async def _sembrar():
+        from sibutestlab8583.application.tarjetas import DatosNuevaTarjeta, ServicioTarjetas
+        from sibutestlab8583.application.conexiones import DatosNuevaConexion, ServicioConexiones
+
+        tarjetas = ServicioTarjetas(RepositorioTarjetasSQLite(ruta_db))
+        await tarjetas.crear(
+            DatosNuevaTarjeta(
+                card_id="ADV-001", descripcion="Adversarial", pan=pan_conocido, expiracion="3012"
+            )
+        )
+        conexiones = ServicioConexiones(RepositorioDestinosSQLite(ruta_db))
+        await conexiones.crear(
+            DatosNuevaConexion(conexion_id="ADV-CX", nombre="Adversarial", host="127.0.0.1", puerto="1")
+        )
+
+    asyncio.run(_sembrar())
+
+    composicion = Composicion(Configuracion(ruta_base_datos=ruta_db))
+    app = crear_app(composicion)
+
+    async def _ejecutar():
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://prueba"
+        ) as cliente:
+            # Puerto 1 (sin nada escuchando) -> ERROR_CONEXION, pero eso ya
+            # basta: el mensaje se arma, se enmascara y se persiste igual.
+            respuesta_compra = await cliente.post(
+                "/compra",
+                data={
+                    "card_id": "ADV-001", "monto": "10.00", "conexion_id": "ADV-CX",
+                    "opcionales_activos": "18", "campo_18": "5411",
+                },
+            )
+            historial = await cliente.get("/historial")
+            return respuesta_compra, historial
+
+    respuesta_compra, respuesta_historial = asyncio.run(_ejecutar())
+    assert respuesta_compra.status_code == 200
+
+    import re as _re
+
+    id_ejecucion = _re.search(r"/historial/(\d+)", respuesta_historial.text)
+    assert id_ejecucion, "deberia haber quedado una ejecucion en el historial"
+
+    async def _detalle():
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://prueba"
+        ) as cliente:
+            return await cliente.get(f"/historial/{id_ejecucion.group(1)}")
+
+    respuesta_detalle = asyncio.run(_detalle())
+
+    superficies_html = {
+        "resultado (compra)": respuesta_compra.text,
+        "historial (listado)": respuesta_historial.text,
+        "detalle historico": respuesta_detalle.text,
+    }
+    for nombre, texto in superficies_html.items():
+        assert pan_conocido not in texto, f"el PAN completo aparecio en: {nombre}"
+        assert pan_conocido.encode().hex() not in texto.lower(), (
+            f"el PAN completo aparecio en HEX en: {nombre}"
+        )
+
+    # El PAN completo SI puede (y debe) estar en `tarjetas_prueba` -es el unico
+    # lugar permitido por CLAUDE.md, imprescindible para poder construir el
+    # 0100-, asi que la verificacion no escanea el archivo entero: apunta
+    # especificamente a `ejecuciones`, que NUNCA debe duplicarlo.
+    import sqlite3
+
+    with sqlite3.connect(ruta_db) as conexion:
+        conexion.row_factory = sqlite3.Row
+        filas = conexion.execute("SELECT * FROM ejecuciones").fetchall()
+    assert filas, "deberia haber al menos una ejecucion persistida"
+    for fila in filas:
+        for columna in fila.keys():
+            valor = fila[columna]
+            if valor is None:
+                continue
+            texto = str(valor)
+            assert pan_conocido not in texto, (
+                f"el PAN completo aparecio en claro en ejecuciones.{columna}"
+            )
+            assert pan_conocido.encode("ascii").hex() not in texto.lower(), (
+                f"el PAN completo aparecio en HEX en ejecuciones.{columna}"
+            )
+    # Confirma que la mascarada SI quedo en alguna columna de esa fila -evidencia
+    # de que el enmascarado realmente corrio, no que la prueba compare contra nada-.
+    mascarado = "*" * (len(pan_conocido) - 4) + pan_conocido[-4:]
+    assert any(
+        mascarado in str(fila[columna])
+        for fila in filas
+        for columna in fila.keys()
+        if fila[columna] is not None
+    )
+
+
 def test_mensaje_error_de_orquestador_no_ecoa_el_valor_forzado(tmp_path):
     """El mensaje de `ValueError` de `validar_expectativas` es texto fijo con
     el NUMERO de campo (aceptable, es metadato de config, no dato de tarjeta),

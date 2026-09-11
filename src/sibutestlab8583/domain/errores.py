@@ -52,3 +52,8 @@ class CampoNoPermitido(ErrorDeCamposManuales):
 class CampoProtegido(ErrorDeCamposManuales):
     """El campo es derivado o automatico: no puede fijarse manualmente."""
 
+
+class CampoConFormaInvalida(ErrorDeCamposManuales):
+    """El campo es editable/opcional -su origen esta permitido-, pero el valor
+    dado no tiene la forma que su metadata declara (tipo o longitud)."""
+

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from sibutestlab8583.adapters.iso8583.codec import CodecIso8583
 from sibutestlab8583.adapters.persistence.esquema import (
     CARD_ID_DEMO,
     DESTINO_HOST_DEMO,
@@ -39,7 +40,7 @@ from sibutestlab8583.domain.modelos import (
     ResultadoCompra,
     TarjetaPrueba,
 )
-from sibutestlab8583.profiles.generico import PERFIL_GENERICO
+from sibutestlab8583.profiles.generico import METADATOS_CAMPOS_0100, PERFIL_GENERICO
 from sibutestlab8583.web.app import crear_app
 
 MOMENTO = datetime(2026, 8, 19, 12, 0, 0, tzinfo=timezone.utc)
@@ -317,6 +318,8 @@ class ComposicionFalsa:
         self.consultas = ConsultasFalsas(ejecuciones)
         self.descripciones_de_campos = {"2": "Número de tarjeta (PAN)", "4": "Monto"}
         self.perfil = PERFIL_GENERICO
+        self.metadatos_de_campos_0100 = METADATOS_CAMPOS_0100
+        self._codec_real = CodecIso8583()
         self._orquestador = OrquestadorFalso(resultado, error)
         self._repositorio_tarjetas = RepositorioTarjetasFalso(
             tarjetas if tarjetas is not None else [_TARJETA_DEMO_FALSA]
@@ -380,6 +383,24 @@ class ComposicionFalsa:
         from sibutestlab8583.application.comparacion_corridas import ServicioComparacionCorridas
 
         self.comparador_corridas = ServicioComparacionCorridas(self._repositorio_corridas_suite)
+
+    def bitmap_hex(self, mensaje):
+        try:
+            return self._codec_real.bitmap_hex(mensaje, self.perfil)
+        except Exception:
+            return None
+
+    def raw_hex_seguro(self, mensaje):
+        try:
+            return self._codec_real.raw_hex_seguro(mensaje, self.perfil)
+        except Exception:
+            return None
+
+    @property
+    def vista_previa(self):
+        from sibutestlab8583.application.vista_previa import ServicioVistaPrevia
+
+        return ServicioVistaPrevia(self._repositorio_tarjetas, self._codec_real, self.perfil)
 
     async def orquestador(self, destino, *, tiempo_limite=None):
         #: Ultimo `DestinoTcp` y timeout con el que la web pidio un orquestador:
@@ -494,6 +515,50 @@ def test_una_compra_aprobada_muestra_el_resultado():
     assert "Transacción aprobada" in respuesta.text
     assert "000042" in respuesta.text
     assert "7 ms" in respuesta.text
+
+
+def test_el_resultado_muestra_el_bitmap_de_la_solicitud_y_la_respuesta():
+    texto = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00")).post(
+        "/compra", data=FORMULARIO
+    ).text
+    assert texto.count("Bitmap") >= 2  # uno para la solicitud, otro para la respuesta
+    assert "campos activos: 2, 4" in texto  # solicitud: los dos campos de _resultado()
+    assert "campos activos: 39" in texto  # respuesta: solo el codigo de respuesta
+
+
+def test_el_resultado_muestra_la_comparacion_request_vs_response():
+    texto = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00")).post(
+        "/compra", data=FORMULARIO
+    ).text
+    assert "Request vs Response" in texto
+    assert "Solo en la respuesta" in texto  # DE39 solo viaja en la respuesta
+    # La comparacion Request/Response nunca usa el par pass/fail de Expected/Actual.
+    assert 'chip--fail">Diferente' not in texto
+    assert 'chip--pass">Coincide' not in texto
+
+
+def test_la_comparacion_request_response_no_expone_el_pan_completo():
+    texto = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00")).post(
+        "/compra", data=FORMULARIO
+    ).text
+    assert PAN_DEMO not in texto
+    assert "************6666" in texto
+
+
+def test_el_resultado_muestra_raw_hex_seguro_con_su_longitud():
+    texto = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00")).post(
+        "/compra", data=FORMULARIO
+    ).text
+    assert "RAW/HEX" in texto
+    assert "bytes" in texto
+    assert "reconstruida" in texto  # rotulo explicito: no son los bytes reales transmitidos
+
+
+def test_el_raw_hex_del_resultado_nunca_contiene_el_pan_completo():
+    texto = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00")).post(
+        "/compra", data=FORMULARIO
+    ).text
+    assert PAN_DEMO not in texto
 
 
 def test_un_rechazo_no_aparece_como_aprobacion():
@@ -737,6 +802,141 @@ def test_forzar_una_expectativa_de_de2_en_compra_se_rechaza_con_400():
 # porque ese campo ya no existe en el contrato -la version anterior de estas
 # pruebas comprobaba que un host manipulado se ignoraba; ahora ni siquiera hay
 # donde escribirlo, lo cual es la version mas fuerte de la misma garantia-.
+
+
+# ------------------------------------------ campos opcionales (Bloque 2/3) ----
+#
+# "+ Agregar campo"/"Quitar" comparten el mismo POST "/" que ya usaba "Cambiar
+# conexion" -reenvia todo el formulario, sin ejecutar ninguna transaccion-.
+
+
+def test_get_compra_ofrece_los_cinco_opcionales_cuando_ninguno_esta_activo():
+    composicion = ComposicionFalsa()
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.get("/")
+    assert respuesta.status_code == 200
+    for numero in ("18", "25", "32", "42", "43"):
+        assert f'value="{numero}"' in respuesta.text
+    assert 'name="campo_18"' not in respuesta.text
+
+
+def test_agregar_un_opcional_lo_muestra_como_fila_y_lo_saca_del_catalogo():
+    composicion = ComposicionFalsa()
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/", data={**FORMULARIO, "candidato_opcional": "18", "agregar_opcional": "1"}
+    )
+    assert respuesta.status_code == 200
+    assert 'name="campo_18"' in respuesta.text
+    # Ya no es un candidato para agregar de nuevo: el catalogo restante no lo repite.
+    assert 'value="18">DE18' not in respuesta.text
+
+
+def test_quitar_un_opcional_no_reintroduce_el_candidato_del_select():
+    """Regresion: el `<select>` de '+ Agregar campo' viaja siempre en el POST,
+    sin importar que boton se haya pulsado. Si `quitar_opcional` se procesara
+    sin distinguir el boton que realmente se pulso, el valor que haya quedado
+    en ese `<select>` se agregaria por error al mismo tiempo que se quita otro.
+    """
+    composicion = ComposicionFalsa()
+    cliente = TestClient(crear_app(composicion))
+    # Estado de partida: DE42 ya activo (como si una pantalla previa lo hubiera
+    # agregado), con el <select> de candidatos apuntando a DE18 (su default).
+    respuesta = cliente.post(
+        "/",
+        data={
+            **FORMULARIO,
+            "opcionales_activos": "42",
+            "campo_42": "MERCH0000000001",
+            "candidato_opcional": "18",
+            "quitar_opcional": "42",
+        },
+    )
+    assert respuesta.status_code == 200
+    assert 'name="campo_42"' not in respuesta.text
+    assert 'name="campo_18"' not in respuesta.text
+
+
+def test_un_opcional_agregado_con_valor_valido_llega_a_datos_compra():
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/compra",
+        data={**FORMULARIO, "opcionales_activos": "18", "campo_18": "5411"},
+    )
+    assert respuesta.status_code == 200
+    assert composicion._orquestador.ultimos_datos.campos_manuales == {"18": "5411"}
+
+
+def test_un_opcional_con_longitud_incorrecta_da_error_especifico_sin_ejecutar():
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/compra",
+        data={**FORMULARIO, "opcionales_activos": "18", "campo_18": "54"},
+    )
+    assert respuesta.status_code == 400
+    assert "DE18" in respuesta.text
+    assert "exactamente 4" in respuesta.text
+    assert composicion._orquestador.ultimos_datos is None
+
+
+def test_un_opcional_no_numerico_da_error_especifico():
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/compra",
+        data={**FORMULARIO, "opcionales_activos": "18", "campo_18": "ABCD"},
+    )
+    assert respuesta.status_code == 400
+    assert "dígitos" in respuesta.text
+    assert composicion._orquestador.ultimos_datos is None
+
+
+def test_un_campo_no_opcional_manipulado_via_opcionales_activos_no_llega_a_datos_compra():
+    """Adversarial: un atacante manipula el campo oculto `opcionales_activos`
+    para incluir un numero que NO es opcional (38, "codigo de autorizacion",
+    que el autorizador agrega en su respuesta -nunca el emisor en el 0100-),
+    junto con un `campo_38` con un valor cualquiera. `_leer_opcionales_activos`
+    intersecta siempre con `politica.opcionales`, asi que "38" nunca entra a
+    `numeros_a_leer` y `campo_38` queda sin leer, sin que haga falta que el
+    dominio lo rechace explicitamente para que quede sin efecto -mismo
+    criterio que ya protege a los derivados/automaticos-.
+    """
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/compra", data={**FORMULARIO, "opcionales_activos": "38", "campo_38": "000999"}
+    )
+    assert respuesta.status_code == 200
+    assert "38" not in composicion._orquestador.ultimos_datos.campos_manuales
+
+
+def test_agregar_un_candidato_opcional_inexistente_no_agrega_nada():
+    """Adversarial: `candidato_opcional` manipulado a un numero que el perfil
+    no declara como opcional (p. ej. "999", o "38" que es un campo real pero
+    no opcional). El servidor solo agrega si `candidato in politica.opcionales`.
+    """
+    composicion = ComposicionFalsa()
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post(
+        "/", data={**FORMULARIO, "candidato_opcional": "999", "agregar_opcional": "1"}
+    )
+    assert respuesta.status_code == 200
+    assert 'name="campo_999"' not in respuesta.text
+
+
+def test_un_editable_preexistente_con_forma_distinta_del_default_sigue_funcionando():
+    """Garantia de no-regresion: la nueva validacion de forma NO se aplica a
+    los editables preexistentes (3/22/37/41/49) -ver docstring de
+    `validar_forma_de_opcionales`-, asi que un valor como este (mas corto que
+    el largo fijo de DE37) sigue aceptandose igual que antes de esta iteracion.
+    """
+    composicion = ComposicionFalsa(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00"))
+    cliente = TestClient(crear_app(composicion))
+    respuesta = cliente.post("/compra", data={**FORMULARIO, "campo_37": "REF-QA-01"})
+    assert respuesta.status_code == 200
+    assert composicion._orquestador.ultimos_datos.campos_manuales == {"37": "REF-QA-01"}
 
 
 def test_una_conexion_activa_resuelve_host_puerto_y_timeout_desde_persistencia():

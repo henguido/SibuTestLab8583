@@ -14,7 +14,7 @@ import pytest
 
 from conftest import MOMENTO_FIJO, TransporteFalso, construir_orquestador
 from sibutestlab8583.adapters.iso8583.codec import CodecIso8583
-from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO
+from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, PAN_DEMO
 from sibutestlab8583.adapters.persistence.sqlite_repos import (
     RepositorioEjecucionesSQLite,
     RepositorioTarjetasSQLite,
@@ -26,6 +26,7 @@ from sibutestlab8583.domain.catalogo import (
     CATALOGO_GENERICO,
 )
 from sibutestlab8583.domain.modelos import (
+    MTI_COMPRA,
     MTI_RESPUESTA_COMPRA,
     DatosCompra,
     EstadoEjecucion,
@@ -40,10 +41,13 @@ from sibutestlab8583.domain.validacion import (
     validar_envio,
 )
 from sibutestlab8583.profiles.generico import (
+    ESPECIFICACION_GENERICA,
     OBLIGATORIOS_0100,
+    OBLIGATORIOS_0110,
     PERFIL_GENERICO,
+    PerfilDeMarca,
 )
-from sibutestlab8583.domain.datos_sinteticos import pan_sintetico
+from sibutestlab8583.domain.datos_sinteticos import monto_iso, pan_sintetico
 
 CODEC = CodecIso8583()
 
@@ -213,6 +217,34 @@ def test_rn3_una_respuesta_sin_campos_obligatorios_es_invalida():
     assert estado is EstadoEjecucion.INVALIDA
 
 
+def test_campos_de_correlacion_excluye_siempre_los_campos_sensibles():
+    """`campos_de_correlacion` nunca debe incluir DE2/DE35, aunque un perfil
+    futuro los declarara obligatorios en la respuesta -mismo criterio que ya
+    aplica `campos_permitidos_expectativa` en `domain/expectativas.py`-.
+
+    Motivo: `_discrepancias_de_correlacion` arma el texto del motivo
+    interpolando el valor tal cual (`f"...se envió {esperado!r} y volvió
+    {recibido!r}"`) y ese texto se persiste sin pasar por `.enmascarado()`
+    -ver `application/orquestador.py::_registrar`-. Si el campo de
+    correlacion fuera sensible, el PAN o el track completo quedarian en
+    `motivo_detalle`, en el historial y en pantalla. No se prueba insertando
+    un perfil real con esta falla -el perfil generico vigente no la tiene-,
+    sino con un perfil de prueba construido a mano que sí la tendria si la
+    exclusion no existiera.
+    """
+    perfil_con_de2_obligatorio = PerfilDeMarca(
+        nombre="perfil-de-prueba-solo-para-este-test",
+        especificacion=ESPECIFICACION_GENERICA,
+        obligatorios_por_mti={
+            MTI_COMPRA: OBLIGATORIOS_0100,
+            MTI_RESPUESTA_COMPRA: OBLIGATORIOS_0110 | {"2", "35"},
+        },
+    )
+    correlacion = campos_de_correlacion(perfil_con_de2_obligatorio, MTI_RESPUESTA_COMPRA)
+    assert "2" not in correlacion
+    assert "35" not in correlacion
+
+
 async def test_rn3_invalida_persiste_un_motivo_distinto_del_de_timeout_o_rechazo(
     base, datos_compra
 ):
@@ -372,3 +404,100 @@ async def test_una_aprobada_no_persiste_ningun_motivo(base, datos_compra):
     assert resultado.estado is EstadoEjecucion.APROBADA
     guardada = (await RepositorioEjecucionesSQLite(base).listar())[0]
     assert guardada.motivo_detalle is None
+
+
+# --------------------------------------------------- CodecIso8583.bitmap_hex --
+#
+# Bloque 6 (Isoscopio 2.0): el bitmap solo depende de que campos estan
+# presentes, nunca de sus valores -por eso es seguro calcularlo sobre un
+# mensaje ya enmascarado, y por eso dos mensajes con los mismos campos activos
+# pero valores distintos dan el mismo bitmap-.
+
+
+def test_bitmap_hex_es_estable_entre_dos_mensajes_con_los_mismos_campos():
+    solicitud_a = _solicitud_valida().enmascarado()
+    solicitud_b = replace(solicitud_a, campos={**solicitud_a.campos, "37": "REF-DISTINTA"})
+    assert "37" not in solicitud_a.campos  # confirma que agregar 37 cambia el conjunto de campos
+    bitmap_sin_37 = CODEC.bitmap_hex(solicitud_a, PERFIL_GENERICO)
+    bitmap_con_37 = CODEC.bitmap_hex(solicitud_b, PERFIL_GENERICO)
+    assert bitmap_sin_37 != bitmap_con_37, "un campo activo distinto debe cambiar el bitmap"
+    # Pero el MISMO conjunto de campos, con OTRO valor, da el MISMO bitmap.
+    solicitud_c = replace(solicitud_a, campos={**solicitud_a.campos, "4": monto_iso("99999")})
+    assert CODEC.bitmap_hex(solicitud_c, PERFIL_GENERICO) == bitmap_sin_37
+
+
+def test_bitmap_hex_es_mayuscula_hexadecimal():
+    bitmap = CODEC.bitmap_hex(_solicitud_valida().enmascarado(), PERFIL_GENERICO)
+    assert bitmap == bitmap.upper()
+    assert all(c in "0123456789ABCDEF" for c in bitmap)
+
+
+def test_bitmap_hex_de_un_campo_que_el_perfil_no_conoce_da_error_controlado():
+    """Simula el drift que `web.app._bitmap_de_persistido` debe blindar: un
+    mensaje historico con un campo que el perfil VIGENTE ya no declara.
+    """
+    from sibutestlab8583.domain.errores import ErrorDeCodificacion
+
+    mensaje = MensajeIso(mti=MTI_COMPRA, campos={"63": "dato-que-ya-no-existe"})
+    with pytest.raises(ErrorDeCodificacion):
+        CODEC.bitmap_hex(mensaje, PERFIL_GENERICO)
+
+
+# ----------------------------------------- CodecIso8583.raw_hex_seguro (B10) --
+#
+# Estrategia de sanitizacion de este proyecto: `raw_hex_seguro` NUNCA recibe
+# el mensaje real -solo se llama sobre la version ya `enmascarado()`-, asi
+# que el HEX resultante nunca puede contener un PAN/Track completo: no se
+# redacta un dump que los tuviera, se construye uno que nunca los tuvo.
+
+
+def test_raw_hex_seguro_devuelve_hex_y_longitud_coherentes():
+    solicitud = _solicitud_valida().enmascarado()
+    hexadecimal, longitud = CODEC.raw_hex_seguro(solicitud, PERFIL_GENERICO)
+    assert hexadecimal == hexadecimal.upper()
+    assert all(c in "0123456789ABCDEF" for c in hexadecimal)
+    assert len(hexadecimal) == longitud * 2  # dos caracteres hex por byte
+
+
+async def test_raw_hex_seguro_de_un_mensaje_enmascarado_nunca_contiene_el_pan_real(base, datos_compra):
+    """Prueba de seguridad de punta a punta: ejecuta una compra REAL (con el
+    PAN real de `CARD_ID_DEMO` seedeado en la base), toma `resultado.solicitud`
+    -que el orquestador ya devuelve enmascarado, ver `Orquestador._registrar`-,
+    calcula su RAW/HEX, lo decodifica de vuelta a texto, y confirma que el PAN
+    real no aparece por ningun lado, mientras que la version enmascarada si.
+    """
+    resultado = await construir_orquestador(base, TransporteFalso(codigo="00")).ejecutar_compra(
+        datos_compra
+    )
+    hexadecimal, _ = CODEC.raw_hex_seguro(resultado.solicitud, PERFIL_GENERICO)
+    decodificado = bytes.fromhex(hexadecimal).decode("ascii", errors="replace")
+    assert PAN_DEMO not in decodificado
+    assert "************6666" in decodificado
+
+
+def test_bitmap_hex_es_seguro_por_construccion_ante_un_mensaje_sin_enmascarar():
+    """No basta con que cada llamador RECUERDE enmascarar antes de llamar:
+    `bitmap_hex`/`raw_hex_seguro` deben rechazar por si mismos un mensaje con
+    el PAN todavia en claro, sin importar quien llama ni si se equivoco.
+    """
+    from sibutestlab8583.adapters.iso8583.codec import MensajeSinEnmascararError
+
+    solicitud_real = _solicitud_valida()  # PAN real, sin `.enmascarado()`
+    with pytest.raises(MensajeSinEnmascararError):
+        CODEC.bitmap_hex(solicitud_real, PERFIL_GENERICO)
+
+
+def test_raw_hex_seguro_es_seguro_por_construccion_ante_un_mensaje_sin_enmascarar():
+    from sibutestlab8583.adapters.iso8583.codec import MensajeSinEnmascararError
+
+    solicitud_real = _solicitud_valida()
+    with pytest.raises(MensajeSinEnmascararError):
+        CODEC.raw_hex_seguro(solicitud_real, PERFIL_GENERICO)
+
+
+def test_raw_hex_seguro_de_un_campo_que_el_perfil_no_conoce_da_error_controlado():
+    from sibutestlab8583.domain.errores import ErrorDeCodificacion
+
+    mensaje = MensajeIso(mti=MTI_COMPRA, campos={"63": "dato-que-ya-no-existe"})
+    with pytest.raises(ErrorDeCodificacion):
+        CODEC.raw_hex_seguro(mensaje, PERFIL_GENERICO)

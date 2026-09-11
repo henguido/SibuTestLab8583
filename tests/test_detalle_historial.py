@@ -209,6 +209,55 @@ async def test_la_respuesta_muestra_los_campos_persistidos(base):
     assert campos["39"] == "00"
 
 
+async def test_el_detalle_muestra_el_bitmap_cuando_la_representacion_es_fiel(base):
+    resultado = await _compra(base)
+    html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+    assert html.count("Bitmap") >= 2
+
+
+async def test_el_detalle_muestra_raw_hex_seguro_cuando_la_representacion_es_fiel(base):
+    resultado = await _compra(base)
+    html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+    assert "RAW/HEX" in html
+    assert "reconstruida" in html
+    assert PAN_DEMO not in html
+
+
+async def test_el_detalle_no_muestra_raw_hex_para_el_formato_de_texto_heredado(base):
+    """Backward compatibility: una fila anterior a la persistencia estructurada
+    (`solicitud_json=None`) no tiene suficiente informacion demostrable para
+    reconstruir un RAW seguro -no se inventa exactitud-.
+    """
+    identificador = _insertar(
+        base,
+        solicitud_enmascarada=f"MTI=0100 | 2=************6666 | 4={monto_iso('15000')}",
+        solicitud_json=None,
+    )
+    html = (await _obtener(base, f"/historial/{identificador}")).text
+    assert "RAW/HEX" not in html
+
+
+async def test_el_detalle_no_muestra_bitmap_para_el_formato_de_texto_heredado(base):
+    """Sin JSON estructurado (`solicitud_json=None`), la representacion viene
+    del formato de texto heredado -no demostrablemente fiel-: no debe
+    inventarse un bitmap a partir de eso.
+    """
+    identificador = _insertar(
+        base,
+        solicitud_enmascarada=f"MTI=0100 | 2=************6666 | 4={monto_iso('15000')}",
+        solicitud_json=None,
+    )
+    html = (await _obtener(base, f"/historial/{identificador}")).text
+    assert "Bitmap" not in html
+
+
+async def test_el_detalle_muestra_la_comparacion_request_vs_response(base):
+    resultado = await _compra(base)
+    html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text
+    assert "Request vs Response" in html
+    assert "Solo en la respuesta" in html  # DE39
+
+
 async def test_los_nombres_conocidos_salen_del_perfil(base):
     resultado = await _compra(base)
     html = (await _obtener(base, f"/historial/{resultado.ejecucion.id}")).text

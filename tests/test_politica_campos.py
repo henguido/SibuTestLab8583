@@ -20,12 +20,15 @@ from sibutestlab8583.domain.armado import (
     incompatibilidades_escenario,
     valores_efectivos_editables,
     validar_campos_manuales,
+    validar_forma_de_opcionales,
 )
+from sibutestlab8583.domain.campos_iso import TIPO_NUMERICO, MetadatoCampo
 from sibutestlab8583.domain.datos_sinteticos import pan_sintetico
-from sibutestlab8583.domain.errores import CampoNoPermitido, CampoProtegido
+from sibutestlab8583.domain.errores import CampoConFormaInvalida, CampoNoPermitido, CampoProtegido
 from sibutestlab8583.domain.modelos import DatosCompra, TarjetaPrueba
 from sibutestlab8583.profiles.generico import (
     CODIGO_PROCESO_COMPRA,
+    METADATOS_CAMPOS_0100,
     MODO_CAPTURA_DEMOSTRACION,
     PERFIL_GENERICO,
     PerfilDeMarca,
@@ -59,10 +62,16 @@ def test_un_default_fuera_de_editables_se_rechaza():
     [("2", "derivado"), ("14", "derivado"), ("7", "automatico"), ("11", "automatico"),
      ("12", "automatico"), ("13", "automatico"), ("3", "editable"), ("22", "editable"),
      ("37", "editable"), ("41", "editable"), ("49", "editable"), ("38", "no_permitido"),
-     ("99", "no_permitido")],
+     ("99", "no_permitido"), ("18", "opcional"), ("25", "opcional"), ("32", "opcional"),
+     ("42", "opcional"), ("43", "opcional")],
 )
 def test_origen_clasifica_cada_numero_del_perfil_generico(numero, esperado):
     assert _POLITICA.origen(numero) == esperado
+
+
+def test_una_categoria_opcional_que_solapa_con_editable_se_rechaza():
+    with pytest.raises(ValueError, match="más de una categoría"):
+        PoliticaCamposMti(editables=frozenset({"18"}), opcionales=frozenset({"18"}))
 
 
 def test_los_editables_obligatorios_declaran_default_y_37_queda_opcional():
@@ -265,3 +274,80 @@ def test_la_capa_estructural_gana_aunque_la_validacion_no_existiera(monkeypatch)
 
     assert mensaje.campos["2"] == tarjeta.pan
     assert mensaje.campos["11"] == "000001"
+
+
+# -------------------------------------------------------------- opcionales --
+
+
+def test_fijar_un_opcional_no_lanza_nada():
+    validar_campos_manuales({"18": "5411"}, PERFIL_GENERICO, "0100")
+
+
+def test_un_opcional_no_agregado_no_aparece_en_el_mensaje():
+    """A diferencia de un editable -que siempre tiene un valor, propio o por
+    default-, un opcional que el usuario no agrego no debe aparecer.
+    """
+    mensaje = armar_compra(
+        DatosCompra(card_id="X", monto=Decimal("10.00")),
+        _tarjeta(),
+        stan="000001",
+        momento=MOMENTO,
+        perfil=PERFIL_GENERICO,
+    )
+    for numero in PERFIL_GENERICO.politica("0100").opcionales:
+        assert numero not in mensaje.campos
+
+
+def test_un_opcional_agregado_aparece_en_el_mensaje():
+    mensaje = armar_compra(
+        DatosCompra(card_id="X", monto=Decimal("10.00"), campos_manuales={"18": "5411"}),
+        _tarjeta(),
+        stan="000001",
+        momento=MOMENTO,
+        perfil=PERFIL_GENERICO,
+    )
+    assert mensaje.campos["18"] == "5411"
+
+
+def test_valores_efectivos_editables_tambien_admite_un_opcional_agregado():
+    efectivos = valores_efectivos_editables({"18": "5411"}, PERFIL_GENERICO, "0100")
+    assert efectivos["18"] == "5411"
+
+
+def test_un_escenario_con_un_opcional_congelado_no_es_incompatible():
+    efectivos = valores_efectivos_editables({"18": "5411"}, PERFIL_GENERICO, "0100")
+    assert incompatibilidades_escenario(efectivos, PERFIL_GENERICO, "0100") == ()
+
+
+# ------------------------------------------- validar_forma_de_opcionales --
+
+
+def test_validar_forma_de_opcionales_acepta_un_valor_bien_formado():
+    validar_forma_de_opcionales({"18": "5411"}, PERFIL_GENERICO, "0100", METADATOS_CAMPOS_0100)
+
+
+def test_validar_forma_de_opcionales_rechaza_longitud_incorrecta():
+    with pytest.raises(CampoConFormaInvalida, match="exactamente 4"):
+        validar_forma_de_opcionales(
+            {"18": "54"}, PERFIL_GENERICO, "0100", METADATOS_CAMPOS_0100
+        )
+
+
+def test_validar_forma_de_opcionales_rechaza_no_numerico():
+    with pytest.raises(CampoConFormaInvalida, match="dígitos"):
+        validar_forma_de_opcionales(
+            {"18": "ABCD"}, PERFIL_GENERICO, "0100", METADATOS_CAMPOS_0100
+        )
+
+
+def test_validar_forma_de_opcionales_ignora_campos_editables_preexistentes():
+    """Un editable preexistente (DE37) fuera de longitud NO debe rechazarse por
+    esta funcion: solo se aplica a origen 'opcional' -ver docstring-.
+    """
+    validar_forma_de_opcionales(
+        {"37": "REF-QA-01"}, PERFIL_GENERICO, "0100", METADATOS_CAMPOS_0100
+    )
+
+
+def test_validar_forma_de_opcionales_ignora_valores_vacios():
+    validar_forma_de_opcionales({"18": ""}, PERFIL_GENERICO, "0100", METADATOS_CAMPOS_0100)

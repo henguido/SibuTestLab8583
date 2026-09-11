@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_piezas.html" import estado, evaluacion as pieza_evaluacion, isoscopio, resumen, senal %}
+{% from "_piezas.html" import comparacion_iso, estado, evaluacion as pieza_evaluacion, isoscopio, resumen, senal %}
 {% block titulo %}Ejecución #{{ ejecucion.id }} · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
@@ -56,6 +56,8 @@
 </section>
 {% endif %}
 
+{% if filas_comparacion_iso %}{{ comparacion_iso(filas_comparacion_iso) }}{% endif %}
+
 {{ pieza_evaluacion(evaluacion) }}
 
 {# Un solo aviso por ejecución, antes de las tablas: con qué formato se registró
@@ -81,12 +83,14 @@
 
 <div class="dos-columnas">
   {{ isoscopio('Solicitud ISO 8583 · ' ~ ejecucion.mti_solicitud, filas_solicitud, false,
-               'No quedó registrada ninguna representación de la solicitud.') }}
+               'No quedó registrada ninguna representación de la solicitud.', bitmap_solicitud,
+               raw_solicitud) }}
 
   {% if hubo_respuesta %}
   {{ isoscopio('Respuesta ISO 8583 · ' ~ ejecucion.mti_respuesta, filas_respuesta,
                respuesta_con_crudo,
-               'Llegó una respuesta, pero no quedó registrada su representación.') }}
+               'Llegó una respuesta, pero no quedó registrada su representación.', bitmap_respuesta,
+               raw_respuesta) }}
   {% else %}
   {# Sin respuesta no se muestra una tabla vacía: se explica el desenlace con el
      mismo texto que usa el resultado inmediato, que ya está redactado para no

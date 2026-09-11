@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_piezas.html" import estado, evaluacion as pieza_evaluacion, isoscopio, resumen %}
+{% from "_piezas.html" import comparacion_iso, estado, evaluacion as pieza_evaluacion, isoscopio, resumen %}
 {% block titulo %}Resultado · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
@@ -41,12 +41,14 @@
 </section>
 {% endif %}
 
+{% if filas_comparacion_iso %}{{ comparacion_iso(filas_comparacion_iso) }}{% endif %}
+
 {{ pieza_evaluacion(evaluacion) }}
 
 {{ isoscopio('Isoscopio · solicitud 0100', filas_solicitud, false,
-             'No se armó ningún mensaje.') }}
+             'No se armó ningún mensaje.', bitmap_solicitud, raw_solicitud) }}
 {{ isoscopio('Isoscopio · respuesta 0110', filas_respuesta, true,
-             'No se recibió respuesta que interpretar.') }}
+             'No se recibió respuesta que interpretar.', bitmap_respuesta, raw_respuesta) }}
 
 {# Reutilizar esta transaccion: ambos botones llevan al mismo constructor
    prefilled con la configuracion de ESTA ejecucion -tarjeta, monto, campos

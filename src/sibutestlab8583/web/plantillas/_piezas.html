@@ -184,10 +184,58 @@
 {%- endmacro %}
 
 
+{# Comparacion descriptiva Request vs Response (Bloque 8/9 del Isoscopio 2.0).
+
+   NO es Expected vs Actual -esa es la pieza `evaluacion()` de arriba, una
+   ASERCION DE PRUEBA contra lo que un escenario declaro esperar-. Esto es
+   puramente DESCRIPTIVO: que campos aparecen en la solicitud y en la
+   respuesta, y si coinciden, sin ningun juicio de correctitud. Por eso su
+   rotulo y sus tonos (`chip--activa`/`chip--qa`/`chip--sintetica`, nunca
+   `chip--pass`/`chip--fail`) son deliberadamente distintos de los de
+   `evaluacion()`: que un campo aparezca como "Diferente" no significa que
+   algo haya fallado. #}
+{% macro comparacion_iso(filas) %}
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Comparación del protocolo · Request vs Response</h2>
+    <span class="panel__nota">descriptiva, no es un veredicto</span>
+  </div>
+  {% if filas %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Comparación Request vs Response">
+    <table class="tabla tabla--comparacion-iso">
+      <thead>
+        <tr>
+          <th>DE</th>
+          <th>Nombre</th>
+          <th>Request</th>
+          <th>Response</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr>
+          <td><span class="campo-iso">{{ fila.numero }}</span></td>
+          <td>{{ fila.descripcion }}</td>
+          <td><span class="valor-iso">{{ fila.request if fila.request is not none else '—' }}</span></td>
+          <td><span class="valor-iso">{{ fila.response if fila.response is not none else '—' }}</span></td>
+          <td><span class="chip chip--{{ fila.tono_estado }}">{{ fila.etiqueta_estado }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="panel__cuerpo"><p class="vacio">No hay campos que comparar.</p></div>
+  {% endif %}
+</section>
+{%- endmacro %}
+
+
 {# Isoscopio. Vivia dentro de resultado.html; se movio aqui al aparecer el
    segundo consumidor, el detalle historico. En esta iteracion solo cambia de
    lugar: mismas filas y misma estructura. #}
-{% macro isoscopio(titulo, filas, con_crudo, vacio) %}
+{% macro isoscopio(titulo, filas, con_crudo, vacio, bitmap='', raw=none) %}
 <section class="panel">
   <div class="panel__cabecera">
     <h2 class="panel__titulo">{{ titulo }}</h2>
@@ -196,6 +244,26 @@
       {%- else %}sin campos{% endif %}
     </span>
   </div>
+  {% if bitmap %}
+  <div class="panel__cuerpo bitmap">
+    <span class="bitmap__rotulo">Bitmap</span>
+    <span class="mono bitmap__hex">{{ bitmap }}</span>
+    <span class="bitmap__nota">campos activos: {{ filas|map(attribute='numero')|join(', ') }}</span>
+  </div>
+  {% endif %}
+  {% if raw %}
+  <div class="panel__cuerpo bitmap">
+    <span class="bitmap__rotulo">RAW/HEX</span>
+    <span class="mono bitmap__hex bitmap__hex--raw">{{ raw.hex }}</span>
+    <span class="bitmap__nota">{{ raw.longitud_bytes }} bytes</span>
+  </div>
+  <p class="raw__aviso">
+    {{ senal('invalida', 13) }}
+    Representación reconstruida y segura a partir de los campos ya enmascarados -no son los
+    bytes exactamente transmitidos-. Nunca se calcula ni se guarda un RAW con el PAN o el Track
+    completo.
+  </p>
+  {% endif %}
   {% if filas %}
   <div class="desplazable" tabindex="0" role="region" aria-label="{{ titulo }}">
     <table class="tabla">
