@@ -377,6 +377,10 @@ class ComposicionFalsa:
             self.ejecutor_escenarios,
         )
 
+        from sibutestlab8583.application.comparacion_corridas import ServicioComparacionCorridas
+
+        self.comparador_corridas = ServicioComparacionCorridas(self._repositorio_corridas_suite)
+
     async def orquestador(self, destino, *, tiempo_limite=None):
         #: Ultimo `DestinoTcp` y timeout con el que la web pidio un orquestador:
         #: permite verificar la resolucion servidor-autoritativa de la conexion

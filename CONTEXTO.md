@@ -4,10 +4,32 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-07 (cinco mejoras funcionales posteriores al cierre, revisadas
-críticamente y con el hallazgo de exposición en la URL ya resuelto)
+**Última actualización:** 2026-09-09 (gestión avanzada de corridas: comparación histórica y
+reintento selectivo)
 
 ## Estado actual
+
+**Iteración posterior al cierre (2026-09-09) — Gestión avanzada de corridas:** segunda
+evolución funcional pedida explícitamente por el usuario, priorizada a partir de una
+investigación de mercado (herramientas comparables de simulación/certificación ISO 8583;
+ninguna equivalente exacta a este alcance académico). Dos capacidades: (1) **comparar
+corridas** -desde el detalle de una corrida, "Comparar contra…" contrasta escenario por
+escenario contra otra corrida histórica de la MISMA suite, clasificando cada uno como SIN
+CAMBIO/MEJORÓ/EMPEORÓ/CAMBIÓ/SOLO EN A/SOLO EN B; lee únicamente snapshots ya persistidos
+(`ItemCorridaSuite`), nunca el escenario, la suite ni la expectativa vigentes, así que la
+comparación no cambia si se editan después-; (2) **reintentar fallidos** -"Reintentar
+fallidos" crea una corrida NUEVA solo con los ítems que quedaron en FAIL/ERROR en la
+corrida origen (nunca SIN_EXPECTATIVAS ni NO_EJECUTADO), seleccionados desde los items
+HISTÓRICOS de esa corrida -nunca desde la membresía actual de la suite-, pero ejecutados
+con la configuración VIGENTE de cada escenario; nunca modifica la corrida original-. Sin
+migración de esquema (`suite_id` ya existía en `corridas_suite`). Cierre posterior: defensa
+explícita contra `escenario_id` duplicado en items históricos (`ItemsHistoricosDuplicados`,
+sin migración ni `UNIQUE` en SQLite -decisión explícita-), cobertura web dedicada de
+SOLO_EN_A/SOLO_EN_B, y una defensa adicional descubierta en auditoría (`campos_de_correlacion`
+ahora excluye siempre `CAMPOS_SENSIBLES`, igual que ya hacía `campos_permitidos_expectativa`).
+Detalle completo, decisiones de diseño y archivos tocados en `BITACORA.md`, entrada "Gestión
+avanzada de corridas". Suite: **995 passed** (antes 945; confirmado con
+`pytest --collect-only -q`). Sin commit ni push.
 
 **Iteración posterior al cierre (2026-09-07):** cinco mejoras funcionales pedidas explícitamente
 por el usuario después de la entrega académica, ya implementadas y verificadas (código,
@@ -156,7 +178,7 @@ Acordadas y, salvo donde se indique, **ya implementadas y probadas**.
 | Ámbito | Decisión |
 |---|---|
 | Lenguaje | Python |
-| Interfaz | Aplicación web; la CLI quedó descartada |
+| Interfaz | Aplicación web como interfaz principal para el usuario final; una CLI interactiva de uso general quedó descartada (distinto de `sibu-run-suite`, agregada después para ejecutar suites sin navegador en CI) |
 | Backend | FastAPI con HTML renderizado en el servidor y JavaScript mínimo. Sin React ni frontend independiente |
 | Persistencia | Contrato de repositorio **asíncrono**; adaptador inicial SQLite con `aiosqlite` para el MVP. PostgreSQL es evolución futura y no se implementa ahora |
 | Codec ISO 8583 | `pyiso8583`; recibe la especificación como parámetro, lo que sirve de punto de inyección de perfiles |
@@ -214,9 +236,12 @@ rotula cada estado —tono, señal, etiqueta corta, título y explicación— y 
 fuente de la navegación. Las plantillas no duplican ninguna de las dos listas. Solo se declaran
 secciones cuya ruta existe: `Tarjetas de prueba` está prevista y no se muestra todavía.
 
-Ocho pantallas: nueva transacción, resultado, historial, **detalle de una ejecución**
-(`/historial/{id}`), no encontrado, y administración de Configuración (portada, listado de
-tarjetas, alta/edición de tarjetas). Los componentes que dos de ellas comparten
+Ocho pantallas en este bloque (2026-08-25): nueva transacción, resultado, historial,
+**detalle de una ejecución** (`/historial/{id}`), no encontrado, y administración de
+Configuración (portada, listado de tarjetas, alta/edición de tarjetas) -no cuenta las
+pantallas de escenarios, suites, corridas y comparación de corridas agregadas en bloques
+posteriores; el total actual de plantillas es mayor, ver `docs/arquitectura/ARQUITECTURA.md`
+para el inventario vigente-. Los componentes que dos de ellas comparten
 —el isoscopio, el banner de estado y el resumen de métricas— viven como macros en
 `plantillas/_piezas.html`; se extrajo solo lo que ya tenía dos consumidores reales. El detalle
 lee los campos con `application/serializacion.py` y **declara en pantalla cuando una ejecución
@@ -300,6 +325,7 @@ El transporte devuelve estos desenlaces como resultado: ninguna excepción de `a
 | 2026-09-07 | Iteración posterior al cierre, cinco mejoras funcionales pedidas por el usuario: (1) `Ejecucion.motivo_detalle` persiste la causa concreta de un fallo (antes solo se mostraba en el resultado inmediato); (2) `FiltroHistorial` + `RepositorioEjecuciones.buscar` dan filtros y paginación a `/historial`; (3) el selector de conexión pasa a vivir dentro del `<form>` del constructor (conserva tarjeta/monto/campos/expectativas al cambiar de conexión) y `_formulario_suite` conserva la selección de escenarios tras un error de validación; (4) `GET /?ejecucion_id={id}` recupera la configuración de una ejecución pasada para "Editar y volver a ejecutar"/"Guardar como escenario" en `resultado.html`, sin tocar el PAN; (5) `/suites/corridas/{id}/exportar.json`/`.csv` descargan el reporte ya persistido, reutilizando `application/exportacion_corridas.py` sin re-ejecutar la suite. Verificado en navegador de punta a punta (host simulado + web en puertos y base aislados). Suite: 921 passed, 2 skipped (antes 897). Sin commit. Detalle completo en `BITACORA.md` |
 | 2026-09-07 | Revisión crítica de las cinco mejoras: 3 defectos corregidos (reutilizar ejecución no explicaba tarjeta/conexión no disponible ni advertía sobre datos del formato heredado; `formnovalidate` verificado con clic real, no solo JS; faltaba prueba de migración de `motivo_detalle`) y 1 hallazgo documentado sin corregir todavía (datos del formulario viajando en la URL al cambiar de conexión). Suite: 937 passed, 2 skipped |
 | 2026-09-07 | Cierre del hallazgo de la URL: "Cambiar conexión" pasa de GET a **POST** (`POST /`, `cambiar_conexion` en `web/app.py`) -sin sessionStorage ni borrador alguno-, así que monto/campos/nombre viajan en el cuerpo de la petición, nunca en la URL, el historial del navegador ni el log de acceso del servidor; verificado con clics reales y con el log de un servidor aislado. Se verificó además que las expectativas recuperadas de una ejecución nunca dependen del escenario que la originó, aunque éste se edite después (antes solo lo afirmaba el docstring, sin prueba). `motivo_detalle`: se confirmó que `CodecIso8583` sí incrustaba el texto libre de `pyiso8583` (`EncodeError`/`DecodeError`); corregido para usar solo `error.field` y redactar el mensaje enteramente con texto propio del proyecto. Suite: 941 passed, 2 skipped |
+| 2026-09-09 | Gestión avanzada de corridas: comparación histórica (`domain/comparacion_corridas.py` + `application/comparacion_corridas.py::ServicioComparacionCorridas`, matriz SIN_CAMBIO/MEJORÓ/EMPEORÓ/CAMBIÓ, emparejamiento por `escenario_id`) y reintento selectivo (`CorredorDeSuites.reintentar_fallidos`, selecciona por items históricos de la corrida origen, ejecuta con configuración vigente del escenario, nunca altera la corrida original). Nueva ruta de solo lectura `listar_por_suite` en `RepositorioCorridasSuiteSQLite`, sin migración. Verificado en navegador con una suite de 3 escenarios y dos corridas reales. Cierre: defensa contra `escenario_id` duplicado (`ItemsHistoricosDuplicados`), cobertura web SOLO_EN_A/SOLO_EN_B, y exclusión de `CAMPOS_SENSIBLES` en `campos_de_correlacion` (RN-3). Suite: 995 passed (antes 945). Sin commit ni push |
 
 El detalle histórico y sus justificaciones pertenecen a `BITACORA.md` y a Git.
 

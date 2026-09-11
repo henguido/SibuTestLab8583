@@ -107,6 +107,12 @@ Abrir en el navegador: **http://127.0.0.1:8000/**
 7. Ir a **Escenarios** — guardar la transacción recién ejecutada como caso reutilizable.
 8. Ir a **Suites** — agrupar escenarios y ejecutar una suite completa desde el navegador
    (misma ejecución que expone `sibu-run-suite`, ver más abajo); revisar la corrida resultante.
+   Desde el detalle de una corrida: **Comparar contra…** compara escenario por escenario
+   contra otra corrida histórica de la misma suite (SIN CAMBIO / MEJORÓ / EMPEORÓ / CAMBIÓ /
+   SOLO EN A / SOLO EN B), y **Reintentar fallidos** crea una corrida nueva solo con los
+   escenarios que quedaron en FAIL o ERROR, sin tocar la corrida original. Ambas leen
+   únicamente el snapshot ya persistido de cada corrida: no dependen de cómo esté configurado
+   hoy el escenario ni la suite.
 9. Entrar a **Configuración**.
 10. Revisar **Tarjetas de prueba** — administración del catálogo (crear, editar,
     activar/desactivar).

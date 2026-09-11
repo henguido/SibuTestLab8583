@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from dataclasses import replace
 from decimal import Decimal
 
@@ -27,7 +28,12 @@ from sibutestlab8583.adapters.persistence.sqlite_repos import (
     RepositorioTarjetasSQLite,
 )
 from sibutestlab8583.application.conexiones import ServicioConexiones
-from sibutestlab8583.application.corredor_suites import CorredorDeSuites, SuiteNoEjecutable
+from sibutestlab8583.application.corredor_suites import (
+    CorredorDeSuites,
+    CorridaOrigenNoEncontrada,
+    SinItemsReintentables,
+    SuiteNoEjecutable,
+)
 from sibutestlab8583.application.ejecutor_escenarios import EjecutorDeEscenarios
 from sibutestlab8583.application.escenarios import (
     DatosEdicionEscenario,
@@ -495,3 +501,176 @@ async def test_el_corredor_ejecuta_los_escenarios_uno_a_la_vez_nunca_solapados(b
     assert corrida.resultado_global == ResultadoGlobalSuite.SIN_EXPECTATIVAS
     assert ejecutor_falso.maximo_en_vuelo == 1
     assert ejecutor_falso.orden_de_llamadas == [e1.escenario_id, e2.escenario_id, e3.escenario_id]
+
+
+# --------------------------------------------------- reintentar fallidos --
+#
+# `reintentar_fallidos` reutiliza `_correr` (el mismo nucleo que `ejecutar`):
+# ninguna de estas pruebas necesita un segundo doble de ejecucion, solo
+# variar que items quedaron en la corrida ORIGEN.
+
+
+async def _corrida_mixta(base):
+    """Una suite de 3 escenarios: E1 PASS, E2 FAIL, y E3 desactivado ANTES de
+    correr para que de ERROR. Devuelve todo lo necesario para variar el
+    escenario despues de la corrida.
+    """
+    suites, escenarios, corridas, corredor = _servicios(base, TransporteFalso(codigo=CODIGO_APROBADO))
+    e1 = await _crear_escenario(escenarios, "E1", expectativas=Expectativas(estado=EstadoEjecucion.APROBADA))
+    e2 = await _crear_escenario(escenarios, "E2", expectativas=Expectativas(estado=EstadoEjecucion.RECHAZADA))
+    e3 = await _crear_escenario(escenarios, "E3", expectativas=Expectativas(estado=EstadoEjecucion.APROBADA))
+    await escenarios.cambiar_estado(e3.escenario_id, activo=False)
+    suite = await suites.crear(
+        DatosNuevaSuite(
+            nombre="Mixta reintento",
+            escenarios=(e1.escenario_id, e2.escenario_id, e3.escenario_id),
+        )
+    )
+    corrida = await corredor.ejecutar(suite.suite_id)
+    return suites, escenarios, corridas, corredor, suite, corrida, e1, e2, e3
+
+
+async def test_reintentar_fallidos_crea_corrida_con_solo_fail_y_error(base):  # 11
+    suites, escenarios, corridas, corredor, suite, corrida, e1, e2, e3 = await _corrida_mixta(base)
+    assert corrida.cantidad_pass == 1
+    assert corrida.cantidad_fail == 1
+    assert corrida.cantidad_error == 1
+
+    nueva = await corredor.reintentar_fallidos(corrida.corrida_id)
+
+    assert nueva.total == 2
+    items_nueva = await corridas.obtener_items(nueva.corrida_id)
+    ids_nueva = {item.escenario_id for item in items_nueva}
+    assert ids_nueva == {e2.escenario_id, e3.escenario_id}
+    assert e1.escenario_id not in ids_nueva
+
+
+async def test_reintentar_sin_fallidos_no_crea_corrida(base):  # 12
+    suites, escenarios, corridas, corredor = _servicios(base, TransporteFalso(codigo=CODIGO_APROBADO))
+    e1 = await _crear_escenario(escenarios, "E1", expectativas=Expectativas(estado=EstadoEjecucion.APROBADA))
+    suite = await suites.crear(DatosNuevaSuite(nombre="Todo PASS", escenarios=(e1.escenario_id,)))
+    corrida = await corredor.ejecutar(suite.suite_id)
+    assert corrida.cantidad_fail == corrida.cantidad_error == 0
+
+    antes = len(await corridas.listar())
+    with pytest.raises(SinItemsReintentables):
+        await corredor.reintentar_fallidos(corrida.corrida_id)
+    assert len(await corridas.listar()) == antes
+
+
+async def test_reintentar_no_altera_la_corrida_original(base):  # 13
+    suites, escenarios, corridas, corredor, suite, corrida, e1, e2, e3 = await _corrida_mixta(base)
+    items_originales_antes = await corridas.obtener_items(corrida.corrida_id)
+
+    await corredor.reintentar_fallidos(corrida.corrida_id)
+
+    original_despues = await corridas.obtener(corrida.corrida_id)
+    items_originales_despues = await corridas.obtener_items(corrida.corrida_id)
+    assert original_despues.cantidad_pass == corrida.cantidad_pass
+    assert original_despues.cantidad_fail == corrida.cantidad_fail
+    assert original_despues.cantidad_error == corrida.cantidad_error
+    assert [i.resultado for i in items_originales_despues] == [i.resultado for i in items_originales_antes]
+
+
+async def test_reintentar_da_id_y_timestamps_propios(base):  # 14
+    suites, escenarios, corridas, corredor, suite, corrida, e1, e2, e3 = await _corrida_mixta(base)
+
+    nueva = await corredor.reintentar_fallidos(corrida.corrida_id)
+
+    assert nueva.corrida_id != corrida.corrida_id
+    assert nueva.iniciada_en >= corrida.iniciada_en
+    assert nueva.suite_id == corrida.suite_id
+    assert nueva.suite_nombre == corrida.suite_nombre
+    assert nueva.estado == EstadoCorridaSuite.FINALIZADA
+
+
+async def test_reintentar_usa_items_historicos_no_membresia_actual_de_suite(base):  # 15, 16
+    suites, escenarios, corridas, corredor, suite, corrida, e1, e2, e3 = await _corrida_mixta(base)
+
+    # Se agrega un escenario NUEVO a la suite, que si se ejecutara daria
+    # FAIL -pero nunca aparecio en la corrida origen, asi que no debe
+    # aparecer en el reintento aunque hoy sea parte de la suite.
+    e4 = await _crear_escenario(escenarios, "E4", expectativas=Expectativas(estado=EstadoEjecucion.RECHAZADA))
+    await suites.actualizar(
+        suite.suite_id,
+        DatosEdicionSuite(
+            nombre=suite.nombre,
+            escenarios=(e1.escenario_id, e2.escenario_id, e3.escenario_id, e4.escenario_id),
+        ),
+    )
+
+    nueva = await corredor.reintentar_fallidos(corrida.corrida_id)
+
+    items_nueva = await corridas.obtener_items(nueva.corrida_id)
+    ids_nueva = {item.escenario_id for item in items_nueva}
+    assert e4.escenario_id not in ids_nueva
+    assert ids_nueva == {e2.escenario_id, e3.escenario_id}
+
+
+async def test_reintentar_escenario_desactivado_da_error_controlado_sin_abortar(base):  # 17
+    """E3 ya estaba desactivado ANTES de la corrida origen (por eso dio
+    ERROR); aqui se reintenta y se comprueba que sigue dando ERROR -con el
+    mismo motivo controlado que ya usa una corrida normal- sin que eso
+    impida procesar E2, el otro item reintentable.
+    """
+    suites, escenarios, corridas, corredor, suite, corrida, e1, e2, e3 = await _corrida_mixta(base)
+
+    nueva = await corredor.reintentar_fallidos(corrida.corrida_id)
+
+    items_nueva = {item.escenario_id: item for item in await corridas.obtener_items(nueva.corrida_id)}
+    assert items_nueva[e3.escenario_id].resultado == EstadoItemCorrida.ERROR
+    assert "inactiv" in items_nueva[e3.escenario_id].detalle.lower()
+    # El otro item reintentable se proceso igual -18: un fallo no impide
+    # procesar los demas, misma garantia que ya prueba el corredor completo.
+    assert items_nueva[e2.escenario_id].resultado == EstadoItemCorrida.FAIL
+
+
+async def test_reintentar_escenario_eliminado_da_error_controlado_sin_abortar(base):  # 17
+    """Los escenarios nunca se borran desde la aplicacion (solo se
+    desactivan, ver `ServicioEscenarios`); este caso -fila borrada por fuera
+    de la aplicacion- se prueba igual porque `EjecutorDeEscenarios` ya lo
+    contempla explicitamente (`EscenarioNoEncontrado`), y el reintento no
+    deberia comportarse distinto a una corrida normal frente a esto.
+    """
+    suites, escenarios, corridas, corredor, suite, corrida, e1, e2, e3 = await _corrida_mixta(base)
+
+    with sqlite3.connect(base) as conexion:
+        conexion.execute("DELETE FROM escenarios WHERE escenario_id = ?", (e2.escenario_id,))
+        conexion.commit()
+
+    nueva = await corredor.reintentar_fallidos(corrida.corrida_id)
+
+    items_nueva = {item.escenario_id: item for item in await corridas.obtener_items(nueva.corrida_id)}
+    assert items_nueva[e2.escenario_id].resultado == EstadoItemCorrida.ERROR
+    assert "ya no existe" in items_nueva[e2.escenario_id].detalle.lower()
+    # El nombre para mostrar cae al historico -el escenario ya no existe
+    # para resolver un nombre actual.
+    assert items_nueva[e2.escenario_id].escenario_nombre == "E2"
+
+
+async def test_reintentar_ejecuta_con_la_configuracion_actual_del_escenario(base):
+    """Decision explicita del diseno: el reintento SELECCIONA por snapshot
+    historico, pero EJECUTA con la configuracion ACTUAL del escenario -si el
+    monto cambio despues de la corrida origen, el reintento usa el nuevo.
+    """
+    suites, escenarios, corridas, corredor, suite, corrida, e1, e2, e3 = await _corrida_mixta(base)
+
+    # Se corrige E2 para que ahora si cumpla su expectativa.
+    await escenarios.actualizar(
+        e2.escenario_id,
+        DatosEdicionEscenario(
+            nombre=e2.nombre, card_id=e2.card_id, conexion_id=e2.conexion_id, monto=e2.monto,
+            expectativas=Expectativas(estado=EstadoEjecucion.APROBADA),
+        ),
+    )
+
+    nueva = await corredor.reintentar_fallidos(corrida.corrida_id)
+
+    items_nueva = {item.escenario_id: item for item in await corridas.obtener_items(nueva.corrida_id)}
+    assert items_nueva[e2.escenario_id].resultado == EstadoItemCorrida.PASS
+
+
+async def test_reintentar_corrida_origen_inexistente_da_error_controlado(base):
+    _, _, corridas, corredor = _servicios(base, TransporteFalso(codigo=CODIGO_APROBADO))
+    with pytest.raises(CorridaOrigenNoEncontrada):
+        await corredor.reintentar_fallidos(9999)

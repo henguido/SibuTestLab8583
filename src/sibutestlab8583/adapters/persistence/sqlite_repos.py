@@ -663,6 +663,16 @@ class RepositorioCorridasSuiteSQLite(_RepositorioSQLite):
                 filas = await cursor.fetchall()
         return [_a_corrida(f) for f in filas]
 
+    async def listar_por_suite(self, suite_id: str, limite: int = 50) -> Sequence[CorridaSuite]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM corridas_suite WHERE suite_id = ? ORDER BY corrida_id DESC LIMIT ?",
+                (suite_id, limite),
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_corrida(f) for f in filas]
+
     async def obtener_items(self, corrida_id: int) -> Sequence[ItemCorridaSuite]:
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row

@@ -2159,3 +2159,159 @@ exacto en vez de un fragmento heredado de la librería). Suite completa: **941 p
 skipped** (antes 937). Guardia de PAN sigue en verde. Verificado en navegador real (host
 simulado + web en puertos y base SQLite aislados, descartados al cerrar; la base local
 real del usuario no se tocó). Sin commit ni push.
+
+## 2026-09-09 · Gestión avanzada de corridas: comparación histórica y reintento selectivo
+
+Segunda evolución funcional posterior a la entrega, priorizada por el usuario tras una
+investigación de mercado (herramientas comparables de simulación/certificación ISO 8583:
+jPOS, isosim, neaPay, Iliad t3; VTS/VCMS del lado Visa, MTF/M-TIP del lado Mastercard,
+ninguno un competidor exacto de este alcance académico). Dos capacidades tratadas como un
+solo bloque: **comparar dos corridas históricas de la misma suite** y **reintentar
+selectivamente los ítems en FAIL/ERROR de una corrida**. Explícitamente fuera de esta
+iteración: variantes parametrizadas, carga, perfiles de marca reales, multiusuario, flujos
+encadenados, condiciones negativas configurables.
+
+**Diseño previo a implementar (pedido explícito del usuario: proponer antes de tocar
+código).** Tres decisiones no obvias, documentadas antes de escribir una línea:
+
+1. **Matriz SIN_CAMBIO/MEJORÓ/EMPEORÓ/CAMBIÓ**, `domain/comparacion_corridas.py`. Ranking
+   de severidad **solo** entre PASS/FAIL/ERROR (2/1/0): `SIN_EXPECTATIVAS`/`NO_EJECUTADO`
+   quedan deliberadamente fuera -no hay expectativa que ganar o perder-, así que cualquier
+   transición que involucre alguno de los dos es CAMBIO, nunca MEJORÓ/EMPEORÓ. El único par
+   que el pedido no fijaba de antemano, FAIL↔ERROR, se resolvió así: **FAIL → ERROR es
+   EMPEORÓ** (se pierde la capacidad de diagnóstico: FAIL todavía dice qué discrepancia
+   hubo, ERROR no dice nada evaluable) y **ERROR → FAIL es MEJORÓ** (se recupera esa
+   capacidad, aunque la expectativa siga sin cumplirse). Mismo resultado en ambos lados con
+   contenido distinto (discrepancias para FAIL, `detalle` para ERROR) es CAMBIO, no
+   SIN_CAMBIO -ej. FAIL→FAIL pero cambió qué campo no cumplió-.
+2. **Emparejamiento por `escenario_id`**, nunca por `orden` (un reintento renumera 1..N) ni
+   por `escenario_nombre` (mutable). Es una clave estable ya persistida en
+   `ItemCorridaSuite`, y por construcción de `web.app._leer_escenarios_de_suite` (que arma
+   la selección recorriendo el catálogo real) un mismo escenario nunca se repite dentro de
+   los items de una misma corrida: el emparejamiento nunca es ambiguo.
+3. **`corrida_origen_id`: NO se agregó.** La comparación ya funciona genéricamente entre
+   cualquier par de corridas de la misma suite, elegido a mano en el selector "Comparar
+   contra" -no depende de que una sea "hija" de la otra-. Agregar la columna habría sido
+   solo una conveniencia de UX (auto-sugerir el origen del reintento), no una capacidad
+   nueva, a cambio de una migración + repositorio + modelo + pruebas. Se documenta como
+   mejora futura de bajo costo si se pide, no como algo pendiente de esta entrega.
+4. **Reintento: selección histórica, ejecución vigente.** Aceptada tal cual la preferencia
+   conceptual del usuario: `reintentar_fallidos` toma la lista de `escenario_id` de los
+   **items históricos** de la corrida origen (nunca de la membresía actual de la suite -un
+   escenario agregado después no entra-), pero cada uno se ejecuta con la configuración
+   **actual** del escenario (tarjeta/monto/conexión/expectativa vigentes) -exactamente lo
+   mismo que ya hacía `ejecutar()` para toda la suite-. Un escenario desactivado o borrado
+   (esto último solo posible manipulando la base por fuera de la aplicación: los servicios
+   nunca borran, solo desactivan) cae en ERROR con el mismo motivo controlado que ya usa
+   una corrida normal (`EscenarioNoEjecutable`/`EscenarioNoEncontrado` de
+   `EjecutorDeEscenarios`), sin abortar el reintento de los demás ítems -cero comportamiento
+   nuevo que inventar, cero runner paralelo.
+
+**Arquitectura.** `domain/comparacion_corridas.py` (nuevo, puro: `CambioItem`,
+`clasificar_cambio`, `ComparacionItem`). `application/comparacion_corridas.py` (nuevo:
+`ServicioComparacionCorridas.comparar(corrida_a_id, corrida_b_id)`, empareja items leyendo
+solo `RepositorioCorridasSuite.obtener`/`obtener_items` de ambas corridas -nunca el
+escenario, la suite ni la expectativa vigentes-, con errores controlados
+`CorridaNoEncontrada`/`CorridasDeSuitesDistintas`). `application/corredor_suites.py`:
+refactorizado para compartir un núcleo `_correr()` entre `ejecutar()` (existente) y
+`reintentar_fallidos()` (nuevo, con `CorridaOrigenNoEncontrada`/`SinItemsReintentables`) -
+ningún segundo runner. `adapters/persistence/sqlite_repos.py`: un único método nuevo de
+solo lectura, `listar_por_suite(suite_id, limite)`, para poblar el selector "Comparar
+contra" sin que el límite global de `listar()` esconda una corrida antigua de esta suite
+-**sin migración**: `suite_id` ya existía en `corridas_suite`-. `web/app.py`: rutas
+`GET /suites/corridas/{id}/comparar` (con y sin `?contra=`) y
+`POST /suites/corridas/{id}/reintentar`. `web/presentacion.py`: traducción a filas de
+tabla, incluida la fusión de discrepancias de A y B por criterio (CRITERIO/recibido en
+A/recibido en B) en una sola fila en vez de dos tablas separadas.
+
+**Verificación.** 46 pruebas nuevas, reconciliadas archivo por archivo contra
+`pytest --collect-only` (no una suma estimada): `tests/test_comparacion_corridas.py` +24
+(archivo nuevo; 13 funciones, 3 de ellas parametrizadas -7+2+5 casos- más 10 simples; cubre
+la matriz completa incluida la estabilidad histórica frente a edición posterior de
+escenario y suite); `test_corredor_suites.py` +9 (18→27 funciones, sin parametrizar,
+incluida la prueba explícita de escenario eliminado por fuera de la aplicación);
+`test_web_suites.py` **+13** (34→47 funciones, sin parametrizar; rutas de comparar/
+reintentar y "0 fallidos no crea nada"); `test_web.py` +0 (solo se agregó el atributo
+`comparador_corridas` a `ComposicionFalsa`, ningún test nuevo). 24+9+13+0 = 46.
+Suite completa: **991 passed** (antes 945, confirmado en un worktree aislado en el commit
+`f318ffa`). Verificado además con clics reales en
+navegador, en una base y puertos completamente aislados de la base real del usuario:
+suite de 3 escenarios, dos corridas con una edición de expectativa y una desactivación de
+por medio, comparación mostrando 1 SIN_CAMBIO + 1 MEJORÓ + 1 EMPEORÓ con la discrepancia de
+Expected vs Actual correcta, y "Reintentar fallidos" creando una corrida nueva con
+únicamente el ítem en ERROR, sin alterar la corrida de origen. Sin commit ni push.
+
+**Cierre posterior a la reconciliación: defensa contra duplicado de `escenario_id` y
+cobertura web de SOLO_EN_A/SOLO_EN_B.** El usuario aprobó la reconciliación anterior pero
+señaló, antes de aprobar un commit, un riesgo objetivo no cubierto: `corrida_suite_items`
+tiene `PRIMARY KEY (corrida_id, orden)`, no una restricción `UNIQUE` sobre `escenario_id`
+-ver `adapters/persistence/esquema.py`-. El `{escenario_id: item for item in items}` que
+arma el emparejamiento en `_comparar_items` (`application/comparacion_corridas.py`) se
+quedaba en silencio con "el último que gana" si alguna vez apareciera un duplicado: nunca
+ocurre por los caminos actuales de la aplicación (`ServicioSuites._validar_escenarios`
+rechaza un escenario repetido al crear o editar una suite), pero el esquema no lo impide
+por sí solo -un dato corrupto insertado por fuera de la aplicación, o un bug futuro, sí
+podría producirlo-. **No se agregó una migración ni una restricción `UNIQUE` en SQLite**
+-decisión explícita del usuario, defensa a nivel de servicio en vez de esquema-. Se agregó
+`_indice_por_escenario(corrida_id, items)`, que arma el mismo diccionario pero levanta la
+excepción nueva `ItemsHistoricosDuplicados(corrida_id, escenario_id)` en cuanto encuentra
+una clave repetida, en vez de sobrescribir en silencio; lleva solo identificadores técnicos
+(`corrida_id`, `escenario_id`), nunca datos de tarjeta. `web/app.py` la traduce a una
+respuesta controlada (HTTP 409, mismo patrón que `CorridasDeSuitesDistintas`) en la ruta
+`GET /suites/corridas/{id}/comparar`, sin traceback expuesto. Dos pruebas nuevas en
+`test_comparacion_corridas.py` construyen el estado corrupto a mano -`CorridaSuite`/
+`ItemCorridaSuite` instanciados directamente, sin pasar por el repositorio ni por el flujo
+normal, que ya lo impide- y llaman a `_comparar_items()` para confirmar el error controlado
+tanto con el duplicado en la corrida A como en la B.
+
+Aparte, la cobertura de SOLO_EN_A/SOLO_EN_B existía solo a nivel dominio/aplicación; se
+agregó una prueba web dedicada en `test_web_suites.py` que compara dos corridas de una
+misma suite a la que se le agregó un escenario entre una corrida y otra, verificando en la
+misma prueba -comparando en ambas direcciones- HTTP 200, el nombre del escenario correcto,
+el lado ausente renderizado como celda vacía controlada (`class="vacio">—<`), la etiqueta
+de clasificación SOLO_EN_A y SOLO_EN_B presentes, ningún "Traceback" en la respuesta y
+ningún PAN completo. Ninguna semántica de la matriz MEJORÓ/EMPEORÓ/CAMBIÓ ni del reintento
+se tocó. Pruebas nuevas de este cierre: **3** (2 en `test_comparacion_corridas.py`, 24→26;
+1 en `test_web_suites.py`, 47→48). Suite completa: **994 passed** (antes 991, confirmado
+con `pytest --collect-only -q`). Guardia de PAN en verde. `git diff --check` sin
+conflictos de merge marker (solo advertencias cosméticas de CRLF). Sin commit ni push.
+
+## 2026-09-09 · Sesión autónoma de auditoría: hallazgo y corrección en `campos_de_correlacion` (RN-3)
+
+Sesión autónoma posterior al cierre anterior: seis agentes de auditoría en modo solo lectura
+(funcional, seguridad, arquitectura, tests/mutación, documentación, UX) más uno de
+investigación de mercado, todos verificando contra el código real antes de aceptar cualquier
+hallazgo -no se acepta ningún hallazgo de un agente sin releer el archivo citado-. La mayoría
+de lo reportado son hallazgos P1/P2 de UX y documentación (ver reporte de cierre de sesión
+para el detalle completo); uno solo ameritó una corrección de código inmediata por su
+naturaleza de seguridad, siguiendo el mismo criterio de "arreglo mínimo y autocontenido" ya
+usado en el cierre anterior.
+
+**Hallazgo confirmado: `campos_de_correlacion` (RN-3) no excluía `CAMPOS_SENSIBLES`.**
+`campos_de_correlacion(perfil, mti_respuesta)` (`domain/validacion.py`) restaba
+`CAMPO_CODIGO_RESPUESTA` pero no `CAMPOS_SENSIBLES` ({"2","35"}), a diferencia de
+`domain/expectativas.py::campos_permitidos_expectativa`, que sí los excluye siempre.
+`_discrepancias_de_correlacion` arma el texto del motivo interpolando el valor tal cual
+(`f"...se envió {esperado!r} y volvió {recibido!r}"`), y ese texto (`motivo_detalle`) se
+persiste en `Ejecucion` y se muestra en el historial **sin pasar por `.enmascarado()`** -ese
+enmascarado solo se aplica a `solicitud`/`respuesta` en `Orquestador._registrar`, nunca a los
+`motivos`-. Verificado leyendo ambos archivos línea por línea antes de aceptar el hallazgo del
+agente. Con el único perfil vigente (`PERFIL_GENERICO`) esto era inofensivo hoy:
+`OBLIGATORIOS_0110` no incluye `"2"` ni `"35"`, así que ningún campo sensible entraba a
+`campos_de_correlacion` en la práctica. Pero es exactamente el tipo de mecanismo que cambiaría
+si un futuro perfil de marca real declarara el PAN obligatorio en la respuesta 0110 (con
+precedente real en ISO 8583) -y `CLAUDE.md` anticipa que los perfiles reales sí se
+implementarán cuando existan documentos autorizados-, momento en el que el PAN completo
+quedaría embebido en `motivo_detalle`, en SQLite y en pantalla.
+
+Corregido restando también `CAMPOS_SENSIBLES` en `campos_de_correlacion`
+(`src/sibutestlab8583/domain/validacion.py`), mismo criterio ya usado en `expectativas.py`.
+Un test nuevo, `test_campos_de_correlacion_excluye_siempre_los_campos_sensibles`
+(`tests/test_reglas_negocio.py`), construye un `PerfilDeMarca` de prueba que sí declara
+`"2"`/`"35"` obligatorios en la respuesta -el perfil genérico vigente no lo hace- y confirma
+que quedan excluidos de la correlación de todas formas. Ningún cambio de comportamiento
+observable con el perfil actual: los mismos campos que antes se correlacionaban lo siguen
+haciendo, porque ninguno era sensible. Suite completa: **995 passed** (antes 994, confirmado
+con `pytest --collect-only -q`). Guardia de PAN en verde. `git diff --check` sin conflictos.
+Sin commit ni push.
+

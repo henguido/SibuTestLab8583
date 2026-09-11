@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import httpx2
 from test_web import ComposicionFalsa, _resultado
 
-from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, DESTINO_ID_DEMO
+from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO, DESTINO_ID_DEMO, PAN_DEMO
 from sibutestlab8583.domain.modelos import EstadoEjecucion
 from sibutestlab8583.web.app import crear_app
 from sibutestlab8583.web.presentacion import filas_seleccion_escenarios
@@ -576,3 +576,245 @@ async def test_el_detalle_de_corrida_sigue_mostrando_la_discrepancia_original_tr
         "la discrepancia historica original debe seguir intacta"
     )
     assert "FAIL" in html_despues
+
+
+# ---------------------------------------------------- comparar / reintentar --
+#
+# GESTION AVANZADA DE CORRIDAS: comparacion historica entre dos corridas de
+# la misma suite, y reintento selectivo de items en FAIL/ERROR. El doble de
+# orquestador (`OrquestadorFalso`) devuelve el MISMO resultado a cualquier
+# escenario que corra en un mismo `ComposicionFalsa`: por eso el "mix" de
+# resultados en estas pruebas se logra desactivando un escenario ANTES de
+# ejecutar (eso da ERROR sin pasar por el orquestador), no variando el
+# resultado por escenario.
+
+
+async def _suite_fail_y_error(cliente, *, nombre_suite="MixtaWeb"):
+    """2 escenarios: `e1` activo -da FAIL, por el `resultado` fijo del
+    doble-, `e2` desactivado ANTES de correr -da ERROR-. Devuelve
+    (suite_id, corrida_id, e1, e2).
+    """
+    e1 = await _crear_escenario(cliente, nombre="E1")
+    e2 = await _crear_escenario(cliente, nombre="E2")
+    respuesta_crear = await cliente.post(
+        "/suites",
+        data={
+            "nombre": nombre_suite,
+            f"incluir_{e1}": "1", f"orden_{e1}": "1",
+            f"incluir_{e2}": "1", f"orden_{e2}": "2",
+        },
+    )
+    suite_id = _id_de(respuesta_crear)
+    await cliente.post(f"/escenarios/{e2}/estado", data={"activo": "0"})
+    respuesta_ejecutar = await cliente.post(f"/suites/{suite_id}/ejecutar")
+    corrida_id = respuesta_ejecutar.headers["location"].rstrip("/").split("/")[-1]
+    return suite_id, corrida_id, e1, e2
+
+
+def _resultado_fail() -> object:
+    return _resultado(EstadoEjecucion.RECHAZADA, codigo="05", evaluacion_estado="fail")
+
+
+async def test_comparar_sin_contra_muestra_selector_con_otras_corridas_de_la_misma_suite():
+    cliente, _ = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        suite_id, corrida_1, e1, e2 = await _suite_fail_y_error(cliente)
+        respuesta_2 = await cliente.post(f"/suites/{suite_id}/ejecutar")
+        corrida_2 = respuesta_2.headers["location"].rstrip("/").split("/")[-1]
+
+        html = (await cliente.get(f"/suites/corridas/{corrida_1}/comparar")).text
+
+    assert respuesta_2.status_code == 303
+    assert f"Corrida #{corrida_2}" in html
+    assert "resumen" not in html.lower() or "Escenarios" not in html  # sin `contra`, no hay tabla todavia
+
+
+async def test_comparar_sin_otras_corridas_muestra_estado_vacio():
+    cliente, _ = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        _, corrida_id, _, _ = await _suite_fail_y_error(cliente)
+        html = (await cliente.get(f"/suites/corridas/{corrida_id}/comparar")).text
+    assert "No hay otra corrida" in html
+
+
+async def test_comparar_con_contra_muestra_resumen_y_tabla():
+    cliente, _ = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        suite_id, corrida_1, e1, e2 = await _suite_fail_y_error(cliente)
+        respuesta_2 = await cliente.post(f"/suites/{suite_id}/ejecutar")
+        corrida_2 = respuesta_2.headers["location"].rstrip("/").split("/")[-1]
+
+        html = (
+            await cliente.get(f"/suites/corridas/{corrida_1}/comparar", params={"contra": corrida_2})
+        ).text
+
+    assert "Sin cambio" in html
+    assert f"A = #{corrida_1}" in html or f"#{corrida_1}" in html
+    assert f"#{corrida_2}" in html
+    # Ambos escenarios corrieron igual en las dos corridas (mismo doble,
+    # mismo resultado fijo, mismo escenario desactivado): todo SIN_CAMBIO.
+    assert "empeoro" not in html and "mejoro" not in html
+
+
+async def test_comparar_corridas_de_suites_distintas_da_error_web():
+    cliente, _ = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        _, corrida_1, _, _ = await _suite_fail_y_error(cliente, nombre_suite="Suite1")
+        _, corrida_2, _, _ = await _suite_fail_y_error(cliente, nombre_suite="Suite2")
+
+        respuesta = await cliente.get(
+            f"/suites/corridas/{corrida_1}/comparar", params={"contra": corrida_2}
+        )
+
+    assert respuesta.status_code == 400
+    assert "misma suite" in respuesta.text.lower()
+
+
+async def test_comparar_corrida_inexistente_da_error_web():
+    cliente, _ = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        _, corrida_1, _, _ = await _suite_fail_y_error(cliente)
+        respuesta = await cliente.get(
+            f"/suites/corridas/{corrida_1}/comparar", params={"contra": "999999"}
+        )
+    assert respuesta.status_code == 404
+
+
+async def test_comparar_id_no_numerico_da_404():
+    cliente, _ = _cliente()
+    async with cliente:
+        respuesta = await cliente.get("/suites/corridas/abc/comparar")
+    assert respuesta.status_code == 404
+
+
+async def test_comparar_nunca_expone_el_pan_completo():
+    cliente, _ = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        suite_id, corrida_1, _, _ = await _suite_fail_y_error(cliente)
+        respuesta_2 = await cliente.post(f"/suites/{suite_id}/ejecutar")
+        corrida_2 = respuesta_2.headers["location"].rstrip("/").split("/")[-1]
+        html = (
+            await cliente.get(f"/suites/corridas/{corrida_1}/comparar", params={"contra": corrida_2})
+        ).text
+    assert PAN_DEMO not in html
+
+
+async def test_detalle_de_corrida_oculta_reintentar_si_no_hay_fallidos():
+    cliente, _ = _cliente(resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00", evaluacion_estado="pass"))
+    async with cliente:
+        corrida_id = await _corrida_de_prueba(cliente)
+        html = (await cliente.get(f"/suites/corridas/{corrida_id}")).text
+    assert "Reintentar fallidos" not in html
+
+
+async def test_detalle_de_corrida_ofrece_reintentar_si_hay_fallidos():
+    cliente, _ = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        _, corrida_id, _, _ = await _suite_fail_y_error(cliente)
+        html = (await cliente.get(f"/suites/corridas/{corrida_id}")).text
+    assert "Reintentar fallidos" in html
+    assert f"/suites/corridas/{corrida_id}/comparar" in html
+
+
+async def test_reintentar_crea_corrida_nueva_y_redirige():
+    cliente, composicion = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        _, corrida_id, e1, e2 = await _suite_fail_y_error(cliente)
+        respuesta = await cliente.post(f"/suites/corridas/{corrida_id}/reintentar")
+
+    assert respuesta.status_code == 303
+    nueva_id = respuesta.headers["location"].rstrip("/").split("/")[-1]
+    assert nueva_id != corrida_id
+    items_nueva = await composicion.corridas_suite.obtener_items(int(nueva_id))
+    assert {item.escenario_id for item in items_nueva} == {e1, e2}
+
+
+async def test_reintentar_sin_fallidos_no_crea_corrida_y_muestra_error():
+    cliente, composicion = _cliente(
+        resultado=_resultado(EstadoEjecucion.APROBADA, codigo="00", evaluacion_estado="pass")
+    )
+    async with cliente:
+        corrida_id = await _corrida_de_prueba(cliente)
+        antes = len(await composicion.corridas_suite.listar())
+
+        respuesta = await cliente.post(f"/suites/corridas/{corrida_id}/reintentar")
+
+        assert respuesta.status_code == 400
+        assert "FAIL o ERROR" in respuesta.text
+        assert len(await composicion.corridas_suite.listar()) == antes
+
+
+async def test_reintentar_id_no_numerico_da_404():
+    cliente, _ = _cliente()
+    async with cliente:
+        respuesta = await cliente.post("/suites/corridas/abc/reintentar")
+    assert respuesta.status_code == 404
+
+
+async def test_reintentar_corrida_inexistente_da_404():
+    cliente, _ = _cliente()
+    async with cliente:
+        respuesta = await cliente.post("/suites/corridas/999999/reintentar")
+    assert respuesta.status_code == 404
+
+
+async def test_comparar_muestra_solo_en_a_y_solo_en_b_correctamente():
+    """Dos corridas de la MISMA suite, pero con membresia distinta: `e2` se
+    agrega a la suite DESPUES de la primera corrida. Comparar en un sentido
+    da SOLO_EN_B (e2 no estaba en la corrida vieja); comparar en el otro da
+    SOLO_EN_A (e2 no esta en la corrida vieja cuando esta es "B").
+    """
+    cliente, _ = _cliente(resultado=_resultado_fail())
+    async with cliente:
+        e1 = await _crear_escenario(cliente, nombre="E1 base")
+        e2 = await _crear_escenario(cliente, nombre="E2 agregado despues")
+        respuesta_crear = await cliente.post(
+            "/suites", data={"nombre": "SoloSuite", f"incluir_{e1}": "1", f"orden_{e1}": "1"}
+        )
+        suite_id = _id_de(respuesta_crear)
+        respuesta_1 = await cliente.post(f"/suites/{suite_id}/ejecutar")
+        corrida_1 = respuesta_1.headers["location"].rstrip("/").split("/")[-1]
+
+        # Se agrega e2 a la suite ANTES de la segunda corrida.
+        await cliente.post(
+            f"/suites/{suite_id}",
+            data={
+                "nombre": "SoloSuite",
+                f"incluir_{e1}": "1", f"orden_{e1}": "1",
+                f"incluir_{e2}": "1", f"orden_{e2}": "2",
+            },
+        )
+        respuesta_2 = await cliente.post(f"/suites/{suite_id}/ejecutar")
+        corrida_2 = respuesta_2.headers["location"].rstrip("/").split("/")[-1]
+
+        # A = corrida_1 (sin e2), B = corrida_2 (con e2) -> e2 SOLO_EN_B.
+        respuesta_b = await cliente.get(
+            f"/suites/corridas/{corrida_1}/comparar", params={"contra": corrida_2}
+        )
+        # A = corrida_2 (con e2), B = corrida_1 (sin e2) -> e2 SOLO_EN_A.
+        respuesta_a = await cliente.get(
+            f"/suites/corridas/{corrida_2}/comparar", params={"contra": corrida_1}
+        )
+
+    assert respuesta_b.status_code == 200
+    assert respuesta_a.status_code == 200
+    html_b, html_a = respuesta_b.text, respuesta_a.text
+
+    # El escenario correcto aparece en ambas vistas.
+    assert "E2 agregado despues" in html_b
+    assert "E2 agregado despues" in html_a
+
+    # La clasificacion correcta aparece en cada sentido.
+    assert "Solo en B" in html_b
+    assert "Solo en A" in html_a
+
+    # El lado ausente se muestra vacio/no disponible de forma controlada
+    # (el template usa `<span class="vacio">—</span>` cuando `resultado_a`/
+    # `resultado_b` es `None`), nunca una celda rota o un valor inventado.
+    assert 'class="vacio">—<' in html_b
+    assert 'class="vacio">—<' in html_a
+
+    # Nada de traceback ni PAN completo en ninguna de las dos vistas.
+    for html in (html_a, html_b):
+        assert "Traceback" not in html
+        assert PAN_DEMO not in html

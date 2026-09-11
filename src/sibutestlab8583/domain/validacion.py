@@ -16,7 +16,7 @@ Reparto de las reglas:
 from __future__ import annotations
 
 from .catalogo import CatalogoDeRespuestas
-from .modelos import EstadoEjecucion, MensajeIso, ResultadoValidacion
+from .modelos import CAMPOS_SENSIBLES, EstadoEjecucion, MensajeIso, ResultadoValidacion
 
 #: Campo ISO que transporta el codigo de respuesta. Lo interpreta el catalogo.
 CAMPO_CODIGO_RESPUESTA = "39"
@@ -53,9 +53,12 @@ def campos_de_correlacion(perfil, mti_respuesta: str) -> frozenset[str]:
 
     Se derivan del perfil, no se inventan: son los obligatorios de la respuesta
     menos el codigo de respuesta, que por definicion lo origina el autorizador y
-    no viaja en la solicitud.
+    no viaja en la solicitud, y menos los campos sensibles (mismo criterio que
+    `domain/expectativas.py::campos_permitidos_expectativa`): su valor nunca
+    debe interpolarse en un motivo de texto libre, que se persiste sin pasar
+    por `.enmascarado()` -ver `_discrepancias_de_correlacion`-.
     """
-    return perfil.obligatorios(mti_respuesta) - {CAMPO_CODIGO_RESPUESTA}
+    return perfil.obligatorios(mti_respuesta) - {CAMPO_CODIGO_RESPUESTA} - CAMPOS_SENSIBLES
 
 
 def evaluar_respuesta(

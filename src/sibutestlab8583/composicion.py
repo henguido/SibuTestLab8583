@@ -35,6 +35,7 @@ from .adapters.transporte.tcp import (
     TransporteTcp,
     VerificadorDeConexionTcp,
 )
+from .application.comparacion_corridas import ServicioComparacionCorridas
 from .application.consultas import ServicioConsultas
 from .application.conexiones import ServicioConexiones
 from .application.corredor_suites import CorredorDeSuites
@@ -156,6 +157,14 @@ class Composicion:
             self._corridas_suite,
             self.ejecutor_escenarios,
         )
+
+    @property
+    def comparador_corridas(self) -> ServicioComparacionCorridas:
+        """Comparacion historica entre dos corridas de una misma suite. Solo
+        lee snapshots ya persistidos (`RepositorioCorridasSuite`); no depende
+        de ningun otro servicio de administracion.
+        """
+        return ServicioComparacionCorridas(self._corridas_suite)
 
     @property
     def perfil(self):

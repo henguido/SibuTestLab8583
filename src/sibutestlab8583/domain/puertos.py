@@ -216,6 +216,15 @@ class RepositorioCorridasSuite(Protocol):
 
     async def listar(self, limite: int = 50) -> Sequence[CorridaSuite]: ...
 
+    async def listar_por_suite(self, suite_id: str, limite: int = 50) -> Sequence[CorridaSuite]:
+        """Corridas de UNA suite, mas recientes primero. Existe para poblar el
+        selector "Comparar contra": a diferencia de `listar()` (todas las
+        corridas de todas las suites), esta consulta no puede perder una
+        corrida antigua de la suite pedida solo porque otras suites hayan
+        corrido mas veces mientras tanto.
+        """
+        ...
+
     async def obtener_items(self, corrida_id: int) -> Sequence[ItemCorridaSuite]: ...
 
 

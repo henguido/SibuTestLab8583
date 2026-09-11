@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal, encabezado_pagina %}
+{% block titulo %}Comparar corrida #{{ corrida.corrida_id }} · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/suites">Suites</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <a href="/suites/corridas">Corridas</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <a href="/suites/corridas/{{ corrida.corrida_id }}">Corrida #{{ corrida.corrida_id }}</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">Comparar</span>
+</nav>
+{{ encabezado_pagina(
+  'Comparar corridas',
+  'Compara la corrida #' ~ corrida.corrida_id ~ ' (' ~ corrida.suite_nombre ~ ') contra otra corrida histórica de la misma suite, escenario por escenario. La comparación trabaja únicamente con lo que quedó persistido en su momento: no depende de cómo esté configurada hoy la suite ni de los escenarios en vivo.'
+) }}
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">No se pudo comparar</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Elegir corrida B</h2>
+    <span class="panel__nota">corrida A = #{{ corrida.corrida_id }}</span>
+  </div>
+  <div class="panel__cuerpo">
+    {% if candidatas %}
+    <form method="get" action="/suites/corridas/{{ corrida.corrida_id }}/comparar" class="rejilla">
+      <div class="campo">
+        <label class="campo__rotulo" for="contra">Comparar contra</label>
+        <select id="contra" name="contra">
+          <option value="">Elija una corrida…</option>
+          {% for candidata in candidatas %}
+          <option value="{{ candidata.corrida_id }}" {{ 'selected' if candidata.corrida_id|string == corrida_b_id }}>
+            Corrida #{{ candidata.corrida_id }} · {{ candidata.iniciada_en }} UTC
+            {%- if candidata.resultado_global %} · {{ candidata.resultado_global|upper }}{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="acciones">
+        <button class="boton" type="submit">Comparar</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="estado-vacio">
+      <p class="estado-vacio__titulo">No hay otra corrida de esta suite</p>
+      <p class="estado-vacio__detalle">
+        Esta suite todavía no tiene una segunda corrida registrada con la que comparar la #{{ corrida.corrida_id }}.
+      </p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+{% if resumen %}
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Resumen</h2>
+    <span class="panel__nota">A = #{{ corrida_a.corrida_id }} · B = #{{ corrida_b.corrida_id }}</span>
+  </div>
+  <div class="panel__cuerpo">
+    <div class="metricas">
+      <div class="metrica">
+        <span class="metrica__rotulo">Sin cambio</span>
+        <span class="metrica__valor">{{ resumen.sin_cambio }}</span>
+      </div>
+      <div class="metrica metrica--pass">
+        <span class="metrica__rotulo">Mejoraron</span>
+        <span class="metrica__valor">{{ resumen.mejoro }}</span>
+      </div>
+      <div class="metrica metrica--fail">
+        <span class="metrica__rotulo">Empeoraron</span>
+        <span class="metrica__valor">{{ resumen.empeoro }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Cambiaron</span>
+        <span class="metrica__valor">{{ resumen.cambio }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Solo en A</span>
+        <span class="metrica__valor">{{ resumen.solo_en_a }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Solo en B</span>
+        <span class="metrica__valor">{{ resumen.solo_en_b }}</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Escenarios</h2>
+    <span class="panel__nota">{{ filas|length }} escenario{{ 's' if filas|length != 1 }}</span>
+  </div>
+  <div class="desplazable" tabindex="0" role="region" aria-label="Comparación de escenarios">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Escenario</th>
+          <th>Corrida A</th>
+          <th>Corrida B</th>
+          <th>Cambio</th>
+          <th>Detalle</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr data-cambio="{{ fila.cambio }}">
+          <td class="mono">{{ fila.escenario_nombre }}</td>
+          <td>
+            {% if fila.resultado_a %}
+            <span class="chip chip--{{ fila.tono_resultado_a }}">{{ fila.resultado_a }}</span>
+            {% else %}
+            <span class="vacio">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if fila.resultado_b %}
+            <span class="chip chip--{{ fila.tono_resultado_b }}">{{ fila.resultado_b }}</span>
+            {% else %}
+            <span class="vacio">—</span>
+            {% endif %}
+          </td>
+          <td><span class="chip chip--{{ fila.tono_cambio }}">{{ fila.etiqueta_cambio }}</span></td>
+          <td>
+            {%- if fila.detalle_a or fila.detalle_b -%}
+              {{ fila.detalle_b or fila.detalle_a }}
+            {%- else -%}
+              <span class="vacio">—</span>
+            {%- endif -%}
+          </td>
+        </tr>
+        {% if fila.discrepancias %}
+        <tr>
+          <td colspan="5">
+            <div class="desplazable" tabindex="0" role="region" aria-label="Discrepancias de {{ fila.escenario_nombre }}">
+              <table class="tabla tabla--veredicto">
+                <thead>
+                  <tr>
+                    <th>Criterio</th>
+                    <th>Recibido en A</th>
+                    <th>Recibido en B</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for discrepancia in fila.discrepancias %}
+                  <tr>
+                    <td>{{ discrepancia.criterio }}</td>
+                    <td class="mono">«{{ discrepancia.valor_a }}»</td>
+                    <td class="mono">«{{ discrepancia.valor_b }}»</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<a class="volver" href="/suites/corridas/{{ corrida.corrida_id }}">&larr; Volver a la corrida</a>
+{% endblock %}

@@ -15,7 +15,7 @@ aborta la suite completa por un item-.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Sequence
 
 from ..domain.errores import ErrorDelSimulador
 from ..domain.modelos import (
@@ -51,6 +51,27 @@ class SuiteNoEjecutable(Exception):
     """La suite no existe, esta inactiva, o no tiene escenarios."""
 
 
+class CorridaOrigenNoEncontrada(Exception):
+    """No existe una corrida con el `corrida_id` que se quiere reintentar."""
+
+
+class SinItemsReintentables(Exception):
+    """La corrida origen no tiene ningun item en FAIL o ERROR."""
+
+
+#: Resultados de un item que "reintentar fallidos" vuelve a intentar. Decision
+#: explicita, no tacita: FAIL y ERROR son los dos casos donde el escenario no
+#: quedo en un desenlace conforme -uno porque no cumplio la expectativa, el
+#: otro porque ni siquiera se pudo evaluar-. SIN_EXPECTATIVAS queda afuera
+#: porque no fallo nada: se ejecuto bien y el escenario simplemente no definia
+#: que esperaba, reintentarlo no cambiaria nada relevante. NO_EJECUTADO queda
+#: afuera tambien: solo sobrevive en una corrida que quedo interrumpida (un
+#: crash de proceso a mitad de camino), un caso excepcional que esta funcion
+#: no intenta resolver -si en el futuro se decide incluirlo, es un cambio de
+#: una linea aqui, no una migracion.
+_RESULTADOS_REINTENTABLES = frozenset({EstadoItemCorrida.FAIL, EstadoItemCorrida.ERROR})
+
+
 class CorredorDeSuites:
     def __init__(
         self,
@@ -77,11 +98,76 @@ class CorredorDeSuites:
         # ya con el nombre de ese momento, igual criterio que ya usa
         # `Ejecucion.escenario_nombre` -si el escenario se renombra despues,
         # el item historico no cambia.
-        nombres = []
-        for escenario_id in suite.escenarios:
-            escenario = await self._escenarios.obtener(escenario_id)
-            nombres.append(escenario.nombre if escenario is not None else escenario_id)
+        nombres = await self._resolver_nombres(suite.escenarios)
+        return await self._correr(suite.suite_id, suite.nombre, list(zip(suite.escenarios, nombres)))
 
+    async def reintentar_fallidos(self, corrida_id: int) -> CorridaSuite:
+        """Crea una corrida NUEVA con solo los escenarios que en `corrida_id`
+        quedaron en FAIL o ERROR -nunca modifica ni reutiliza la corrida
+        original, que permanece intacta para poder seguir comparandola-.
+
+        La seleccion de QUE escenarios reintentar viene de los ITEMS
+        HISTORICOS de la corrida origen, nunca de la membresia actual de la
+        suite: si la suite gano escenarios nuevos despues de esa corrida, no
+        entran aqui aunque hoy formen parte de ella. Cada escenario
+        seleccionado se ejecuta con su configuracion ACTUAL (tarjeta, monto,
+        conexion, expectativa vigentes) -exactamente lo mismo que ya hace
+        `ejecutar()` y "Ejecutar" en la pantalla de un escenario suelto-, asi
+        que un escenario eliminado o desactivado desde la corrida original
+        cae en ERROR con el mismo motivo ya controlado que usa
+        `_ejecutar_item`, sin abortar el reintento de los demas.
+        """
+        origen = await self._corridas.obtener(corrida_id)
+        if origen is None:
+            raise CorridaOrigenNoEncontrada(corrida_id)
+
+        items_origen = await self._corridas.obtener_items(corrida_id)
+        seleccionados = [
+            (item.escenario_id, item.escenario_nombre)
+            for item in sorted(items_origen, key=lambda i: i.orden)
+            if item.resultado in _RESULTADOS_REINTENTABLES
+        ]
+        if not seleccionados:
+            raise SinItemsReintentables(
+                f"la corrida {corrida_id} no tiene ningún ítem en FAIL o ERROR"
+            )
+
+        # El nombre para MOSTRAR se resuelve de nuevo contra el catalogo
+        # vivo -igual criterio que `ejecutar()`-: si el escenario todavia
+        # existe, el item de la corrida nueva muestra su nombre actual; si
+        # ya no existe, cae al nombre historico como ultimo recurso, nunca
+        # a una cadena vacia.
+        escenario_ids = [escenario_id for escenario_id, _ in seleccionados]
+        nombres_actuales = await self._resolver_nombres(
+            escenario_ids, nombres_historicos=dict(seleccionados)
+        )
+        return await self._correr(
+            origen.suite_id, origen.suite_nombre, list(zip(escenario_ids, nombres_actuales))
+        )
+
+    async def _resolver_nombres(
+        self, escenario_ids: Sequence[str], *, nombres_historicos: dict[str, str] | None = None
+    ) -> list[str]:
+        nombres_historicos = nombres_historicos or {}
+        nombres = []
+        for escenario_id in escenario_ids:
+            escenario = await self._escenarios.obtener(escenario_id)
+            if escenario is not None:
+                nombres.append(escenario.nombre)
+            else:
+                nombres.append(nombres_historicos.get(escenario_id, escenario_id))
+        return nombres
+
+    async def _correr(
+        self, suite_id: str, suite_nombre: str, pares_escenario_nombre: Sequence[tuple[str, str]]
+    ) -> CorridaSuite:
+        """Nucleo compartido de ejecucion secuencial: abre la corrida con
+        todos los items presembrados en NO_EJECUTADO, corre cada uno con
+        `EjecutorDeEscenarios` (aislando su falla como ERROR, sin abortar la
+        corrida), y cierra con los contadores y el resultado global. Tanto
+        `ejecutar()` como `reintentar_fallidos()` terminan aqui -ningun
+        segundo runner paralelo, ninguna logica de ejecucion duplicada.
+        """
         items_iniciales = [
             ItemCorridaSuite(
                 corrida_id=0,  # placeholder: crear_con_items usa el id recien asignado
@@ -90,21 +176,19 @@ class CorredorDeSuites:
                 orden=orden,
                 resultado=EstadoItemCorrida.NO_EJECUTADO,
             )
-            for orden, (escenario_id, nombre) in enumerate(
-                zip(suite.escenarios, nombres), start=1
-            )
+            for orden, (escenario_id, nombre) in enumerate(pares_escenario_nombre, start=1)
         ]
 
         corrida = CorridaSuite(
-            suite_id=suite.suite_id,
-            suite_nombre=suite.nombre,
-            total=len(suite.escenarios),
+            suite_id=suite_id,
+            suite_nombre=suite_nombre,
+            total=len(pares_escenario_nombre),
             iniciada_en=self._reloj(),
         )
         corrida_id = await self._corridas.crear_con_items(corrida, items_iniciales)
 
         conteos: dict[EstadoItemCorrida, int] = {estado: 0 for estado in EstadoItemCorrida}
-        for orden, (escenario_id, nombre) in enumerate(zip(suite.escenarios, nombres), start=1):
+        for orden, (escenario_id, nombre) in enumerate(pares_escenario_nombre, start=1):
             resultado_item, ejecucion_id, detalle, evaluacion_json = await self._ejecutar_item(
                 escenario_id
             )

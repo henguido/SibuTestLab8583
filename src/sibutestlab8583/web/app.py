@@ -33,7 +33,16 @@ from ..application.conexiones import (
     DatosEdicionConexion,
     DatosNuevaConexion,
 )
-from ..application.corredor_suites import SuiteNoEjecutable
+from ..application.comparacion_corridas import (
+    CorridaNoEncontrada,
+    CorridasDeSuitesDistintas,
+    ItemsHistoricosDuplicados,
+)
+from ..application.corredor_suites import (
+    CorridaOrigenNoEncontrada,
+    SinItemsReintentables,
+    SuiteNoEjecutable,
+)
 from ..application.ejecutor_escenarios import EscenarioNoEjecutable
 from ..application.escenarios import (
     DatosEdicionEscenario,
@@ -1197,8 +1206,136 @@ async def corrida_detalle(
             "aviso_resultado": presentacion.AVISOS_RESULTADO_GLOBAL_SUITE.get(
                 fila_corrida.resultado_global
             ),
+            # Ninguna corrida FINALIZADA con 0 items en FAIL/ERROR tiene algo
+            # que reintentar -el boton se oculta en vez de mostrarse
+            # deshabilitado sin explicacion (ver `SinItemsReintentables`,
+            # que ademas revalida esto mismo del lado del servidor).
+            "puede_reintentar": (corrida.cantidad_fail + corrida.cantidad_error) > 0,
         },
     )
+
+
+@enrutador.get("/suites/corridas/{corrida_id}/comparar", response_class=HTMLResponse)
+async def corrida_comparar(
+    request: Request,
+    corrida_id: str,
+    contra: str = Query(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """Sin `contra`: selector de corridas de la MISMA suite. Con `contra`:
+    la comparacion en si. GET puro -es una consulta de solo lectura, nunca
+    escribe nada- por eso el destino elegido viaja en la querystring y no en
+    un POST.
+    """
+    try:
+        numero = int(corrida_id)
+    except ValueError:
+        return _corrida_no_encontrada(request)
+
+    corrida = await composicion.corridas_suite.obtener(numero)
+    if corrida is None:
+        return _corrida_no_encontrada(request)
+
+    candidatas = [
+        c for c in await composicion.corridas_suite.listar_por_suite(corrida.suite_id, limite=100)
+        if c.corrida_id != numero
+    ]
+    contexto = {
+        "seccion": "suites",
+        "corrida": presentacion.fila_de_corrida(corrida),
+        "candidatas": [presentacion.fila_de_corrida(c) for c in candidatas],
+        "corrida_b_id": contra,
+        "error": None,
+        "comparacion": None,
+    }
+
+    contra_bruto = (contra or "").strip()
+    if not contra_bruto:
+        return PLANTILLAS.TemplateResponse(
+            request=request, name="corrida_comparar.html", context=contexto
+        )
+
+    try:
+        numero_b = int(contra_bruto)
+    except ValueError:
+        contexto["error"] = "El identificador de la corrida a comparar no es válido."
+        return PLANTILLAS.TemplateResponse(
+            request=request, name="corrida_comparar.html", context=contexto, status_code=400
+        )
+
+    try:
+        comparacion = await composicion.comparador_corridas.comparar(numero, numero_b)
+    except CorridaNoEncontrada:
+        contexto["error"] = "La corrida elegida para comparar no existe o ya no está disponible."
+        return PLANTILLAS.TemplateResponse(
+            request=request, name="corrida_comparar.html", context=contexto, status_code=404
+        )
+    except CorridasDeSuitesDistintas:
+        contexto["error"] = "Solo se pueden comparar corridas de la misma suite."
+        return PLANTILLAS.TemplateResponse(
+            request=request, name="corrida_comparar.html", context=contexto, status_code=400
+        )
+    except ItemsHistoricosDuplicados as error:
+        # Dato historico inconsistente (nunca deberia ocurrir por los
+        # caminos actuales de la aplicacion, ver docstring de la excepcion):
+        # se rechaza explicito en vez de elegir un item en silencio.
+        # `error.corrida_id`/`error.escenario_id` son identificadores
+        # tecnicos, nunca datos de tarjeta.
+        contexto["error"] = (
+            f"La corrida #{error.corrida_id} tiene más de un ítem histórico con el "
+            f"escenario {error.escenario_id!r}: no se puede comparar de forma confiable."
+        )
+        return PLANTILLAS.TemplateResponse(
+            request=request, name="corrida_comparar.html", context=contexto, status_code=409
+        )
+
+    contexto.update(presentacion.contexto_de_comparacion(comparacion, composicion.descripciones_de_campos))
+    return PLANTILLAS.TemplateResponse(
+        request=request, name="corrida_comparar.html", context=contexto
+    )
+
+
+@enrutador.post("/suites/corridas/{corrida_id}/reintentar", response_class=HTMLResponse)
+async def corrida_reintentar(
+    request: Request, corrida_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    """Crea una corrida NUEVA con los items en FAIL/ERROR de `corrida_id`
+    -ver `CorredorDeSuites.reintentar_fallidos`-. Nunca modifica la corrida
+    original.
+    """
+    try:
+        numero = int(corrida_id)
+    except ValueError:
+        return _corrida_no_encontrada(request)
+
+    try:
+        nueva = await composicion.corredor_suites.reintentar_fallidos(numero)
+    except CorridaOrigenNoEncontrada:
+        return _corrida_no_encontrada(request)
+    except SinItemsReintentables:
+        corrida = await composicion.corridas_suite.obtener(numero)
+        if corrida is None:
+            return _corrida_no_encontrada(request)
+        items = await composicion.corridas_suite.obtener_items(numero)
+        fila_corrida = presentacion.fila_de_corrida(corrida)
+        return PLANTILLAS.TemplateResponse(
+            request=request,
+            name="corrida_detalle.html",
+            context={
+                "seccion": "suites",
+                "corrida": fila_corrida,
+                "filas_items": presentacion.filas_de_corrida(
+                    items, composicion.descripciones_de_campos
+                ),
+                "aviso_resultado": presentacion.AVISOS_RESULTADO_GLOBAL_SUITE.get(
+                    fila_corrida.resultado_global
+                ),
+                "puede_reintentar": False,
+                "error": "Esta corrida no tiene ítems en FAIL o ERROR para reintentar.",
+            },
+            status_code=400,
+        )
+    return RedirectResponse(f"/suites/corridas/{nueva.corrida_id}", status_code=303)
 
 
 @enrutador.get("/suites/corridas/{corrida_id}/exportar.json", response_class=PlainTextResponse)

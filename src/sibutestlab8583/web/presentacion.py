@@ -856,3 +856,190 @@ def evaluacion_de_item(item, descripciones: Mapping[str, str]) -> EvaluacionMost
     datos = json.loads(item.evaluacion_json)
     filas = [_fila_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])]
     return EvaluacionMostrada(estado=datos["resultado"], filas=tuple(filas))
+
+
+# ============================================== COMPARACION DE CORRIDAS === #
+#
+# Traduce `application.comparacion_corridas.ComparacionCorridas` -que ya
+# trabaja unicamente con snapshots (`ItemCorridaSuite` de ambas corridas)- a
+# lo que la plantilla necesita para mostrarse. Ninguna funcion de aqui abajo
+# vuelve a decidir MEJORO/EMPEORO/CAMBIO: esa clasificacion ya viene resuelta
+# desde `domain.comparacion_corridas.clasificar_cambio`; esto solo la traduce
+# a texto y a filas de tabla.
+
+#: Mismas etiquetas que ya usa `corrida_detalle.html` para `EstadoItemCorrida`
+#: -repetidas aqui, no importadas de la plantilla, porque una plantilla no es
+#: un modulo Python: es la unica fuente que import{a} constantes de Python-.
+ETIQUETAS_RESULTADO_ITEM: Mapping[str, str] = {
+    "pass": "PASS",
+    "fail": "FAIL",
+    "error": "ERROR",
+    "sin_expectativas": "Sin expectativas",
+    "no_ejecutado": "No ejecutado",
+}
+
+#: Mismo tono que ya usa `corrida_detalle.html` por `EstadoItemCorrida`
+#: (pass/fail tal cual, error con el tono "qa" -no existe `chip--error`-,
+#: el resto con "sintetica"). Se precalcula aqui para no repetir esta rama
+#: `if/elif` dentro de la plantilla de comparacion.
+TONOS_RESULTADO_ITEM: Mapping[str, str] = {
+    "pass": "pass",
+    "fail": "fail",
+    "error": "qa",
+    "sin_expectativas": "sintetica",
+    "no_ejecutado": "sintetica",
+}
+
+#: Etiqueta legible y tono (para reutilizar clases `chip--*` ya existentes,
+#: sin inventar una paleta nueva) por cada `CambioItem`. "mejoro"/"empeoro"
+#: reusan el mismo par pass/fail que ya usa el resto de la interfaz para
+#: exito/fracaso; "cambio" y las dos variantes de presencia usan tonos
+#: neutros -nunca se confunden con un veredicto de exito o fracaso, porque
+#: "cambio" NO implica que algo haya mejorado o empeorado-.
+ETIQUETAS_CAMBIO: Mapping[str, tuple[str, str]] = {
+    "sin_cambio": ("Sin cambio", "sintetica"),
+    "mejoro": ("Mejoró", "pass"),
+    "empeoro": ("Empeoró", "fail"),
+    "cambio": ("Cambió", "qa"),
+    "solo_en_a": ("Solo en A", "inactiva"),
+    "solo_en_b": ("Solo en B", "inactiva"),
+}
+
+
+@dataclass(frozen=True)
+class FilaComparacionDiscrepancia:
+    """Un criterio de Expected vs Actual, con el valor RECIBIDO en cada
+    corrida -no el esperado-: lo que cambia entre A y B es el resultado, no
+    la expectativa (que puede incluso haber sido la misma en las dos, o
+    haber cambiado si el escenario se edito entre medio; eso ya se ve en el
+    valor recibido, no hace falta una columna aparte para explicarlo aqui).
+    `"—"` cuando ese criterio no aparecio como discrepancia de ese lado -no
+    significa necesariamente "cumplio", solo que no quedo registrado como
+    incumplimiento en esa corrida.
+    """
+
+    criterio: str
+    valor_a: str
+    valor_b: str
+
+
+@dataclass(frozen=True)
+class FilaComparacionItem:
+    """Una fila de la tabla de comparacion: un `escenario_id` y como cambio
+    entre la corrida A y la corrida B.
+    """
+
+    escenario_id: str
+    escenario_nombre: str
+    cambio: str
+    etiqueta_cambio: str
+    tono_cambio: str
+    resultado_a: str | None
+    resultado_b: str | None
+    tono_resultado_a: str | None
+    tono_resultado_b: str | None
+    detalle_a: str | None
+    detalle_b: str | None
+    ejecucion_id_a: int | None
+    ejecucion_id_b: int | None
+    discrepancias: Sequence[FilaComparacionDiscrepancia]
+
+
+@dataclass(frozen=True)
+class ResumenComparacionMostrado:
+    sin_cambio: int
+    mejoro: int
+    empeoro: int
+    cambio: int
+    solo_en_a: int
+    solo_en_b: int
+
+
+def _discrepancias_de_item(item) -> list[dict]:
+    if item is None or not item.evaluacion_json:
+        return []
+    return json.loads(item.evaluacion_json).get("discrepancias", [])
+
+
+def _filas_comparacion_discrepancias(
+    item_a, item_b, descripciones: Mapping[str, str]
+) -> Sequence[FilaComparacionDiscrepancia]:
+    """Une las discrepancias de A y B por CRITERIO -el mismo texto legible
+    que ya arma `_fila_de_discrepancia` (p. ej. "Campo 39 · Código de
+    respuesta")-, para que un mismo criterio evaluado en ambas corridas quede
+    en una sola fila con sus dos valores recibidos, en vez de dos tablas
+    separadas que el lector tendria que cruzar a mano.
+    """
+    por_criterio_a: dict[str, str] = {}
+    for datos in _discrepancias_de_item(item_a):
+        fila = _fila_de_discrepancia(datos, descripciones)
+        por_criterio_a[fila.criterio] = fila.recibido
+    por_criterio_b: dict[str, str] = {}
+    for datos in _discrepancias_de_item(item_b):
+        fila = _fila_de_discrepancia(datos, descripciones)
+        por_criterio_b[fila.criterio] = fila.recibido
+
+    criterios: list[str] = []
+    vistos: set[str] = set()
+    for criterio in (*por_criterio_a, *por_criterio_b):
+        if criterio not in vistos:
+            vistos.add(criterio)
+            criterios.append(criterio)
+
+    return [
+        FilaComparacionDiscrepancia(
+            criterio=criterio,
+            valor_a=por_criterio_a.get(criterio, "—"),
+            valor_b=por_criterio_b.get(criterio, "—"),
+        )
+        for criterio in criterios
+    ]
+
+
+def fila_de_comparacion_item(item_comparacion, descripciones: Mapping[str, str]) -> FilaComparacionItem:
+    """Traduce UN `ComparacionItem` (dominio+aplicacion) a una fila para la
+    plantilla. `item_a`/`item_b` pueden ser `None` -exactamente cuando
+    `cambio` es `solo_en_b`/`solo_en_a`-, asi que cada campo se resuelve con
+    el que este disponible.
+    """
+    item_a, item_b = item_comparacion.item_a, item_comparacion.item_b
+    referencia = item_b if item_b is not None else item_a
+    etiqueta_cambio, tono_cambio = ETIQUETAS_CAMBIO[item_comparacion.cambio.value]
+    return FilaComparacionItem(
+        escenario_id=item_comparacion.escenario_id,
+        escenario_nombre=referencia.escenario_nombre,
+        cambio=item_comparacion.cambio.value,
+        etiqueta_cambio=etiqueta_cambio,
+        tono_cambio=tono_cambio,
+        resultado_a=ETIQUETAS_RESULTADO_ITEM.get(item_a.resultado.value) if item_a else None,
+        resultado_b=ETIQUETAS_RESULTADO_ITEM.get(item_b.resultado.value) if item_b else None,
+        tono_resultado_a=TONOS_RESULTADO_ITEM.get(item_a.resultado.value) if item_a else None,
+        tono_resultado_b=TONOS_RESULTADO_ITEM.get(item_b.resultado.value) if item_b else None,
+        detalle_a=item_a.detalle if item_a else None,
+        detalle_b=item_b.detalle if item_b else None,
+        ejecucion_id_a=item_a.ejecucion_id if item_a else None,
+        ejecucion_id_b=item_b.ejecucion_id if item_b else None,
+        discrepancias=_filas_comparacion_discrepancias(item_a, item_b, descripciones),
+    )
+
+
+def contexto_de_comparacion(comparacion, descripciones: Mapping[str, str]) -> dict:
+    """El contexto completo que `corrida_comparar.html` necesita, ya
+    traducido: filas de resumen, filas de tabla, y las dos corridas (via
+    `fila_de_corrida`, la misma traduccion que ya usa el detalle de una
+    corrida sola) para el encabezado de cada columna.
+    """
+    resumen = comparacion.resumen
+    return {
+        "corrida_a": fila_de_corrida(comparacion.corrida_a),
+        "corrida_b": fila_de_corrida(comparacion.corrida_b),
+        "resumen": ResumenComparacionMostrado(
+            sin_cambio=resumen.sin_cambio,
+            mejoro=resumen.mejoro,
+            empeoro=resumen.empeoro,
+            cambio=resumen.cambio,
+            solo_en_a=resumen.solo_en_a,
+            solo_en_b=resumen.solo_en_b,
+        ),
+        "filas": [fila_de_comparacion_item(item, descripciones) for item in comparacion.items],
+    }

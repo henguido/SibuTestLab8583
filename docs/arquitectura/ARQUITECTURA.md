@@ -16,9 +16,10 @@ framing, transporte TCP, persistencia SQLite, generador de STAN, host simulado, 
 web de tarjetas y de destinos (Conexiones), la derivación pura de Track 1/Track 2, escenarios
 reutilizables con expected-vs-actual, suites de regresión con su corredor secuencial, una CLI
 (`sibu-run-suite`) que ejecuta una suite sin navegador, apta para CI, una integración CI
-genérica de referencia (GitHub Actions) que la invoca automáticamente en cada push, y un
-reporte portable de una corrida (JSON/CSV, `export-run`) reutilizando su snapshot histórico
--ver
+genérica de referencia (GitHub Actions) que la invoca automáticamente en cada push, un
+reporte portable de una corrida (JSON/CSV, `export-run`) reutilizando su snapshot histórico,
+y comparación histórica de corridas más reintento selectivo de fallidos -ver la fila
+"Comparación de corridas" de la tabla de módulos, más abajo- -ver
 `docs/ci/INTEGRACION_CI.md`. **Sin implementar:** motor de carga, perfiles reales de Visa y
 Mastercard, modo avanzado ISO 8583, isoscopio 2.0. La
 arquitectura está cubierta por pruebas automatizadas y CI; el estado exacto de la suite se
@@ -64,7 +65,8 @@ importa un adaptador. Tres límites que no se cruzan:
 | **Persistencia** | Puerto + adaptador | Repositorios de ejecuciones, tarjetas de prueba, catálogos y destinos. Puerto asíncrono; adaptador SQLite |
 | **Host simulado** | Proceso aparte | Servidor TCP que recibe `0100` y responde `0110` según el catálogo configurado. Reutiliza codec y framing |
 | **Escenarios** | Aplicación | `ServicioEscenarios`: casos reutilizables (guardar, editar, duplicar, activar/desactivar), con expectativas opcionales (expected-vs-actual) evaluadas por el propio `Orquestador` |
-| **Suites y corredor** | Aplicación | `ServicioSuites` agrupa escenarios en un orden fijo; `CorredorDeSuites` los ejecuta secuencialmente reutilizando `EjecutorDeEscenarios` (la misma resolución que usa la reejecución individual), persiste cada `CorridaSuite`/`ItemCorridaSuite` y calcula el resultado global (PASS/FAIL/ERROR/INCOMPLETA/SIN_EXPECTATIVAS) |
+| **Suites y corredor** | Aplicación | `ServicioSuites` agrupa escenarios en un orden fijo; `CorredorDeSuites` los ejecuta secuencialmente reutilizando `EjecutorDeEscenarios` (la misma resolución que usa la reejecución individual), persiste cada `CorridaSuite`/`ItemCorridaSuite` y calcula el resultado global (PASS/FAIL/ERROR/INCOMPLETA/SIN_EXPECTATIVAS). `CorredorDeSuites.reintentar_fallidos(corrida_id)` crea una corrida NUEVA con solo los `escenario_id` que en esa corrida quedaron en FAIL/ERROR -la selección viene de los items históricos, nunca de la membresía actual de la suite-, ejecutando cada uno con la configuración VIGENTE del escenario; reutiliza el mismo núcleo interno que `ejecutar()`, ningún runner paralelo |
+| **Comparación de corridas** | Dominio + Aplicación | `domain/comparacion_corridas.py::clasificar_cambio` (pura): matriz SIN_CAMBIO/MEJORÓ/EMPEORÓ/CAMBIÓ entre dos `EstadoItemCorrida`, con PASS/FAIL/ERROR en una escala de severidad y SIN_EXPECTATIVAS/NO_EJECUTADO fuera de ella. `application/comparacion_corridas.py::ServicioComparacionCorridas` empareja los items de dos corridas de la MISMA suite por `escenario_id` (nunca por `orden`, que un reintento puede renumerar), marcando SOLO_EN_A/SOLO_EN_B lo que falta de un lado. Lee unicamente snapshots ya persistidos -nunca el escenario, la suite ni la expectativa vigentes-, por lo que la comparación sigue siendo válida aunque cualquiera de las dos se edite después de ambas corridas |
 | **CLI (`sibu-run-suite`)** | Interfaz | Ejecuta una suite sin navegador, apta para CI: mismo `CorredorDeSuites` que la web, códigos de salida por resultado, salida texto o JSON. `export-run` exporta el reporte de una corrida ya persistida (JSON/CSV, Bloque 7). No depende de `web/` |
 | **Exportación de corridas** | Aplicación | `application/exportacion_corridas.py`: servicio neutral que arma el reporte (JSON/CSV) de una `CorridaSuite` ya persistida desde su propio snapshot histórico -nunca relee escenario/suite/expectativas vigentes-. Reutilizado hoy por `export-run`; ninguna interfaz depende de otra |
 | **Integración CI** | Scripts + adaptador | `scripts/sembrar_suite_demo.py` (siembra idempotente), `scripts/ci_esperar_host.py` (espera TCP), `scripts/verificar_artefacto_seguro.py` (guardia sobre el artefacto); todo reutilizable por cualquier proveedor. `.github/workflows/ci-suite-demo.yml` es la única pieza específica de GitHub. Detalle en `docs/ci/INTEGRACION_CI.md` |

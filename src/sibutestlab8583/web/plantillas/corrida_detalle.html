@@ -24,6 +24,26 @@
   <p class="reporte-cabecera__meta">{{ corrida.iniciada_en }} UTC · {{ corrida.duracion }}</p>
 </div>
 
+{% if error %}
+<div class="aviso error">
+  <h2 class="aviso__titulo">No se pudo reintentar</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="acciones">
+    <a class="boton" href="/suites/corridas/{{ corrida.corrida_id }}/comparar">Comparar contra…</a>
+    {% if puede_reintentar %}
+    <form method="post" action="/suites/corridas/{{ corrida.corrida_id }}/reintentar">
+      <button class="boton" type="submit">Reintentar fallidos</button>
+    </form>
+    {% endif %}
+    <a class="boton" href="/suites/corridas/{{ corrida.corrida_id }}/exportar.json">Exportar JSON</a>
+    <a class="boton" href="/suites/corridas/{{ corrida.corrida_id }}/exportar.csv">Exportar CSV</a>
+  </div>
+</section>
+
 {% if not aviso_resultado %}
 <div class="aviso indeterminado">
   <h2 class="aviso__titulo">Corrida en curso</h2>
@@ -112,19 +132,6 @@
         {% endfor %}
       </tbody>
     </table>
-  </div>
-</section>
-
-{# Reutiliza el mismo reporte que `sibu-run-suite export-run`: descarga el
-   snapshot ya persistido de esta corrida, nunca la vuelve a ejecutar ni
-   depende de como esten configurados hoy sus escenarios. #}
-<section class="panel">
-  <div class="panel__cabecera">
-    <h2 class="panel__titulo">Exportar</h2>
-  </div>
-  <div class="acciones">
-    <a class="boton" href="/suites/corridas/{{ corrida.corrida_id }}/exportar.json">Descargar JSON</a>
-    <a class="boton" href="/suites/corridas/{{ corrida.corrida_id }}/exportar.csv">Descargar CSV</a>
   </div>
 </section>
 
