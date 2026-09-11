@@ -57,3 +57,19 @@ class CampoConFormaInvalida(ErrorDeCamposManuales):
     """El campo es editable/opcional -su origen esta permitido-, pero el valor
     dado no tiene la forma que su metadata declara (tipo o longitud)."""
 
+
+class ErrorDeVariableDinamica(ErrorDelSimulador, ValueError):
+    """Raiz de los errores de resolucion de variables dinamicas (`{{...}}`).
+
+    Es `ValueError` por el mismo motivo que `ErrorDeCamposManuales`: la capa
+    web debe poder tratarla como error de entrada (400, sin traza).
+    """
+
+
+class ExpresionMalformada(ErrorDeVariableDinamica):
+    """El valor tiene `{{`/`}}` pero no calza la gramatica de una variable."""
+
+
+class VariableDesconocida(ErrorDeVariableDinamica):
+    """La expresion tiene una forma valida, pero el nombre no existe."""
+
