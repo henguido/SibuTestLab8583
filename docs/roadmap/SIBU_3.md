@@ -13,7 +13,7 @@ qué fase está en qué estado:
 |---|---|
 | A — Variables dinámicas | **IMPLEMENTADA** |
 | D0 — cobertura de `host_simulado/cli.py` | **IMPLEMENTADA** |
-| B — Modelo multi-MTI, subfase B1 (núcleo genérico) | **EN PROGRESO** |
+| B — Modelo multi-MTI, subfase B1 (núcleo genérico) | **IMPLEMENTADA** en `feature/multi-mti-b1-core-generico` (sin mergear a `main`, en revisión) |
 | B2 en adelante, C, D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
@@ -277,34 +277,83 @@ Ver sección 5. Subfase pendiente, no iniciada:
 `armar_compra`/`armar_retiro`/`armar_reverso`/... como funciones paralelas que repitan la misma
 infraestructura.
 
-**Diseño ya disponible** (Agente 2, sin código): introducir `ClaveOperacion = (mti,
-codigo_proceso_prefijo | None)` como tercer eje ortogonal a `MetadatoCampo` (forma) y
-`PoliticaCamposMti` (gobierno); generalizar `Orquestador.ejecutar_compra` extrayendo un
-`_ejecutar` interno parametrizado por una función de armado, dejando `ejecutar_compra` como
-envoltorio de una línea sin cambiar su firma ni comportamiento observable.
+**Autorización de alcance:** formalizada en `PROYECTO.md` sección 0.1 (2026-09-12, ver también
+`CLAUDE.md`). El prerrequisito bloqueante de esta fase (decisión explícita de ampliar alcance)
+está resuelto.
 
-**Prerrequisito de fase (bloqueante, sección 0 de PROYECTO.md):** decisión explícita del
-usuario/curso de ampliar el alcance más allá de 0100/0110, y actualización de `PROYECTO.md`. Sin
-esto, ninguna subfase de Fase B debería empezar a escribir código — el diseño ya existe, la
-autorización de alcance no.
+**Diseño original** (Agente 2, jornada del 2026-09-11/12, sin código): introducir
+`ClaveOperacion = (mti, codigo_proceso_prefijo | None)` como tercer eje ortogonal a
+`MetadatoCampo` (forma) y `PoliticaCamposMti` (gobierno).
 
-**Subfases** (orden sugerido por el propio diseño, sección 9 del documento de Agente 2):
+**Revisado y CORREGIDO contra el código real en B1.1 (2026-09-12, 4 agentes de solo lectura):**
+`ClaveOperacion` **no se implementó** — no está justificado por el código actual. Evidencia:
+`CODIGO_PROCESO_COMPRA` es hoy un valor por defecto de un campo editable (DE3), no parte de
+ninguna clave de política; `PerfilDeMarca.politica(mti)`/`PoliticaCamposMti` **ya son genéricos**
+(reciben `mti` como parámetro libre, `politica_por_mti` ya es un mapa extensible) sin necesitar
+ningún eje nuevo. Introducir `ClaveOperacion` sin un segundo caso real que lo necesite hubiera
+sido la abstracción prematura que el propio diseño original advertía evitar en otras partes.
+Este es un ejemplo documentado de "usar el diseño de los agentes como referencia, no como
+mandato": la investigación de código real (B1.1) primó sobre el documento de diseño previo.
+
+**B1 — implementado** (rama `feature/multi-mti-b1-core-generico`, ver sección 5 para el
+checkpoint completo): extraído `Orquestador._ejecutar` genérico (RN-4, codec, transporte,
+RN-3/RN-1, registro), que no conoce `DatosCompra` ni `armar_compra` — recibe un `MensajeIso` ya
+armado más `card_id`/`monto` para trazabilidad. `ejecutar_compra` queda como el único llamador,
+concentrando lo específico de compra (tarjeta, variables, `armar_compra`). `domain/armado.py`
+**no se tocó**: `armar_compra` sigue siendo legítimamente específico de compra (deriva DE2/DE14/
+DE4), generalizarlo hubiera sido el antipatrón "mega builder". `domain/validacion.py::
+mti_de_respuesta` (antes privada) se expuso como pública porque ahora tiene un segundo llamador
+real fuera del módulo — el único símbolo de esta jornada que se renombró, con justificación
+puntual, no un rename masivo.
+
+**Subfases restantes** (orden sujeto a revisión — B1 demostró que el diseño original necesitaba
+corrección antes de implementarse, así que B2 debe volver a verificarse contra código antes de
+escribirse, no asumirse):
 
 | Subfase | Objetivo | Depende de | Riesgo |
 |---|---|---|---|
-| B1 | Extraer `_ejecutar` genérico dentro de `Orquestador`, sin ningún MTI nuevo — refactor interno puro | Ninguno | Bajo: cubierto por los tests de compra existentes, cero cambio de comportamiento |
-| B2 | Introducir `ClaveOperacion`/`politica_por_operacion` en `PerfilDeMarca`, sin ningún perfil que lo use todavía | B1 | Bajo: aditivo, verificable con test de "el perfil genérico no cambia de comportamiento" |
-| B3 | Primer MTI adicional real: 0800/0810 (el más simple — sin tarjeta, sin monto) | B2, y la decisión de alcance (prerrequisito de fase) | Medio: exige el "tercer camino" en `evaluar_respuesta` para MTIs sin DE39, y decidir qué significa `Ejecucion` sin `card_id` (ARCH-002) |
-| B4 | 0200/0210 con variantes por DE3 | B2, decisión de alcance | Medio: primera vez que `politica_por_operacion` tiene más de una entrada real |
-| B5 | Reversos (0400/0410, 0420/0430) | B4, `EstrategiaCorrelacion` (ARCH-005) | Alto: correlación cruzada entre dos mensajes distintos en el tiempo, el caso que RN-3 actual no cubre |
+| B1 | Núcleo genérico del Orquestador | — | **COMPLETO**, ver checkpoint sección 5 |
+| B2 | Primer MTI adicional real. Candidato más simple: 0800/0810 (sin tarjeta, sin monto) — pero antes de implementar, verificar contra código si hace falta alguna abstracción de política nueva, o si añadir una segunda entrada a `politica_por_mti` ya alcanza | B1 | Medio: exige el "tercer camino" en `evaluar_respuesta` para MTIs sin DE39, y decidir qué significa `Ejecucion` sin `card_id` (ARCH-002) — ninguno de los dos se resolvió en B1 a propósito |
+| B3 | 0200/0210 con variantes por DE3 | B2 | Medio: primer caso real que decidiría si hace falta un eje de política por código de proceso — recién ahí se sabría si `ClaveOperacion` (o algo distinto) se justifica |
+| B4 | Reversos (0400/0410, 0420/0430) | B3, y una estrategia de correlación cruzada (ver ARCH-005) | Alto: correlación entre dos mensajes distintos en el tiempo, el caso que RN-3 actual no cubre |
 
 **Criterio de aceptación de cada subfase:** suite verde, cero cambio de comportamiento para
-0100/0110 existente, escenarios/suites/historial de compra sin migración de esquema (confirmado
-por el propio diseño: `escenarios.mti` y `ejecuciones.mti_solicitud` ya son texto libre).
+0100/0110 existente, escenarios/suites/historial de compra sin migración de esquema (verificado
+en B1.1 contra el esquema real, no asumido: `escenarios.mti` y `ejecuciones.mti_solicitud`/
+`mti_respuesta` ya son `TEXT` libre sin `CHECK`/`FK`).
+
+**Hallazgo pendiente para B2 (no corregido en B1, deliberadamente — fuera del alcance de "núcleo
+del Orquestador"):** `application/escenarios.py` valida expectativas contra el literal
+`MTI_RESPUESTA_COMPRA` en 3 lugares, en vez de derivarlo de `self._mti` (que ya es inyectable).
+Mientras `ServicioEscenarios` solo se use con compra, esto es inocuo; B2 (el primer MTI real con
+escenarios) debe corregirlo antes de admitir escenarios de un MTI distinto de compra.
+
+**Hallazgo menor, no bloqueante:** `domain/modelos.py::Escenario.a_datos_compra()` es código
+vestigial — ningún llamador lo invoca (`ejecutor_escenarios.py` reconstruye `DatosCompra` a mano
+en su lugar). No se tocó en B1 (evitar scope creep); candidato a limpieza en B2 o antes, sin
+prisa.
+
+**Nota arquitectónica de seguridad — condición de entrada explícita para B2 (ARCH-001/SEC-001,
+investigada en B1.1, agente de solo lectura dedicado):**
+
+`CAMPOS_SENSIBLES` (`domain/modelos.py:23`, `frozenset({"2","35"})`) es hoy la **única** fuente
+operativa de "qué campo es sensible" — consultada directamente por 6+ módulos (`codec.py`,
+`expectativas.py`, `validacion.py`, `serializacion.py`, `presentacion.py`, `modelos.py` mismo).
+`MetadatoCampo.sensible` (`domain/campos_iso.py:45`) existe con la forma correcta pero está
+**inerte**: en `profiles/generico.py` todas las instancias pasan `sensible=False` literal, y
+ningún módulo lo lee para ninguna decisión de seguridad — los campos 2/35 ni siquiera tienen
+`MetadatoCampo` propio (son `derivados`, nunca editables). Esto NO es un defecto activo hoy
+(los guardias de seguridad ya son agnósticos de MTI, no dependen de que exista un segundo perfil)
+y **B1 no lo empeora** (no se introdujo ningún perfil/MTI nuevo). Pero es la condición de entrada
+explícita antes de exponer un perfil arbitrario en B2+: la sensibilidad debe pasar a gobernarse
+por metadata del perfil (`MetadatoCampo.sensible`, poblado de verdad y leído por los 6+ módulos
+que hoy importan la constante global), no por una constante de dominio que asume un único perfil.
+Un test de "sincronización" entre ambas fuentes sería cosmético mientras `MetadatoCampo.sensible`
+no tenga ningún consumidor real — se pospone a cuando B2 haga esa migración.
 
 **NO se implementa en Fase B:** ningún catálogo de "tipos de operación" con nombres de negocio
 (retiro, transferencia) como enum de dominio — eso sería inventar semántica de marca, prohibido
-por `CLAUDE.md`.
+por `CLAUDE.md`. Ningún MTI nuevo expuesto desde la UI todavía.
 
 ### Fase C — Secuencias
 
