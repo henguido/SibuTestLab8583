@@ -93,7 +93,7 @@ def _discrepancias_de_correlacion(
     correlacion vuelvan identicos.
     """
     motivos: list[str] = []
-    mti_esperado = _mti_de_respuesta(envio.mti)
+    mti_esperado = mti_de_respuesta(envio.mti)
 
     if respuesta.mti != mti_esperado:
         motivos.append(f"MTI inesperado: se esperaba {mti_esperado} y llegó {respuesta.mti}")
@@ -138,6 +138,17 @@ def _interpretar_codigo(
     return EstadoEjecucion.RECHAZADA, (f"{codigo}: {catalogo.descripcion(codigo)}",)
 
 
-def _mti_de_respuesta(mti_solicitud: str) -> str:
-    """En ISO 8583 la respuesta a un 0x00 es su 0x10 correspondiente."""
+def mti_de_respuesta(mti_solicitud: str) -> str:
+    """En ISO 8583 la respuesta a un 0x00 es su 0x10 correspondiente.
+
+    Publica (sin guion bajo) a partir de B1: ademas de usarla este modulo
+    para RN-3, `application/orquestador.py` la usa para derivar el MTI de
+    respuesta esperado en vez de asumir el literal de compra -es la misma
+    regla generica de ISO 8583, no una segunda definicion-. Verificada
+    genericamente para 0200/0210, 0400/0410 y 0800/0810 ademas de 0100/0110
+    (jornada de agentes, 2026-09-12): el tercer digito 0->1 es correcto para
+    cualquier MTI de solicitud/respuesta sincrono; los reversos con
+    correlacion cruzada (0420/0430) son un caso distinto, fuera de esta
+    funcion.
+    """
     return mti_solicitud[:2] + "1" + mti_solicitud[3:]
