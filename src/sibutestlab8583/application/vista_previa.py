@@ -39,7 +39,7 @@ from typing import Callable, Sequence
 
 from ..domain.armado import armar_compra
 from ..domain.errores import ErrorDeCodificacion
-from ..domain.modelos import MTI_COMPRA, DatosCompra
+from ..domain.modelos import DatosCompra
 from ..domain.puertos import RepositorioTarjetas
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 
@@ -142,7 +142,11 @@ class ServicioVistaPrevia:
         except ErrorDeCodificacion:
             bitmap = None
 
-        politica = self._perfil.politica(MTI_COMPRA)
+        # `mti` viene de `mensaje.mti` (el MTI real que armo `armar_compra`,
+        # linea 133), no de una constante de compra hardcodeada: B1 -este
+        # servicio no necesita saber que MTI arma la operacion, solo pedirle
+        # su politica al perfil con el MTI que la operacion ya produjo.
+        politica = self._perfil.politica(mti)
         campos = [
             CampoVistaPrevia(
                 numero=numero,
