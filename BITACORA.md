@@ -2628,3 +2628,68 @@ C1 (infraestructura mínima de secuencias sobre escenarios 0100 existentes, que 
 diseño de secuencias no requiere ningún MTI nuevo).
 
 Sin cambios de código de producción en este bloque; solo el documento de roadmap.
+
+## 2026-09-12 · Autorización formal de evolución multi-MTI y arranque de B1
+
+El propietario autorizó formalmente ampliar el alcance funcional más allá de compra
+0100/0110 (registrado en `PROYECTO.md` sección 0.1 y en `CLAUDE.md`, sin reescribir el
+alcance académico original). Cerrado D0 (cobertura de `adapters/host_simulado/cli.py`,
+commit independiente) como tarea previa de bajo riesgo.
+
+Arrancada **Fase B, subfase B1 — núcleo genérico ISO8583**, en rama
+`feature/multi-mti-b1-core-generico`, con el mandato explícito de: cero cambio observable en
+compra 0100/0110, ningún MTI nuevo expuesto todavía, y verificar contra el código real (no
+contra el diseño previo) si `ClaveOperacion=(mti, prefijo_DE3)` sigue siendo la abstracción
+correcta.
+
+**B1.1 — Caracterización (sin cambio de código):** se investigó con 4 agentes de solo
+lectura (mapeo de acoplamientos a Compra, correlación RN-3, impacto en escenarios/suites,
+gobierno de sensibilidad ARCH-001/SEC-001) contra el código real, no contra el diseño de la
+jornada anterior. Hallazgos que cambian el plan original:
+
+- `ClaveOperacion=(mti, prefijo_DE3)` **no está justificado por el código real**: hoy el
+  código de proceso (`CODIGO_PROCESO_COMPRA`) es un valor por defecto de un campo editable
+  (DE3), no parte de ninguna clave de política. `PerfilDeMarca.politica(mti)` /
+  `PoliticaCamposMti` **ya son genéricos** (reciben `mti` como parámetro libre,
+  `politica_por_mti` ya es un mapa extensible) — no necesitan ningún cambio para B1.
+- `armar_compra` es el único lugar de `domain/armado.py` que fija `MTI_COMPRA`
+  internamente, a diferencia de sus funciones vecinas (`validar_campos_manuales`,
+  `valores_efectivos_editables`, etc., ya genéricas por `mti`). Pero su cuerpo (derivar
+  DE2/DE14 de la tarjeta, DE4 del monto) es legítimamente específico de compra — no se toca:
+  generalizarlo sería el antipatrón "mega builder" que el propietario pidió evitar
+  explícitamente.
+- El acoplamiento real y corregible está en `Orquestador.ejecutar_compra`: mezcla la parte
+  genérica request→response (RN-4, codec, transporte, RN-3/RN-1, registrar) con la parte
+  específica de compra (buscar tarjeta, resolver variables, `armar_compra`). `_registrar`
+  además recibe `datos: DatosCompra` completo solo para extraer `card_id`/`monto`.
+- `domain/validacion.py::_mti_de_respuesta` y `campos_de_correlacion` **ya son 100%
+  genéricos** (probado mentalmente contra 0200/0210 y 0800/0810: producen el resultado
+  correcto). No hace falta ninguna interfaz `EstrategiaCorrelacion` en B1 — sería
+  sobre-diseño sin un segundo caso real (sí haría falta para reversos, fuera de alcance).
+- El hardcode real de `MTI_RESPUESTA_COMPRA` (en vez de derivarlo) vive en
+  `orquestador.py:142`, `application/escenarios.py` (3 sitios, validación de expectativas) y
+  `web/app.py`. Solo el primero se corrige en B1 (vive en el wrapper de compra, bajo riesgo,
+  demuestra que la correlación no necesita una segunda constante independiente); los de
+  `escenarios.py`/`web/app.py` quedan documentados como prerequisito de B2, no se tocan
+  ahora (`ServicioEscenarios` ya recibe `mti` inyectable, pero valida expectativas contra el
+  literal en vez de derivarlo de `self._mti`).
+- `escenarios.py`/`ejecutor_escenarios.py`/`corredor_suites.py` **ya son agnósticos de MTI**:
+  ningún cambio de esquema, ninguna migración necesaria (columnas `mti`/`mti_solicitud`/
+  `mti_respuesta` ya son `TEXT` libre desde su creación).
+- `Escenario.a_datos_compra()` es código vestigial (nunca invocado; `ejecutor_escenarios.py`
+  reconstruye `DatosCompra` a mano) — se documenta, no se toca en B1 (fuera de alcance,
+  evitar scope creep).
+- ARCH-001/SEC-001 (gobierno de sensibilidad): confirmado que `CAMPOS_SENSIBLES` es la única
+  fuente operativa; `MetadatoCampo.sensible` existe pero está inerte (siempre `False`, ningún
+  guardia de seguridad lo lee). El riesgo NO empeora con B1 (los guardias ya son agnósticos
+  de MTI) y B1 no lo toca: se registra como condición de entrada explícita para B2 en
+  `docs/roadmap/SIBU_3.md`. No se agrega un test de sincronización todavía -sería cosmético
+  mientras `MetadatoCampo.sensible` no tenga ningún consumidor de seguridad real-.
+
+**Caracterización de compra 0100/0110 ya cubierta por la suite existente** (no se agregan
+tests duplicados): recorrido completo real (TCP+codec+SQLite) en
+`tests/test_integracion_end_to_end.py`; bitmap/RAW/preview en `tests/test_vista_previa.py`;
+variables en `tests/test_variables.py`; escenarios/suites/comparación en `tests/test_web.py`,
+`tests/test_web_suites.py`, `tests/test_comparacion_corridas.py`; RN-1..RN-4 en
+`tests/test_reglas_negocio.py`; seguridad end-to-end en `tests/test_seguridad_auditoria.py`.
+Estos son la línea base contra la que se demuestra que B1 no cambió nada observable.
