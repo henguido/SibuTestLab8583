@@ -12,12 +12,21 @@ del curso SINT-732.
 
 ## Alcance actual
 
-**Únicamente compra `0100` → TCP → respuesta `0110`.**
+**Alcance académico original: únicamente compra `0100` → TCP → respuesta `0110`.** Ese alcance
+queda documentado tal cual en `PROYECTO.md` (secciones 1-11) como baseline histórico de la
+entrega cerrada el 2026-09-07.
 
-Fuera de alcance, y no se diseñan ni se implementan: retiros, consultas de saldo, reversos,
-OCT, AFT, refunds, anulaciones, verificaciones de cuenta, catálogos de códigos por marca y
-paneles de métricas elaborados. Si una tarea parece requerir algo de esta lista, detenerse y
-preguntar antes de escribir nada.
+**A partir de `PROYECTO.md` sección 0.1 (2026-09-12), el propietario autorizó formalmente
+ampliar el alcance funcional hacia un modelo multi-MTI**, como evolución de producto/laboratorio
+posterior al cierre académico. El detalle vivo de qué MTI/operaciones están habilitadas en cada
+momento vive en `docs/roadmap/SIBU_3.md` (fases IMPLEMENTADA/EN PROGRESO/PLANIFICADA), no aquí.
+
+Siguen fuera de alcance sin excepción, autorización aparte incluida: catálogos de códigos por
+marca real (Visa/Mastercard/Amex — sigue prohibido inventarlos, ver más abajo) y paneles de
+métricas elaborados sin un caso de uso concreto que los pida. Cualquier MTI u operación que
+`docs/roadmap/SIBU_3.md` no liste todavía como IMPLEMENTADA o EN PROGRESO sigue sin diseñarse ni
+implementarse: si una tarea parece requerir algo que el roadmap no cubre, detenerse y preguntar
+antes de escribir nada.
 
 ## Stack
 

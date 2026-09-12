@@ -4,6 +4,18 @@
 implementado algo que solo está diseñado. Reemplaza cualquier lista informal de "qué falta"
 mencionada en el chat: esta es la referencia.
 
+**Autorización de alcance:** a partir de `PROYECTO.md` sección 0.1 (2026-09-12), el propietario
+autorizó formalmente evolucionar el alcance funcional más allá de `compra 0100 → TCP →
+0110` (baseline académico, cerrado y sin reescribir). Este documento es la referencia viva de
+qué fase está en qué estado:
+
+| Fase | Estado |
+|---|---|
+| A — Variables dinámicas | **IMPLEMENTADA** |
+| D0 — cobertura de `host_simulado/cli.py` | **IMPLEMENTADA** |
+| B — Modelo multi-MTI, subfase B1 (núcleo genérico) | **EN PROGRESO** |
+| B2 en adelante, C, D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
+
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
 10 agentes especializados (investigación/diseño, sin escritura de código salvo lo que el
 coordinador integró explícitamente). Los reportes completos de los 10 agentes viven en el

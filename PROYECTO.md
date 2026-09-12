@@ -38,6 +38,30 @@ descrito ya existe en el código y qué sigue siendo hoja de ruta sin construir.
 - Perfiles oficiales de Visa/Mastercard/Amex — se usa un catálogo y un perfil
   genéricos, documentados como tales (ver sección 4, "La decisión difícil").
 
+## 0.1 Evolución posterior al cierre académico (nota agregada, 2026-09-12)
+
+**El alcance descrito en este documento (secciones 1-11) es el alcance académico original,
+entregado y cerrado el 2026-09-07 (sección 0) y presentado el 2026-09-08 (Sesión 8). No se
+reescribe ni se reinterpreta: queda documentado tal cual como baseline histórico.**
+
+A partir de esta fecha, el propietario del proyecto autorizó formalmente continuar su
+evolución más allá de esa entrega, como producto/laboratorio técnico independiente de la
+calificación académica. Esta nota registra esa autorización, no la sustituye:
+
+- **Qué cambia:** el alcance funcional deja de estar limitado exclusivamente a
+  `compra 0100 → TCP → respuesta 0110`. El proyecto puede evolucionar hacia un modelo
+  multi-MTI (ver `docs/roadmap/SIBU_3.md`, Fase B en adelante), manteniendo el mismo rigor
+  de arquitectura, seguridad y pruebas que ya rigió la entrega académica.
+- **Qué NO cambia:** las reglas de `CLAUDE.md` sobre datos sensibles (PAN/Track), sobre no
+  inventar especificaciones de marca (Visa/Mastercard/Amex), y sobre disciplina de Git,
+  siguen aplicando sin excepción a todo trabajo posterior a esta nota.
+- **Dónde vive el detalle de la evolución:** `docs/roadmap/SIBU_3.md` es la referencia viva
+  de qué está IMPLEMENTADO, EN PROGRESO, PLANIFICADO o en INVESTIGACIÓN a partir de este
+  punto. Este documento (`PROYECTO.md`) no se actualiza fase a fase; el roadmap sí.
+- **Estado al momento de esta nota:** Fase A (variables dinámicas) IMPLEMENTADA; Fase B
+  (modelo multi-MTI), subfase B1 (núcleo genérico, sin exponer ningún MTI nuevo todavía) EN
+  PROGRESO; el resto PLANIFICADO o en INVESTIGACIÓN según el roadmap.
+
 ## 1. Qué es y para quién
 
 Una aplicación que permite construir mensajes de transacciones ISO 8583 (el protocolo
