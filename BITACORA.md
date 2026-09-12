@@ -2603,3 +2603,28 @@ PAN en verde. `git diff --check` sin conflictos.
 **Integración a `main`:** merge de `feature/variables-dinamicas-fase-a` documentado en el
 commit de merge correspondiente; la rama se conserva (no se borra) para trazabilidad de
 auditoría.
+
+## 2026-09-12 · Consolidación de la jornada de agentes y ROADMAP SIBU 3.0
+
+Cierre de la jornada autónoma: los 10 agentes de investigación/diseño terminaron (arquitectura
+de variables, multi-MTI, secuencias, host simulator 2.0, UX, seguridad, calidad de tests,
+benchmark competitivo, motor de carga, productización). Ninguno implementó código por fuera de
+lo que el coordinador integró explícitamente (Fase A). Sus hallazgos se cruzaron entre sí,
+se resolvieron dos contradicciones de supuesto (ver `docs/roadmap/SIBU_3.md`, hallazgos
+ARCH-003 y ARCH-004), y se consolidaron en un documento versionado nuevo:
+`docs/roadmap/SIBU_3.md` — matriz maestra de hallazgos (IDs estables por dominio), mapa de
+capacidades (IMPLEMENTADO/PARCIAL/DISEÑADO/NO IMPLEMENTADO), comparación competitiva basada
+únicamente en fuentes públicas, definición funcional de Sibu, y roadmap de fases A-I con
+subfases pequeñas y criterios de aceptación explícitos.
+
+**Decisión de alcance tomada en esta consolidación:** Fase B (multi-MTI) queda diseñada pero
+NO se implementa código todavía, ni siquiera su primer paso de refactor interno (B1), porque
+`CLAUDE.md` exige "detenerse y preguntar antes de escribir nada" ante cualquier tarea que
+parezca requerir ampliar el alcance de 0100/0110, y el propio documento de diseño del agente
+de multi-MTI declara esa autorización como prerequisito de su Fase 0. Se identifican dos
+bloques ejecutables sin esa autorización: D0 (test dedicado para
+`adapters/host_simulado/cli.py`, gap de cobertura real detectado por el agente de calidad) y
+C1 (infraestructura mínima de secuencias sobre escenarios 0100 existentes, que según el propio
+diseño de secuencias no requiere ningún MTI nuevo).
+
+Sin cambios de código de producción en este bloque; solo el documento de roadmap.
