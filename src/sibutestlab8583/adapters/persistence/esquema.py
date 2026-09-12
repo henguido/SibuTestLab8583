@@ -103,14 +103,23 @@ CREATE INDEX IF NOT EXISTS idx_escenarios_nombre ON escenarios(nombre);
 
 -- Sin columna de PAN a proposito: una ejecucion referencia la tarjeta por
 -- card_id y guarda los mensajes ya enmascarados.
+--
+-- card_id/monto/moneda son NULLABLE desde B2 (2026-09-12): una operacion sin
+-- tarjeta ni monto (ej. 0800 Network Management/Echo) no tiene forma de
+-- rellenarlos con un valor real, y un sentinel inventado ("", 0) seria un dato
+-- falso en el historial. NULL es honesto: "no aplica", no "vacio". La FK hacia
+-- tarjetas_prueba se mantiene -NULL la deja sin efecto automaticamente, es
+-- comportamiento estandar de SQL, no una relajacion de la garantia para las
+-- filas que SI tienen tarjeta-. Ver `_migrar_ejecuciones_card_id_nullable`
+-- para el camino de una base existente creada antes de este cambio.
 CREATE TABLE IF NOT EXISTS ejecuciones (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     creada_en               TEXT    NOT NULL,
-    card_id                 TEXT    NOT NULL REFERENCES tarjetas_prueba(card_id),
+    card_id                 TEXT    REFERENCES tarjetas_prueba(card_id),
     mti_solicitud           TEXT    NOT NULL,
     mti_respuesta           TEXT,
-    monto                   TEXT    NOT NULL,
-    moneda                  TEXT    NOT NULL,
+    monto                   TEXT,
+    moneda                  TEXT,
     stan                    TEXT    NOT NULL,
     destino_host            TEXT,
     destino_puerto          INTEGER,
@@ -392,6 +401,88 @@ async def _migrar_ejecuciones(conexion: aiosqlite.Connection) -> tuple[str, ...]
     return await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS)
 
 
+#: Columnas de `ejecuciones`, en el orden exacto del DDL -usado para copiar
+#: fila por fila durante el rebuild de `_migrar_ejecuciones_card_id_nullable`,
+#: nunca para adivinar el orden con `SELECT *`.
+_COLUMNAS_EJECUCIONES = (
+    "id", "creada_en", "card_id", "mti_solicitud", "mti_respuesta", "monto",
+    "moneda", "stan", "destino_host", "destino_puerto", "estado",
+    "codigo_respuesta", "solicitud_enmascarada", "respuesta_enmascarada",
+    "solicitud_json", "respuesta_json", "latencia_ms", "escenario_id",
+    "escenario_nombre", "evaluacion_estado", "evaluacion_json", "motivo_detalle",
+)
+
+
+async def _migrar_ejecuciones_card_id_nullable(conexion: aiosqlite.Connection) -> bool:
+    """Relaja `card_id`/`monto`/`moneda` de `NOT NULL` a `NULL` en una base
+    creada ANTES de B2 (2026-09-12).
+
+    SQLite no admite `ALTER TABLE ... ALTER COLUMN` para quitar `NOT NULL`: el
+    unico camino estandar es reconstruir la tabla (crear con el esquema
+    nuevo, copiar todas las filas explicitamente por nombre de columna,
+    borrar la vieja, renombrar la nueva) - el mismo patron documentado en la
+    propia documentacion de SQLite para este tipo de cambio. Es **aditivo y
+    seguro**: solo AMPLIA que valores acepta la columna, ninguna fila
+    existente cambia de valor, y el DDL de mas arriba ya crea la tabla nueva
+    con el esquema correcto -esta funcion solo corre para una base existente
+    que todavia tenga la restriccion vieja-.
+
+    Idempotente por diseno: si `card_id` ya admite `NULL` (base nueva, o ya
+    migrada), no hace nada y devuelve `False`.
+    """
+    async with conexion.execute("PRAGMA table_info(ejecuciones)") as cursor:
+        columnas_info = await cursor.fetchall()
+    # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
+    notnull_card_id = next((fila[3] for fila in columnas_info if fila[1] == "card_id"), None)
+    if not notnull_card_id:
+        return False  # ya nullable (base nueva o ya migrada): nada que hacer
+
+    # Una base MUY anterior (de antes de que existieran mti_respuesta,
+    # destino_host/puerto, codigo_respuesta, etc.) puede no tener todavia
+    # alguna de estas columnas -esas migraciones nunca las agregaron porque
+    # nunca hizo falta para lo que probaban-. Copiar solo lo que existe de
+    # verdad evita "no such column"; lo que falte queda NULL en la tabla
+    # nueva, exactamente como quedaria si nunca se hubiera escrito.
+    existentes = {fila[1] for fila in columnas_info}
+    columnas_a_copiar = tuple(c for c in _COLUMNAS_EJECUCIONES if c in existentes)
+    columnas_sql = ", ".join(columnas_a_copiar)
+    await conexion.executescript(
+        f"""
+        CREATE TABLE ejecuciones_nueva_b2 (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            creada_en               TEXT    NOT NULL,
+            card_id                 TEXT    REFERENCES tarjetas_prueba(card_id),
+            mti_solicitud           TEXT    NOT NULL,
+            mti_respuesta           TEXT,
+            monto                   TEXT,
+            moneda                  TEXT,
+            stan                    TEXT    NOT NULL,
+            destino_host            TEXT,
+            destino_puerto          INTEGER,
+            estado                  TEXT    NOT NULL,
+            codigo_respuesta        TEXT,
+            solicitud_enmascarada   TEXT,
+            respuesta_enmascarada   TEXT,
+            solicitud_json          TEXT,
+            respuesta_json          TEXT,
+            latencia_ms             INTEGER,
+            escenario_id            TEXT    REFERENCES escenarios(escenario_id),
+            escenario_nombre        TEXT,
+            evaluacion_estado       TEXT,
+            evaluacion_json         TEXT,
+            motivo_detalle          TEXT
+        );
+        INSERT INTO ejecuciones_nueva_b2 ({columnas_sql})
+            SELECT {columnas_sql} FROM ejecuciones;
+        DROP TABLE ejecuciones;
+        ALTER TABLE ejecuciones_nueva_b2 RENAME TO ejecuciones;
+        CREATE INDEX IF NOT EXISTS idx_ejecuciones_creada_en ON ejecuciones(creada_en);
+        CREATE INDEX IF NOT EXISTS idx_ejecuciones_card_id   ON ejecuciones(card_id);
+        """
+    )
+    return True
+
+
 async def _sembrar_destinos(conexion: aiosqlite.Connection) -> None:
     await conexion.execute(
         "INSERT OR IGNORE INTO destinos (destino_id, nombre, host, puerto, activo, creado_en)"
@@ -425,6 +516,11 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await _migrar(conexion, "escenarios", COLUMNAS_AGREGADAS_ESCENARIOS)
         await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
         await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)
+        # Corre AL FINAL de las migraciones de columnas: reconstruye la tabla
+        # completa (ver docstring), asi que necesita que todas las columnas
+        # modernas ya existan -si una base historica todavia no tenia
+        # mti_respuesta/escenario_id/etc., esas migraciones ya corrieron arriba.
+        await _migrar_ejecuciones_card_id_nullable(conexion)
         await _sembrar_secuencias(conexion)
         await _sembrar_catalogo(conexion, CATALOGO_GENERICO)
         await _sembrar_destinos(conexion)

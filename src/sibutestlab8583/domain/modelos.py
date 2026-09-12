@@ -19,6 +19,14 @@ from .enmascarado import enmascarar_campos, enmascarar_pan
 MTI_COMPRA = "0100"
 MTI_RESPUESTA_COMPRA = "0110"
 
+#: Network Management / Echo Test (B2, 2026-09-12): primera operacion distinta
+#: de compra. Sin tarjeta, sin monto -ver `DatosEcho`, `Ejecucion.card_id`
+#: nullable en `adapters/persistence/esquema.py`-. La respuesta se deriva con
+#: `domain.validacion.mti_de_respuesta("0800")`, nunca una segunda constante
+#: independiente calculada a mano.
+MTI_ECHO = "0800"
+MTI_RESPUESTA_ECHO = "0810"
+
 #: Campos ISO que transportan datos de tarjeta y nunca se persisten en claro.
 CAMPOS_SENSIBLES = frozenset({"2", "35"})
 
@@ -102,6 +110,24 @@ class DatosCompra:
 
     card_id: str
     monto: Decimal
+    campos_manuales: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
+
+
+@dataclass(frozen=True)
+class DatosEcho:
+    """Lo que se completa para armar un Network Management / Echo Test (0800).
+
+    Sin `card_id` ni `monto`: no hay tarjeta ni importe involucrados en un
+    echo -a diferencia de `DatosCompra`, no tiene ningun campo de primera
+    clase con logica propia. `campos_manuales` sigue el mismo contrato
+    (unica puerta para fijar un valor editable, hoy solo DE70), para que el
+    mecanismo de variables dinamicas (Fase A) y el de escenarios funcionen
+    exactamente igual que con compra, sin un segundo camino.
+    """
+
     campos_manuales: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -470,18 +496,25 @@ class EstadoEjecucion(str, Enum):
 
 @dataclass
 class Ejecucion:
-    """Registro persistible de un intento de compra.
+    """Registro persistible de un intento de ejecucion (compra u otra operacion).
 
     Referencia la tarjeta por ``card_id``. No tiene campo para el PAN completo:
     los mensajes se guardan ya enmascarados.
+
+    ``card_id``/``monto``/``moneda`` son ``None`` para una operacion sin
+    tarjeta ni monto (B2, 2026-09-12: Network Management/Echo es la primera).
+    Movidos despues de ``stan``/``estado`` -que toda ejecucion tiene, sin
+    excepcion- porque un dataclass no admite un campo sin default despues de
+    uno con default. Ningun llamador construye `Ejecucion` posicionalmente
+    (todos usan keywords), asi que este reordenamiento no rompe nada.
     """
 
-    card_id: str
-    monto: Decimal
-    moneda: str
     stan: str
     estado: EstadoEjecucion
     mti_solicitud: str = MTI_COMPRA
+    card_id: str | None = None
+    monto: Decimal | None = None
+    moneda: str | None = None
     mti_respuesta: str | None = None
     codigo_respuesta: str | None = None
     destino_host: str | None = None

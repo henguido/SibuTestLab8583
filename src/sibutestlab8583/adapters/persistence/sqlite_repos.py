@@ -229,7 +229,7 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                     ejecucion.card_id,
                     ejecucion.mti_solicitud,
                     ejecucion.mti_respuesta,
-                    str(ejecucion.monto),
+                    str(ejecucion.monto) if ejecucion.monto is not None else None,
                     ejecucion.moneda,
                     ejecucion.stan,
                     ejecucion.destino_host,
@@ -801,7 +801,9 @@ def _a_ejecucion(fila: aiosqlite.Row) -> Ejecucion:
         card_id=fila["card_id"],
         mti_solicitud=fila["mti_solicitud"],
         mti_respuesta=fila["mti_respuesta"],
-        monto=Decimal(fila["monto"]),
+        # None para una operacion sin monto (ej. 0800 Echo) -no un sentinel
+        # inventado-: ver el comentario de la columna en esquema.py (DDL).
+        monto=Decimal(fila["monto"]) if fila["monto"] is not None else None,
         moneda=fila["moneda"],
         stan=fila["stan"],
         destino_host=fila["destino_host"],
