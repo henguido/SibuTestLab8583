@@ -23,7 +23,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from ..domain.campos_iso import TIPO_ALFANUMERICO, TIPO_NUMERICO, MetadatoCampo
-from ..domain.modelos import MTI_COMPRA, MTI_RESPUESTA_COMPRA
+from ..domain.modelos import MTI_COMPRA, MTI_ECHO, MTI_RESPUESTA_COMPRA, MTI_RESPUESTA_ECHO
 
 NOMBRE_PERFIL_GENERICO = "generico"
 
@@ -160,6 +160,10 @@ ESPECIFICACION_GENERICA: dict[str, dict[str, Any]] = {
     "h": _fijo(0, "Sin cabecera"),
     "t": _fijo(4, "Tipo de mensaje (MTI)"),
     "p": _fijo(16, "Bitmap primario"),
+    #: Bitmap secundario: pyiso8583 lo exige declarado en la especificacion
+    #: en cuanto un mensaje usa algun campo 65-128 (aqui, DE70 para 0800/0810,
+    #: B2) - el propio bit 1 del bitmap primario senala su presencia.
+    "1": _fijo(16, "Bitmap secundario"),
     "2": _llvar(19, "Número de tarjeta (PAN)"),
     "3": _fijo(6, "Código de proceso"),
     "4": _fijo(12, "Monto de la transacción"),
@@ -179,6 +183,12 @@ ESPECIFICACION_GENERICA: dict[str, dict[str, Any]] = {
     "42": _fijo(15, "Identificador del comercio (Card Acceptor ID)"),
     "43": _fijo(40, "Nombre y ubicación del comercio (Card Acceptor Name/Location)"),
     "49": _fijo(3, "Código de moneda (ISO 4217 numérico)"),
+    #: DE70, agregado para el 0800/0810 (Network Management/Echo, B2). El
+    #: numero y la longitud (3 digitos) son del estandar ISO 8583 general
+    #: -no de ninguna marca-; el VALOR que este perfil usa para identificar
+    #: un echo (`VALOR_LABORATORIO_ECHO`, mas abajo) es una convencion propia
+    #: de laboratorio, documentada como tal, no una especificacion oficial.
+    "70": _fijo(3, "Código de información de gestión de red"),
 }
 
 #: Metadata de UI/validacion de forma para los campos que este perfil conoce
@@ -232,6 +242,24 @@ METADATOS_CAMPOS_0100: dict[str, MetadatoCampo] = {
     ),
 }
 
+#: Metadata de UI/validacion de forma para el 0800 (Network Management/Echo,
+#: B2). Un unico campo editable: DE70. Deliberadamente NO copia
+#: METADATOS_CAMPOS_0100 -esta operacion no tiene tarjeta, monto, comercio ni
+#: terminal, y agregar esos campos aqui seria inventar informacion que el
+#: echo no usa.
+METADATOS_CAMPOS_0800: dict[str, MetadatoCampo] = {
+    "70": MetadatoCampo(
+        "70", "Network Management Information Code",
+        "Código de información de gestión de red",
+        TIPO_NUMERICO, True, 3, False,
+        ayuda=(
+            "Identifica el tipo de operación de gestión de red. El valor por "
+            "defecto es una convención de laboratorio de este perfil genérico "
+            "(no una especificación oficial de ninguna red) para un echo test."
+        ),
+    ),
+}
+
 # Obligatorios de la solicitud de compra: lo minimo para que el mensaje describa
 # una compra concreta (que tarjeta, cuanto, en que moneda, en que terminal, con
 # que trazabilidad).
@@ -275,14 +303,48 @@ _POLITICA_COMPRA = PoliticaCamposMti(
     },
 )
 
+#: Valor de laboratorio que este perfil usa en DE70 para identificar un echo
+#: test -NO una especificacion oficial de ISO 8583 ni de ninguna red real:
+#: distintas implementaciones documentan distintos valores para "echo" en
+#: gestion de red, y este proyecto no tiene autoridad para declarar uno como
+#: el correcto. Se elige un valor propio, claramente marcado como tal, igual
+#: criterio que ya aplica `CODIGO_PROCESO_COMPRA`/`MODO_CAPTURA_DEMOSTRACION`.
+VALOR_LABORATORIO_ECHO = "301"
+
+# Obligatorios del echo: los dos campos que todo intercambio 0800/0810 de
+# este laboratorio necesita para poder correlacionarse (RN-3), mas DE70 -que
+# identifica que tipo de operacion de red es esta-. Sin tarjeta, sin monto,
+# sin campos de comercio: ninguno de esos conceptos aplica a un echo.
+OBLIGATORIOS_0800 = frozenset({"7", "11", "70"})
+
+# Obligatorios de la respuesta: DE39 se incluye a proposito -ver docstring de
+# _POLITICA_ECHO- para que el echo reutilice RN-1/RN-3 sin ningun camino
+# especial en domain/validacion.py; el host siempre responde "00" (exito),
+# nunca un codigo de rechazo, en esta primera entrega de echo.
+OBLIGATORIOS_0810 = frozenset({"7", "11", "39", "70"})
+
+#: Politica de campos del echo (0800). Sin derivados (no hay tarjeta), DE7/11
+#: automaticos (igual que en compra: reloj y secuencia de STAN), DE70
+#: editable con un default de laboratorio -para que una persona pueda
+#: sobreescribirlo explicitamente (o usar una variable dinamica de Fase A
+#: sobre el, demostrando que el mecanismo es generico), sin que eso sea
+#: obligatorio-.
+_POLITICA_ECHO = PoliticaCamposMti(
+    automaticos=frozenset({"7", "11"}),
+    editables=frozenset({"70"}),
+    valores_por_defecto={"70": VALOR_LABORATORIO_ECHO},
+)
+
 PERFIL_GENERICO = PerfilDeMarca(
     nombre=NOMBRE_PERFIL_GENERICO,
     especificacion=ESPECIFICACION_GENERICA,
     obligatorios_por_mti={
         MTI_COMPRA: OBLIGATORIOS_0100,
         MTI_RESPUESTA_COMPRA: OBLIGATORIOS_0110,
+        MTI_ECHO: OBLIGATORIOS_0800,
+        MTI_RESPUESTA_ECHO: OBLIGATORIOS_0810,
     },
-    politica_por_mti={MTI_COMPRA: _POLITICA_COMPRA},
+    politica_por_mti={MTI_COMPRA: _POLITICA_COMPRA, MTI_ECHO: _POLITICA_ECHO},
 )
 
 

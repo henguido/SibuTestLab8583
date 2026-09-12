@@ -30,8 +30,11 @@ def test_solo_soporta_los_mti_del_alcance_aprobado():
     perfil = perfil_activo()
     assert perfil.soporta(MTI_COMPRA)
     assert perfil.soporta(MTI_RESPUESTA_COMPRA)
-    # Fuera de alcance: reverso, retiro, consulta de saldo.
-    for mti in ("0200", "0400", "0800"):
+    # 0800/0810 (Network Management/Echo) se autorizo y se implemento en B2
+    # (2026-09-12, ver PROYECTO.md seccion 0.1 y docs/roadmap/SIBU_3.md) -
+    # pruebas dedicadas en test_perfil_echo.py. El resto sigue fuera de
+    # alcance: reverso, retiro, consulta de saldo.
+    for mti in ("0200", "0400"):
         assert not perfil.soporta(mti)
         with pytest.raises(ValueError):
             perfil.obligatorios(mti)
