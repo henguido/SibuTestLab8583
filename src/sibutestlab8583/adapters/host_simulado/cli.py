@@ -21,7 +21,12 @@ from ...composicion import (
 )
 
 
-def _argumentos() -> argparse.Namespace:
+def _argumentos(argv: list[str] | None = None) -> argparse.Namespace:
+    """`argv=None` (el caso real de `main()`) delega en `sys.argv` como siempre
+    -argparse ya hace esto por defecto-; un `argv` explicito solo existe para
+    que las pruebas puedan construir argumentos sin tocar `sys.argv` global,
+    mismo patron que ya usa `scripts/ci_esperar_host.py::_argumentos`.
+    """
     analizador = argparse.ArgumentParser(
         prog="sibu-host-demo",
         description="Host simulado que responde 0110 a una compra 0100.",
@@ -37,7 +42,7 @@ def _argumentos() -> argparse.Namespace:
         default="00",
         help="codigo de respuesta del campo 39 (00 aprueba; 05, 14, 51, 54 y 94 rechazan)",
     )
-    return analizador.parse_args()
+    return analizador.parse_args(argv)
 
 
 async def _servir(host: str, puerto: int, codigo: str) -> None:
