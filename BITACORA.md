@@ -2508,3 +2508,98 @@ extraer más.
 consistencia de metadata, 2 adversariales de POST manipulado, 2 de "seguro por construcción",
 1 E2E de seguridad). Confirmado con `pytest --collect-only -q`. Guardia de PAN en verde.
 `git diff --check` sin conflictos. Sin `git add`, sin commit, sin push.
+
+## 2026-09-11 · Fase A — Variables dinámicas (primera entrega mínima)
+
+Tras la auditoría anterior, jornada de trabajo asistida por agentes especializados
+(investigación/diseño, sin escritura de código salvo lo que el coordinador implementó
+directamente): arquitectura de variables dinámicas, evolución multi-MTI, secuencias
+multi-paso, host simulador con reglas declarativas, auditoría UX, auditoría de seguridad,
+auditoría de calidad de tests, benchmark competitivo, diseño de motor de carga e
+investigación de productización. Todo quedó como research/diseño puro -ningún agente
+implementó nada por fuera de lo que el coordinador integró aquí-, y se retomará como
+ROADMAP SIBU 3.0 en un documento aparte.
+
+De ese trabajo, se implementó la primera entrega -pequeña y deliberadamente acotada- de
+**Fase A: Variables dinámicas** en campos manuales del 0100, sobre la rama
+`feature/variables-dinamicas-fase-a`:
+
+- `domain/variables.py` (nuevo): cinco variables built-in -`{{amount}}`, `{{stan}}`,
+  `{{transmission_datetime}}`, `{{local_time}}`, `{{local_date}}`-, gramática cerrada
+  (`{{` + identificador en minúsculas + `}}`, sin anidamiento ni aritmética), resolución por
+  tabla de búsqueda -nunca `eval`/`exec`, sin acceso a filesystem ni a variables de entorno-.
+  Un valor que no calza esa forma completa se trata como literal, igual que hoy.
+- Dos errores nuevos en `domain/errores.py`: `ExpresionMalformada` y `VariableDesconocida`
+  (ambos `ValueError`, mismo tratamiento que `ErrorDeCamposManuales` en la capa web).
+- Resolución cableada en el único punto donde ya se conocen el STAN y el momento reales de
+  la ejecución: `application/orquestador.py::ejecutar_compra`, justo después de
+  `stan = await self._stan.siguiente()` y antes de `armar_compra(...)` -que sigue sin saber
+  que las variables existen-. Mismo patrón en `application/vista_previa.py::construir`, con
+  el STAN/momento marcador de la vista previa.
+- Corrección en la vista previa: `CampoVistaPrevia.es_valor_definitivo` ahora también es
+  `False` cuando el campo se resolvió desde una variable no reproducible (`stan`,
+  `transmission_datetime`, `local_time`, `local_date`); antes solo miraba el origen del
+  campo (`automatico`/`editable`/...), así que un `{{stan}}` en un campo editable se hubiera
+  mostrado como si fuera el valor definitivo, cuando en la vista previa usa un STAN marcador.
+  `{{amount}}` sí queda definitivo: el monto no cambia entre previsualizar y ejecutar.
+- Alcance explícitamente NO cubierto en esta entrega (decisión deliberada, no olvido): sin
+  namespaces (`card.*`, `terminal.*`), sin variables de usuario, sin `{{previous.*}}`
+  -reservado para un futuro motor de secuencias, todavía sin diseño de implementación-.
+
+**Tests:** `tests/test_variables.py` (nuevo, 20 casos): gramática (`es_expresion`),
+resolución de los 5 built-ins, errores controlados, y dos pruebas de integración real -una
+de vista previa (marca `{{stan}}` como no definitivo y `{{amount}}` como definitivo) y una
+end-to-end contra el orquestador real con SQLite real, que confirma que el valor que
+`{{stan}}` produce en un campo manual coincide exactamente con el STAN real (DE11) del mismo
+mensaje transmitido-. Suite completa: 1086 passed, 2 skipped (antes 1066; +20 reales).
+Confirmado con `pytest --collect-only -q`. Guardia de PAN en verde -se detectó y corrigió un
+falso positivo propio: un literal de 12 dígitos en un caso de prueba de `{{amount}}` disparaba
+el mismo guardián que protege contra PAN en texto plano; se cambió la aserción para comparar
+contra `formatear_monto()` en vez de un literal-. `git diff --check` sin conflictos.
+
+Trabajo hecho en la rama `feature/variables-dinamicas-fase-a` (no en `main`), sin push
+todavía: corresponde al coordinador revisarlo e integrarlo cuando decida cerrar el bloque.
+
+## 2026-09-12 · Auditoría de Fase A (gramática, escenarios, payloads adversariales) y cierre
+
+Antes de integrar a `main`, auditoría dirigida contra el diseño de variables ya implementado,
+cruzando el código real con los hallazgos de los agentes de arquitectura y seguridad de la
+jornada anterior:
+
+1. **Contradicción encontrada y resuelta:** el docstring original de `resolver_valor` decía
+   que un valor con llaves que no calzan la gramática completa se trata "como literal, tal
+   cual". El código real hace lo contrario -y correctamente-: revienta con
+   `ExpresionMalformada`. Se corrigió el docstring para que documente el comportamiento real
+   (rechazar, no adivinar), en vez de cambiar código que ya es la decisión más segura para un
+   campo que viaja a un mensaje de pago.
+2. **Límite de alcance verificado con código, no supuesto:** una expresión en un campo
+   **editable** (3/22/37/41/49) se resuelve sin problema, porque `validar_forma_de_opcionales`
+   excluye a propósito a los editables preexistentes. Una expresión en un campo **opcional**
+   (18/25/32/42/43) hoy se **rechaza** con `CampoConFormaInvalida` en la capa web, porque esa
+   validación de forma corre sobre el valor SIN resolver, antes de que las variables entren en
+   juego. Documentado explícitamente en `domain/variables.py`; extender variables a opcionales
+   queda para un incremento posterior.
+3. **Congelamiento de escenarios verificado:** `valores_efectivos_editables` conserva la
+   expresión (`"{{stan}}"`) tal cual al guardar un escenario, nunca un valor ya resuelto -tal
+   como exige la reproducibilidad histórica-. Confirmado con un test nuevo y dedicado.
+4. **Payloads adversariales probados explícitamente** (nunca ejecutados): `{{__import__('os')}}`,
+   `{{os.system}}`, `{{env.PASSWORD}}`, `{{../../archivo}}`, `${HOME}`, `{% ... %}`, y mezclas
+   literal+variable (`ABC{{stan}}`, `{{stan}}XYZ`) y expresiones incompletas (`{{stan`,
+   `{{}}`). Todos caen en una de tres rutas legales -literal sin tocar, `ExpresionMalformada`,
+   o `VariableDesconocida`- y ninguno llega a ejecutarse: la gramática cerrada
+   (`^\{\{\s*[a-z][a-z0-9_]*\s*\}\}$`) no admite paréntesis, comillas, puntos ni barras, así
+   que no hay ruta hacia `eval`/`exec`, filesystem, ni variables de entorno.
+
+**Clasificación de Fase A: COMPLETA** para el alcance declarado (variables built-in en
+campos editables del 0100, resolución en orquestador real y en vista previa). Las exclusiones
+documentadas (opcionales, escenarios/suites integradas con resolución en ejecución programada,
+namespaces, `{{previous.*}}`) son decisiones de alcance, no defectos.
+
+**Tests:** `tests/test_variables.py` ampliado a 37 casos (+17: parciales/mixtos, payloads
+adversariales, congelamiento en escenarios). Suite completa: 1101 passed, 2 skipped (antes
+1086; +17 reales). Confirmado con `pytest --collect-only -q` (1103 recolectados). Guardia de
+PAN en verde. `git diff --check` sin conflictos.
+
+**Integración a `main`:** merge de `feature/variables-dinamicas-fase-a` documentado en el
+commit de merge correspondiente; la rama se conserva (no se borra) para trazabilidad de
+auditoría.

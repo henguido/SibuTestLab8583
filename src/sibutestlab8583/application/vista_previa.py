@@ -32,6 +32,7 @@ enviar", solo como una forma valida del campo.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Sequence
@@ -40,6 +41,7 @@ from ..domain.armado import armar_compra
 from ..domain.errores import ErrorDeCodificacion
 from ..domain.modelos import MTI_COMPRA, DatosCompra
 from ..domain.puertos import RepositorioTarjetas
+from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 
 #: Nunca se transmite: solo sostiene la forma (6 digitos) para poder calcular
 #: bitmap/campos. Un valor fijo y reconocible, no un STAN real ni plausible.
@@ -113,8 +115,20 @@ class ServicioVistaPrevia:
         if tarjeta is None or not tarjeta.activa:
             raise TarjetaNoDisponibleParaVistaPrevia(datos.card_id)
 
+        momento = self._reloj()
+        # Misma resolucion que hace el orquestador real (ver
+        # `application/orquestador.py::ejecutar_compra`), pero con el
+        # STAN/momento MARCADOR de esta vista previa: por eso `{{stan}}` y
+        # `{{transmission_datetime}}`/`{{local_time}}`/`{{local_date}}` jamas
+        # deben presentarse aqui como el valor definitivo (ver mas abajo).
+        contexto_variables = ContextoResolucion(monto=datos.monto, stan=STAN_MARCADOR, momento=momento)
+        campos_resueltos, no_reproducibles = resolver_campos_manuales(
+            datos.campos_manuales, contexto_variables
+        )
+        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
+
         mensaje = armar_compra(
-            datos, tarjeta, stan=STAN_MARCADOR, momento=self._reloj(), perfil=self._perfil
+            datos, tarjeta, stan=STAN_MARCADOR, momento=momento, perfil=self._perfil
         )
         mti = mensaje.mti
         # Reasignado a la MISMA variable a proposito -nunca queda una
@@ -134,7 +148,10 @@ class ServicioVistaPrevia:
                 numero=numero,
                 valor=valor,
                 origen=_origen_para_vista_previa(politica, numero),
-                es_valor_definitivo=politica.origen(numero) != "automatico",
+                es_valor_definitivo=(
+                    politica.origen(numero) != "automatico"
+                    and numero not in no_reproducibles
+                ),
             )
             for numero, valor in sorted(mensaje.campos.items(), key=lambda par: int(par[0]))
         ]

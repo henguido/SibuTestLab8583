@@ -31,6 +31,7 @@ Los estados se eligen por lo que cada situacion permite **demostrar**:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ from typing import Callable
 from ..domain.armado import armar_compra
 from ..domain.catalogo import CatalogoDeRespuestas
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
+from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 from ..domain.expectativas import evaluacion_a_dict, evaluar_expectativas, validar_expectativas
 from ..domain.modelos import (
     MTI_RESPUESTA_COMPRA,
@@ -152,6 +154,14 @@ class Orquestador:
         # instancia: el orquestador se construye por peticion y un contador
         # local reiniciaria en 1 cada vez.
         stan = await self._stan.siguiente()
+        # Las variables dinamicas (`{{stan}}`, `{{amount}}`, ...) se resuelven
+        # aqui -antes de `armar_compra`, que no sabe que existen- porque este es
+        # el primer punto donde ya se conocen el STAN y el momento reales de
+        # esta ejecucion concreta. `armar_compra` recibe campos_manuales ya
+        # resueltos, indistinguibles de haber sido tecleados literalmente.
+        contexto_variables = ContextoResolucion(monto=datos.monto, stan=stan, momento=momento)
+        campos_resueltos, _ = resolver_campos_manuales(datos.campos_manuales, contexto_variables)
+        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
         solicitud = armar_compra(
             datos,
             tarjeta,
