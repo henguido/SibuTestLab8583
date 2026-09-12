@@ -32,20 +32,22 @@ NUCLEO GENERICO (B1, 2026-09-12): `_ejecutar` es el motor request->response
 -RN-4, codec, transporte, RN-3/RN-1, registro- que no conoce `DatosCompra` ni
 `armar_compra`: recibe un `MensajeIso` ya armado (por quien sea que sepa armar
 esa operacion) mas los datos de trazabilidad que persiste `Ejecucion`
-(`card_id`/`monto`). `ejecutar_compra` es el unico llamador hoy y es quien
-concentra todo lo especifico de compra: buscar la tarjeta, resolver variables
-dinamicas, y llamar a `armar_compra`. Verificado contra el codigo real (no
-contra un diseno previo) que esta es la unica costura real: `PerfilDeMarca`/
+(`card_id`/`monto`, ambos opcionales). `ejecutar_compra` concentra todo lo
+especifico de compra: buscar la tarjeta, resolver variables dinamicas, y
+llamar a `armar_compra`. Verificado contra el codigo real (no contra un
+diseno previo) que esta es la unica costura real: `PerfilDeMarca`/
 `PoliticaCamposMti` ya son genericos por MTI, y la correlacion RN-3
 (`domain.validacion.mti_de_respuesta`/`campos_de_correlacion`) ya deriva todo
 del perfil y del MTI que recibe -no hizo falta ninguna interfaz nueva de
 correlacion ni un eje `(mti, codigo_proceso)` en la politica de campos: no
 existe hoy un segundo caso real que lo justifique, y agregarlo seria
-sobre-diseno. Si el dia de manana existe una segunda operacion (retiro, echo),
-se agrega un segundo metodo publico (`ejecutar_retiro`, etc.) que arma su
-propio `MensajeIso` y llama a `_ejecutar` igual que `ejecutar_compra` -nunca
-un `if tipo == ...` dentro de este archivo ni una funcion `armar_todo` con
-banderas-.
+sobre-diseno.
+
+SEGUNDA OPERACION (B2, 2026-09-12): `ejecutar_network_echo` es la primera
+prueba real de que `_ejecutar` sirve para algo distinto de compra. Mismo
+patron que `ejecutar_compra` -arma su propio `MensajeIso` (`armar_echo`,
+sin tarjeta ni monto) y llama a `_ejecutar`-, nunca un `if tipo == ...`
+dentro de este archivo ni una funcion `armar_todo` con banderas.
 """
 
 from __future__ import annotations
@@ -57,14 +59,16 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Callable
 
-from ..domain.armado import armar_compra
+from ..domain.armado import armar_compra, armar_echo
 from ..domain.catalogo import CatalogoDeRespuestas
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 from ..domain.expectativas import evaluacion_a_dict, evaluar_expectativas, validar_expectativas
 from ..domain.modelos import (
     MTI_COMPRA,
+    MTI_ECHO,
     DatosCompra,
+    DatosEcho,
     DestinoTcp,
     Ejecucion,
     EstadoEjecucion,
@@ -211,23 +215,62 @@ class Orquestador:
             expectativas=expectativas,
         )
 
+    async def ejecutar_network_echo(
+        self,
+        datos: DatosEcho,
+        *,
+        escenario_id: str | None = None,
+        escenario_nombre: str | None = None,
+        expectativas: Expectativas | None = None,
+    ) -> ResultadoCompra:
+        """Arma, valida y ejecuta un echo de red (0800). Segunda operacion
+        real sobre el nucleo generico de B1 (`_ejecutar`), sin tarjeta ni
+        monto: mismo patron que `ejecutar_compra`, solo que lo especifico de
+        esta operacion es mucho mas chico (no hay tarjeta que buscar).
+
+        Variables dinamicas se resuelven igual que en compra -mismo
+        `resolver_campos_manuales`, mismo momento del flujo-, con
+        `ContextoResolucion.monto=None`: `{{amount}}` en DE70 revienta con
+        `VariableNoDisponible` en vez de resolver a un valor inventado, ver
+        `domain/variables.py`.
+        """
+        if expectativas is not None:
+            validar_expectativas(expectativas, self._perfil, mti_de_respuesta(MTI_ECHO))
+
+        momento = self._reloj()
+        stan = await self._stan.siguiente()
+        contexto_variables = ContextoResolucion(stan=stan, momento=momento)
+        campos_resueltos, _ = resolver_campos_manuales(datos.campos_manuales, contexto_variables)
+        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
+        solicitud = armar_echo(datos, stan=stan, momento=momento, perfil=self._perfil)
+
+        return await self._ejecutar(
+            solicitud,
+            stan,
+            escenario_id=escenario_id,
+            escenario_nombre=escenario_nombre,
+            expectativas=expectativas,
+        )
+
     async def _ejecutar(
         self,
         solicitud: MensajeIso,
         stan: str,
         *,
-        card_id: str,
-        monto: Decimal,
+        card_id: str | None = None,
+        monto: Decimal | None = None,
         escenario_id: str | None = None,
         escenario_nombre: str | None = None,
         expectativas: Expectativas | None = None,
     ) -> ResultadoCompra:
         """Nucleo generico request->response: RN-4, codec, transporte,
-        RN-3/RN-1, registro. No conoce `DatosCompra` ni como se arma un
-        mensaje -recibe `solicitud` ya armada por el llamador (hoy siempre
-        `ejecutar_compra`)-. `card_id`/`monto` son exclusivamente los datos
-        de trazabilidad que persiste `Ejecucion`, no participan en armar ni
-        en validar nada aqui.
+        RN-3/RN-1, registro. No conoce `DatosCompra`/`DatosEcho` ni como se
+        arma un mensaje -recibe `solicitud` ya armada por el llamador
+        (`ejecutar_compra` o `ejecutar_network_echo`)-. `card_id`/`monto` son
+        exclusivamente los datos de trazabilidad que persiste `Ejecucion`, no
+        participan en armar ni en validar nada aqui: `None` para una
+        operacion sin tarjeta ni monto (B2: echo), igual que ya admite
+        `Ejecucion.card_id`/`monto` (ver `domain/modelos.py`).
         """
         # --- RN-4: si falta un obligatorio, no se codifica ni se envia ---
         validacion = validar_envio(solicitud, self._perfil)
@@ -360,8 +403,8 @@ class Orquestador:
         self,
         solicitud: MensajeIso,
         stan: str,
-        card_id: str,
-        monto: Decimal,
+        card_id: str | None,
+        monto: Decimal | None,
         estado: EstadoEjecucion,
         *,
         motivos: tuple[str, ...] = (),

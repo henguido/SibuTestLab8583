@@ -73,3 +73,8 @@ class ExpresionMalformada(ErrorDeVariableDinamica):
 class VariableDesconocida(ErrorDeVariableDinamica):
     """La expresion tiene una forma valida, pero el nombre no existe."""
 
+
+class VariableNoDisponible(ErrorDeVariableDinamica):
+    """La variable existe, pero no se puede resolver en este contexto (ej.
+    `{{amount}}` en una operacion sin monto, como un echo de red)."""
+
