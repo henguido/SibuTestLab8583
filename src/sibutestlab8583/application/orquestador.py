@@ -27,6 +27,25 @@ Los estados se eligen por lo que cada situacion permite **demostrar**:
   Aqui **no** se afirma que nada se envio, porque no se puede saber.
 - TIMEOUT solo con las cuatro premisas de RN-2 cumplidas. Que el drenaje local
   termine no demuestra que el destino recibiera: eso no se afirma en ningun lado.
+
+NUCLEO GENERICO (B1, 2026-09-12): `_ejecutar` es el motor request->response
+-RN-4, codec, transporte, RN-3/RN-1, registro- que no conoce `DatosCompra` ni
+`armar_compra`: recibe un `MensajeIso` ya armado (por quien sea que sepa armar
+esa operacion) mas los datos de trazabilidad que persiste `Ejecucion`
+(`card_id`/`monto`). `ejecutar_compra` es el unico llamador hoy y es quien
+concentra todo lo especifico de compra: buscar la tarjeta, resolver variables
+dinamicas, y llamar a `armar_compra`. Verificado contra el codigo real (no
+contra un diseno previo) que esta es la unica costura real: `PerfilDeMarca`/
+`PoliticaCamposMti` ya son genericos por MTI, y la correlacion RN-3
+(`domain.validacion.mti_de_respuesta`/`campos_de_correlacion`) ya deriva todo
+del perfil y del MTI que recibe -no hizo falta ninguna interfaz nueva de
+correlacion ni un eje `(mti, codigo_proceso)` en la politica de campos: no
+existe hoy un segundo caso real que lo justifique, y agregarlo seria
+sobre-diseno. Si el dia de manana existe una segunda operacion (retiro, echo),
+se agrega un segundo metodo publico (`ejecutar_retiro`, etc.) que arma su
+propio `MensajeIso` y llama a `_ejecutar` igual que `ejecutar_compra` -nunca
+un `if tipo == ...` dentro de este archivo ni una funcion `armar_todo` con
+banderas-.
 """
 
 from __future__ import annotations
@@ -35,6 +54,7 @@ import dataclasses
 import json
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Callable
 
 from ..domain.armado import armar_compra
@@ -43,7 +63,7 @@ from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 from ..domain.expectativas import evaluacion_a_dict, evaluar_expectativas, validar_expectativas
 from ..domain.modelos import (
-    MTI_RESPUESTA_COMPRA,
+    MTI_COMPRA,
     DatosCompra,
     DestinoTcp,
     Ejecucion,
@@ -62,7 +82,12 @@ from ..domain.puertos import (
     RepositorioTarjetas,
     Transporte,
 )
-from ..domain.validacion import CAMPO_CODIGO_RESPUESTA, evaluar_respuesta, validar_envio
+from ..domain.validacion import (
+    CAMPO_CODIGO_RESPUESTA,
+    evaluar_respuesta,
+    mti_de_respuesta,
+    validar_envio,
+)
 from .serializacion import a_json_respuesta, a_json_solicitud, a_texto
 
 
@@ -139,7 +164,10 @@ class Orquestador:
         evaluarse o a dejar rastro en `evaluacion_json`.
         """
         if expectativas is not None:
-            validar_expectativas(expectativas, self._perfil, MTI_RESPUESTA_COMPRA)
+            # El MTI de respuesta esperado se DERIVA del de solicitud -misma
+            # regla generica que ya usa RN-3 (`mti_de_respuesta`)-, nunca una
+            # segunda constante independiente de compra.
+            validar_expectativas(expectativas, self._perfil, mti_de_respuesta(MTI_COMPRA))
 
         tarjeta = await self._tarjetas.obtener(datos.card_id)
         # Una tarjeta inactiva no debe poder iniciar una ejecucion nueva, sin
@@ -170,13 +198,45 @@ class Orquestador:
             perfil=self._perfil,
         )
 
+        # A partir de aqui el recorrido es generico request->response: no
+        # sabe que es una compra, ni conoce `DatosCompra`/`armar_compra`. Ver
+        # `_ejecutar` y el comentario de cabecera del modulo (B1).
+        return await self._ejecutar(
+            solicitud,
+            stan,
+            card_id=datos.card_id,
+            monto=datos.monto,
+            escenario_id=escenario_id,
+            escenario_nombre=escenario_nombre,
+            expectativas=expectativas,
+        )
+
+    async def _ejecutar(
+        self,
+        solicitud: MensajeIso,
+        stan: str,
+        *,
+        card_id: str,
+        monto: Decimal,
+        escenario_id: str | None = None,
+        escenario_nombre: str | None = None,
+        expectativas: Expectativas | None = None,
+    ) -> ResultadoCompra:
+        """Nucleo generico request->response: RN-4, codec, transporte,
+        RN-3/RN-1, registro. No conoce `DatosCompra` ni como se arma un
+        mensaje -recibe `solicitud` ya armada por el llamador (hoy siempre
+        `ejecutar_compra`)-. `card_id`/`monto` son exclusivamente los datos
+        de trazabilidad que persiste `Ejecucion`, no participan en armar ni
+        en validar nada aqui.
+        """
         # --- RN-4: si falta un obligatorio, no se codifica ni se envia ---
         validacion = validar_envio(solicitud, self._perfil)
         if not validacion:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.NO_ENVIADA,
                 motivos=validacion.motivos,
                 escenario_id=escenario_id,
@@ -190,7 +250,8 @@ class Orquestador:
             payload = self._codec.codificar(solicitud, self._perfil)
         except ErrorDeCodec as error:
             return await self._registrar(
-                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),),
+                solicitud, stan, card_id, monto, EstadoEjecucion.NO_ENVIADA,
+                motivos=(str(error),),
                 escenario_id=escenario_id, escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
             )
@@ -206,7 +267,8 @@ class Orquestador:
             # despues de conectar no llega por aqui: el transporte lo convierte en
             # FalloDeTransmision, porque entonces ya no se puede afirmar lo mismo.
             return await self._registrar(
-                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),),
+                solicitud, stan, card_id, monto, EstadoEjecucion.NO_ENVIADA,
+                motivos=(str(error),),
                 escenario_id=escenario_id, escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
             )
@@ -217,7 +279,8 @@ class Orquestador:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.ERROR_CONEXION,
                 motivos=(respuesta_cruda.detalle,),
                 latencia_ms=latencia_ms,
@@ -231,7 +294,8 @@ class Orquestador:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.ERROR_TRANSMISION,
                 motivos=(respuesta_cruda.detalle,),
                 latencia_ms=latencia_ms,
@@ -246,7 +310,8 @@ class Orquestador:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.TIMEOUT,
                 motivos=(
                     f"sin respuesta en {respuesta_cruda.limite_segundos:g} s",
@@ -263,7 +328,8 @@ class Orquestador:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.INVALIDA,
                 motivos=(str(error),),
                 latencia_ms=latencia_ms,
@@ -279,7 +345,8 @@ class Orquestador:
         return await self._registrar(
             solicitud,
             stan,
-            datos,
+            card_id,
+            monto,
             estado,
             motivos=motivos,
             respuesta=interpretada,
@@ -293,7 +360,8 @@ class Orquestador:
         self,
         solicitud: MensajeIso,
         stan: str,
-        datos: DatosCompra,
+        card_id: str,
+        monto: Decimal,
         estado: EstadoEjecucion,
         *,
         motivos: tuple[str, ...] = (),
@@ -344,8 +412,8 @@ class Orquestador:
         )
 
         ejecucion = Ejecucion(
-            card_id=datos.card_id,
-            monto=datos.monto,
+            card_id=card_id,
+            monto=monto,
             # La moneda ya no es una propiedad de DatosCompra: es el campo 49
             # efectivamente armado (default del perfil o valor manual), la
             # misma fuente de verdad que ve el isoscopio.
