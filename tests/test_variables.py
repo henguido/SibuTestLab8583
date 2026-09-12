@@ -18,10 +18,10 @@ import pytest
 from sibutestlab8583.adapters.iso8583.codec import CodecIso8583
 from sibutestlab8583.adapters.persistence.esquema import CARD_ID_DEMO
 from sibutestlab8583.application.vista_previa import ServicioVistaPrevia
-from sibutestlab8583.domain.armado import formatear_monto
+from sibutestlab8583.domain.armado import formatear_monto, valores_efectivos_editables
 from sibutestlab8583.domain.datos_sinteticos import pan_sintetico
 from sibutestlab8583.domain.errores import ExpresionMalformada, VariableDesconocida
-from sibutestlab8583.domain.modelos import DatosCompra, TarjetaPrueba
+from sibutestlab8583.domain.modelos import MTI_COMPRA, DatosCompra, TarjetaPrueba
 from sibutestlab8583.domain.variables import (
     VARIABLES_NO_REPRODUCIBLES,
     ContextoResolucion,
@@ -118,6 +118,98 @@ class TestResolverCamposManuales:
 
     def test_variables_no_reproducibles_no_incluye_amount(self):
         assert "amount" not in VARIABLES_NO_REPRODUCIBLES
+
+
+class TestExpresionesParcialesYMixtas:
+    """La gramatica es cerrada A PROPOSITO: solo `{{identificador}}`, el campo
+    COMPLETO, nada mas. Un campo que mezcle literal y variable, o que tenga
+    una llave sin cerrar, no es "parcialmente resuelto": es un error, porque
+    intentar adivinar la intencion en un campo que viaja a un mensaje de pago
+    es exactamente el tipo de "reinterpretar en silencio" que el proyecto
+    evita en todos sus otros modulos (ver `incompatibilidades_escenario`,
+    `DiagnosticoEscenario`, etc.).
+    """
+
+    @pytest.mark.parametrize(
+        "valor",
+        [
+            "ABC{{stan}}",
+            "{{stan}}XYZ",
+            "{{stan} }",
+            "{{stan",
+            "{{ stan",
+            "stan}}",
+        ],
+    )
+    def test_variable_mezclada_con_literal_o_incompleta_revienta(self, valor):
+        with pytest.raises(ExpresionMalformada):
+            resolver_valor(valor, _contexto())
+
+    def test_una_expresion_vacia_revienta_como_malformada_no_como_desconocida(self):
+        with pytest.raises(ExpresionMalformada):
+            resolver_valor("{{}}", _contexto())
+
+
+class TestPayloadsAdversariales:
+    """Los intentos de inyeccion/ejecucion nunca deben resolverse: la
+    gramatica cerrada (`^\\{\\{\\s*[a-z][a-z0-9_]*\\s*\\}\\}$`) no admite
+    parentesis, comillas, puntos, barras ni signos de dolar, asi que ninguno
+    de estos payloads puede convertirse en una variable valida. Ninguna de
+    estas pruebas ejecuta el payload: solo comprueba que `resolver_valor`
+    jamas lo interpreta como codigo, y que el resultado es siempre uno de los
+    tres estados legales (literal / expresion invalida / variable
+    desconocida), nunca una cuarta ruta que evalue algo.
+    """
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "{{__import__('os')}}",
+            "{{os.system}}",
+            "{{env.PASSWORD}}",
+            "{{../../archivo}}",
+            "{{os.system('ls')}}",
+        ],
+    )
+    def test_payloads_con_llaves_dobles_no_calzan_la_gramatica(self, payload):
+        with pytest.raises(ExpresionMalformada):
+            resolver_valor(payload, _contexto())
+
+    @pytest.mark.parametrize("payload", ["${HOME}", "{% import os %}", "{%stan%}"])
+    def test_payloads_sin_llaves_dobles_se_tratan_como_literal(self, payload):
+        # No contienen "{{"/"}}" -la unica gramatica que este modulo reconoce
+        # como variable-, asi que nunca entran a resolucion: se devuelven tal
+        # cual, igual que cualquier otro literal de campos_manuales. Esto no
+        # es una omision: es la razon por la que nunca hay una ruta hacia un
+        # motor de plantillas de terceros ni hacia el shell.
+        assert resolver_valor(payload, _contexto()) == payload
+
+    def test_ningun_payload_ejecuta_codigo_python(self):
+        marcador = {"ejecutado": False}
+
+        def _no_deberia_llamarse():
+            marcador["ejecutado"] = True
+
+        # Si `resolver_valor` alguna vez usara `eval`/`exec` sobre el valor,
+        # este payload literal lo delataria: una funcion Python real referida
+        # por nombre dentro de las llaves. Con la gramatica actual, "llamar"
+        # no es una forma valida de identificador (contiene "(" y ")"), asi
+        # que revienta como expresion malformada antes de llegar a cualquier
+        # tabla de busqueda.
+        with pytest.raises(ExpresionMalformada):
+            resolver_valor("{{_no_deberia_llamarse()}}", _contexto())
+        assert marcador["ejecutado"] is False
+
+
+def test_valores_efectivos_editables_congela_la_expresion_sin_resolverla():
+    """Un escenario guardado debe conservar `{{stan}}` TAL CUAL, no un STAN ya
+    resuelto: la resolucion ocurre en cada reejecucion (orquestador/vista
+    previa), nunca al guardar. Si este congelamiento resolviera la variable,
+    todo escenario con `{{stan}}` quedaria con el mismo STAN fijo para
+    siempre, exactamente lo que Fase A busca evitar.
+    """
+    efectivos = valores_efectivos_editables({"3": "{{stan}}"}, PERFIL_GENERICO, MTI_COMPRA)
+    assert efectivos["3"] == "{{stan}}"
 
 
 class _RepositorioTarjetasFalso:

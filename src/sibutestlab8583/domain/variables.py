@@ -18,9 +18,37 @@ nunca acceso a filesystem ni a variables de entorno.
 
 Gramatica exacta: `{{` + espacios opcionales + identificador en minusculas
 + espacios opcionales + `}}`, y nada mas -sin anidamiento, sin aritmetica,
-sin filtros, sin interpolacion dentro de un literal mas grande-. Un valor
-que no calce con esa forma completa es un literal tal cual, incluso si
-contiene `{{`/`}}` en alguna parte (ver `es_expresion`).
+sin filtros, sin mezclar con texto literal en el mismo campo-. La gramatica
+decide esto de forma EXPLICITA, no por omision: un valor que contenga
+`{{`/`}}` en alguna parte pero no calce la forma completa (`ABC{{stan}}`,
+`{{stan}}XYZ`, `{{stan}` sin cerrar, `{{}}` vacio) es un ERROR
+(`ExpresionMalformada`), nunca un literal silencioso ni una interpolacion
+parcial: en un campo que viaja a un mensaje de pago, adivinar la intencion
+de un valor a medio escribir es peor que rechazarlo. Un valor que no
+contiene NINGUNA llave doble sí se trata como literal sin tocarlo (ver
+`resolver_valor`) -asi que un ataque tipo `${HOME}` o `{% ... %}`, que no usa
+la gramatica `{{...}}` en absoluto, ni siquiera entra a resolucion-.
+
+LIMITE DE ALCANCE VERIFICADO (auditoria previa a la integracion): las
+variables solo se resuelven en los dos puntos que las invocan explicitamente
+-`application/orquestador.py::ejecutar_compra` y
+`application/vista_previa.py::ServicioVistaPrevia.construir`-. Dos
+consecuencias, ambas deliberadas para esta primera entrega:
+
+1. Un CAMPO EDITABLE (3/22/37/41/49 en el perfil generico) admite una
+   expresion sin problema, porque la capa web NO valida forma sobre los
+   editables preexistentes (`domain/armado.py::validar_forma_de_opcionales`
+   lo excluye a proposito). Un CAMPO OPCIONAL (18/25/32/42/43) SI pasa por
+   esa validacion de forma en la capa web, sobre el valor SIN resolver, antes
+   de llegar aqui: hoy una expresion en un opcional se rechaza con
+   `CampoConFormaInvalida` en vez de resolverse. Extender variables a
+   opcionales queda para un incremento posterior, no para esta entrega.
+2. `application/escenarios.py::valores_efectivos_editables` CONGELA la
+   expresion tal cual (`"{{stan}}"`), nunca un valor ya resuelto: un
+   escenario guardado con una variable la reevalua en cada reejecucion, no
+   queda fijado al primer STAN que tuvo. Verificado con
+   `test_valores_efectivos_editables_congela_la_expresion_sin_resolverla` en
+   `tests/test_variables.py`.
 """
 
 from __future__ import annotations

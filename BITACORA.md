@@ -2559,3 +2559,47 @@ contra `formatear_monto()` en vez de un literal-. `git diff --check` sin conflic
 
 Trabajo hecho en la rama `feature/variables-dinamicas-fase-a` (no en `main`), sin push
 todavía: corresponde al coordinador revisarlo e integrarlo cuando decida cerrar el bloque.
+
+## 2026-09-12 · Auditoría de Fase A (gramática, escenarios, payloads adversariales) y cierre
+
+Antes de integrar a `main`, auditoría dirigida contra el diseño de variables ya implementado,
+cruzando el código real con los hallazgos de los agentes de arquitectura y seguridad de la
+jornada anterior:
+
+1. **Contradicción encontrada y resuelta:** el docstring original de `resolver_valor` decía
+   que un valor con llaves que no calzan la gramática completa se trata "como literal, tal
+   cual". El código real hace lo contrario -y correctamente-: revienta con
+   `ExpresionMalformada`. Se corrigió el docstring para que documente el comportamiento real
+   (rechazar, no adivinar), en vez de cambiar código que ya es la decisión más segura para un
+   campo que viaja a un mensaje de pago.
+2. **Límite de alcance verificado con código, no supuesto:** una expresión en un campo
+   **editable** (3/22/37/41/49) se resuelve sin problema, porque `validar_forma_de_opcionales`
+   excluye a propósito a los editables preexistentes. Una expresión en un campo **opcional**
+   (18/25/32/42/43) hoy se **rechaza** con `CampoConFormaInvalida` en la capa web, porque esa
+   validación de forma corre sobre el valor SIN resolver, antes de que las variables entren en
+   juego. Documentado explícitamente en `domain/variables.py`; extender variables a opcionales
+   queda para un incremento posterior.
+3. **Congelamiento de escenarios verificado:** `valores_efectivos_editables` conserva la
+   expresión (`"{{stan}}"`) tal cual al guardar un escenario, nunca un valor ya resuelto -tal
+   como exige la reproducibilidad histórica-. Confirmado con un test nuevo y dedicado.
+4. **Payloads adversariales probados explícitamente** (nunca ejecutados): `{{__import__('os')}}`,
+   `{{os.system}}`, `{{env.PASSWORD}}`, `{{../../archivo}}`, `${HOME}`, `{% ... %}`, y mezclas
+   literal+variable (`ABC{{stan}}`, `{{stan}}XYZ`) y expresiones incompletas (`{{stan`,
+   `{{}}`). Todos caen en una de tres rutas legales -literal sin tocar, `ExpresionMalformada`,
+   o `VariableDesconocida`- y ninguno llega a ejecutarse: la gramática cerrada
+   (`^\{\{\s*[a-z][a-z0-9_]*\s*\}\}$`) no admite paréntesis, comillas, puntos ni barras, así
+   que no hay ruta hacia `eval`/`exec`, filesystem, ni variables de entorno.
+
+**Clasificación de Fase A: COMPLETA** para el alcance declarado (variables built-in en
+campos editables del 0100, resolución en orquestador real y en vista previa). Las exclusiones
+documentadas (opcionales, escenarios/suites integradas con resolución en ejecución programada,
+namespaces, `{{previous.*}}`) son decisiones de alcance, no defectos.
+
+**Tests:** `tests/test_variables.py` ampliado a 37 casos (+17: parciales/mixtos, payloads
+adversariales, congelamiento en escenarios). Suite completa: 1101 passed, 2 skipped (antes
+1086; +17 reales). Confirmado con `pytest --collect-only -q` (1103 recolectados). Guardia de
+PAN en verde. `git diff --check` sin conflictos.
+
+**Integración a `main`:** merge de `feature/variables-dinamicas-fase-a` documentado en el
+commit de merge correspondiente; la rama se conserva (no se borra) para trazabilidad de
+auditoría.
