@@ -1,20 +1,31 @@
-"""Construccion del mensaje 0100 de compra.
+"""Construccion de mensajes ISO 8583: compra (0100) y echo (0800).
 
-Funcion pura: recibe los datos y devuelve el mensaje. El STAN y el momento se
-inyectan en lugar de generarse aqui, para que las pruebas sean deterministas y
-para que esta funcion no dependa del reloj.
-
-Solo arma compras. No hay aqui nada para reversos, retiros ni otros MTI.
+Funciones puras: reciben los datos y devuelven el mensaje. El STAN y el
+momento se inyectan en lugar de generarse aqui, para que las pruebas sean
+deterministas y para que estas funciones no dependan del reloj.
 
 CONSTRUCTOR GOBERNADO POR EL PERFIL
 ====================================
-`datos.campos_manuales` es la unica puerta para que el usuario fije un valor
-distinto del default en un campo que el perfil declare editable para el 0100
+`campos_manuales` es la unica puerta para que el usuario fije un valor
+distinto del default en un campo que el perfil declare editable para el MTI
 (ver `PoliticaCamposMti` en `profiles/generico.py`). El armado se hace en
 capas, cada una pudiendo pisar a la anterior, y la ultima —los campos
 estructurales— gana siempre, sin excepcion, aunque la validacion previa
 tuviera un defecto: es la defensa en profundidad de que ningun campo derivado
 o automatico pueda terminar siendo el que el usuario escribio.
+
+COMPOSICION, NO DUPLICACION (B2, 2026-09-12)
+====================================
+`_componer_campos_base` es lo genuinamente comun entre operaciones -las
+capas 1 y 2 (defaults del perfil + overrides del usuario), validadas contra
+la politica del MTI-. Cada operacion (`armar_compra`, `armar_echo`) le agrega
+SOLO su propia capa 3 estructural, que es lo unico que de verdad difiere
+entre una compra (deriva DE2/DE4/DE7/DE11-13/DE14 de tarjeta+monto+stan+
+momento) y un echo (deriva solo DE7/DE11 de stan+momento, sin tarjeta ni
+monto). Ninguna de las dos funciones copia el cuerpo de la otra, y ninguna es
+una funcion generica con banderas tipo `armar(tipo, ...)`: ver
+`docs/roadmap/SIBU_3.md`, seccion de Fase B, para por que se eligio esta
+forma y no `ClaveOperacion` ni un "mega builder".
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ from typing import Mapping
 
 from .campos_iso import MetadatoCampo
 from .errores import CampoConFormaInvalida, CampoNoPermitido, CampoProtegido
-from .modelos import MTI_COMPRA, DatosCompra, MensajeIso, TarjetaPrueba
+from .modelos import MTI_COMPRA, MTI_ECHO, DatosCompra, DatosEcho, MensajeIso, TarjetaPrueba
 
 #: Un monto ISO viaja en unidades minimas, sin separador decimal, en 12 digitos.
 LARGO_CAMPO_MONTO = 12
@@ -134,6 +145,21 @@ def incompatibilidades_escenario(
     return tuple(problemas)
 
 
+def _componer_campos_base(
+    campos_manuales: Mapping[str, str], perfil, mti: str
+) -> dict[str, str]:
+    """Capas 1+2: defaults del perfil, pisados por lo que el usuario haya
+    fijado -ya validado contra la politica del MTI-. Comun a CUALQUIER
+    operacion ISO 8583; la capa 3 (estructural) la agrega cada operacion
+    segun lo que sepa derivar (ver docstring del modulo).
+    """
+    validar_campos_manuales(campos_manuales, perfil, mti)
+    politica = perfil.politica(mti)
+    campos = dict(politica.valores_por_defecto)
+    campos.update(campos_manuales)
+    return campos
+
+
 def armar_compra(
     datos: DatosCompra,
     tarjeta: TarjetaPrueba,
@@ -142,11 +168,10 @@ def armar_compra(
     momento: datetime,
     perfil,
 ) -> MensajeIso:
-    """Arma el 0100 en cuatro capas, cada una pudiendo pisar a la anterior:
+    """Arma el 0100 en tres capas, cada una pudiendo pisar a la anterior:
 
-    1. los defaults que el perfil declara para los campos editables del 0100;
-    2. lo que el usuario haya fijado en `datos.campos_manuales`, ya validado
-       contra la politica del perfil;
+    1+2. `_componer_campos_base`: defaults del perfil, pisados por
+    `datos.campos_manuales`.
     3. los campos estructurales —derivados de la tarjeta y automaticos del
        sistema—, que SIEMPRE ganan, sin excepcion.
 
@@ -154,11 +179,7 @@ def armar_compra(
     separar ambas cosas permite armar un mensaje incompleto a proposito para
     probarla.
     """
-    validar_campos_manuales(datos.campos_manuales, perfil, MTI_COMPRA)
-    politica = perfil.politica(MTI_COMPRA)
-
-    campos = dict(politica.valores_por_defecto)
-    campos.update(datos.campos_manuales)
+    campos = _componer_campos_base(datos.campos_manuales, perfil, MTI_COMPRA)
     campos.update(
         {
             "2": tarjeta.pan,
@@ -171,3 +192,31 @@ def armar_compra(
         }
     )
     return MensajeIso(mti=MTI_COMPRA, campos=campos)
+
+
+def armar_echo(
+    datos: DatosEcho,
+    *,
+    stan: str,
+    momento: datetime,
+    perfil,
+) -> MensajeIso:
+    """Arma el 0800 (Network Management/Echo) en tres capas -mismo principio
+    que `armar_compra`, sin tarjeta ni monto porque un echo no los tiene-:
+
+    1+2. `_componer_campos_base`: defaults del perfil (DE70) pisados por
+    `datos.campos_manuales`.
+    3. los campos estructurales -DE7/DE11, automaticos del sistema-, que
+       SIEMPRE ganan.
+
+    No valida RN-4: igual que `armar_compra`, esa regla corre inmediatamente
+    despues.
+    """
+    campos = _componer_campos_base(datos.campos_manuales, perfil, MTI_ECHO)
+    campos.update(
+        {
+            "7": momento.strftime("%m%d%H%M%S"),
+            "11": stan,
+        }
+    )
+    return MensajeIso(mti=MTI_ECHO, campos=campos)
