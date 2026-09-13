@@ -107,6 +107,7 @@ class Seccion:
 SECCIONES: tuple[Seccion, ...] = (
     Seccion("compra", "/", "Nueva transacción"),
     Seccion("echo", "/echo", "Echo de red"),
+    Seccion("financiera", "/financiera", "Compra financiera"),
     Seccion("escenarios", "/escenarios", "Escenarios"),
     Seccion("suites", "/suites", "Suites"),
     Seccion("historial", "/historial", "Historial"),
@@ -167,6 +168,7 @@ GRUPOS_NAV: tuple[GrupoNav, ...] = (
     GrupoNav("Ejecución", (
         Seccion("compra", "/", "Nueva transacción"),
         Seccion("echo", "/echo", "Echo de red"),
+        Seccion("financiera", "/financiera", "Compra financiera"),
         Seccion("historial", "/historial", "Historial"),
     )),
     GrupoNav("Automatización", (
