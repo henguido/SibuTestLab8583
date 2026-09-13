@@ -44,12 +44,12 @@ from .application.escenarios import ServicioEscenarios
 from .application.orquestador import Orquestador
 from .application.suites import ServicioSuites
 from .application.tarjetas import ServicioTarjetas
-from .application.vista_previa import ServicioVistaPrevia
+from .application.vista_previa import ServicioVistaPrevia, ServicioVistaPreviaEcho
 from .domain.catalogo import NOMBRE_CATALOGO_GENERICO
 from .domain.errores import ErrorDeCodificacion
 from .domain.modelos import DestinoTcp, MensajeIso
 from .domain.campos_iso import MetadatoCampo
-from .profiles.generico import METADATOS_CAMPOS_0100, perfil_activo
+from .profiles.generico import METADATOS_CAMPOS_0100, METADATOS_CAMPOS_0800, perfil_activo
 
 VARIABLE_HOST = "SIBU_HOST_DESTINO"
 VARIABLE_PUERTO = "SIBU_PUERTO_DESTINO"
@@ -120,6 +120,13 @@ class Composicion:
         """Arma la vista previa del 0100 -Bloque 7-, reusando el mismo
         `armar_compra` y el mismo codec que la ejecucion real."""
         return ServicioVistaPrevia(self._tarjetas, self._codec, self._perfil)
+
+    @property
+    def vista_previa_echo(self) -> ServicioVistaPreviaEcho:
+        """Arma la vista previa del 0800 (Network Management/Echo, B2),
+        reusando el mismo `armar_echo` y el mismo codec que la ejecucion
+        real."""
+        return ServicioVistaPreviaEcho(self._codec, self._perfil)
 
     @property
     def administracion_conexiones(self) -> ServicioConexiones:
@@ -235,6 +242,13 @@ class Composicion:
         `descripciones_de_campos`: la web no debe importar `profiles.generico`.
         """
         return METADATOS_CAMPOS_0100
+
+    @property
+    def metadatos_de_campos_0800(self) -> Mapping[str, MetadatoCampo]:
+        """Metadata de UI/validacion de forma (tipo, longitud) para el 0800
+        (Network Management/Echo, B2). Mismo criterio que
+        `metadatos_de_campos_0100`."""
+        return METADATOS_CAMPOS_0800
 
     async def orquestador(
         self, destino: DestinoTcp, *, tiempo_limite: float | None = None

@@ -37,9 +37,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Sequence
 
-from ..domain.armado import armar_compra
+from ..domain.armado import armar_compra, armar_echo
 from ..domain.errores import ErrorDeCodificacion
-from ..domain.modelos import DatosCompra
+from ..domain.modelos import DatosCompra, DatosEcho
 from ..domain.puertos import RepositorioTarjetas
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 
@@ -86,6 +86,39 @@ def _origen_para_vista_previa(politica, numero: str) -> str:
     return origen
 
 
+def _vista_previa_de_mensaje(
+    mensaje, perfil, codec, no_reproducibles: frozenset[str]
+) -> VistaPreviaMensaje:
+    """Comun a cualquier operacion (B2): enmascarar, calcular bitmap, y armar
+    las filas de `CampoVistaPrevia` -lo unico que cambia entre compra y echo
+    es COMO se llega a `mensaje`, nunca esta parte."""
+    mti = mensaje.mti
+    # Reasignado a la MISMA variable a proposito -nunca queda una referencia
+    # viva al mensaje real bajo otro nombre que un cambio futuro pudiera usar
+    # por error-: en cuanto se enmascara, "mensaje" YA ES la version segura
+    # para el resto de esta funcion.
+    mensaje = mensaje.enmascarado()
+
+    try:
+        bitmap = codec.bitmap_hex(mensaje, perfil)
+    except ErrorDeCodificacion:
+        bitmap = None
+
+    politica = perfil.politica(mti)
+    campos = [
+        CampoVistaPrevia(
+            numero=numero,
+            valor=valor,
+            origen=_origen_para_vista_previa(politica, numero),
+            es_valor_definitivo=(
+                politica.origen(numero) != "automatico" and numero not in no_reproducibles
+            ),
+        )
+        for numero, valor in sorted(mensaje.campos.items(), key=lambda par: int(par[0]))
+    ]
+    return VistaPreviaMensaje(mti=mti, bitmap=bitmap, campos=campos)
+
+
 class ServicioVistaPrevia:
     """Arma la vista previa reusando el mismo `armar_compra` y el mismo codec
     que la ejecucion real -nunca una segunda implementacion del builder-.
@@ -130,33 +163,35 @@ class ServicioVistaPrevia:
         mensaje = armar_compra(
             datos, tarjeta, stan=STAN_MARCADOR, momento=momento, perfil=self._perfil
         )
-        mti = mensaje.mti
-        # Reasignado a la MISMA variable a proposito -nunca queda una
-        # referencia viva al mensaje real bajo otro nombre que un cambio
-        # futuro pudiera usar por error-: en cuanto se enmascara, "mensaje" YA
-        # ES la version segura para el resto de esta funcion.
-        mensaje = mensaje.enmascarado()
+        return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, no_reproducibles)
 
-        try:
-            bitmap = self._codec.bitmap_hex(mensaje, self._perfil)
-        except ErrorDeCodificacion:
-            bitmap = None
 
-        # `mti` viene de `mensaje.mti` (el MTI real que armo `armar_compra`,
-        # linea 133), no de una constante de compra hardcodeada: B1 -este
-        # servicio no necesita saber que MTI arma la operacion, solo pedirle
-        # su politica al perfil con el MTI que la operacion ya produjo.
-        politica = self._perfil.politica(mti)
-        campos = [
-            CampoVistaPrevia(
-                numero=numero,
-                valor=valor,
-                origen=_origen_para_vista_previa(politica, numero),
-                es_valor_definitivo=(
-                    politica.origen(numero) != "automatico"
-                    and numero not in no_reproducibles
-                ),
-            )
-            for numero, valor in sorted(mensaje.campos.items(), key=lambda par: int(par[0]))
-        ]
-        return VistaPreviaMensaje(mti=mti, bitmap=bitmap, campos=campos)
+class ServicioVistaPreviaEcho:
+    """Vista previa del 0800 (Network Management/Echo, B2): mismo principio
+    que `ServicioVistaPrevia`, reusando `armar_echo` -nunca una segunda
+    implementacion del builder-. Sin tarjeta que buscar: la construccion es
+    mas simple que la de compra, no porque se haya recortado nada, sino
+    porque un echo genuinamente no tiene ese concepto.
+    """
+
+    def __init__(
+        self,
+        codec,
+        perfil,
+        *,
+        reloj: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._codec = codec
+        self._perfil = perfil
+        self._reloj = reloj or (lambda: datetime.now(timezone.utc))
+
+    async def construir(self, datos: DatosEcho) -> VistaPreviaMensaje:
+        momento = self._reloj()
+        contexto_variables = ContextoResolucion(stan=STAN_MARCADOR, momento=momento)
+        campos_resueltos, no_reproducibles = resolver_campos_manuales(
+            datos.campos_manuales, contexto_variables
+        )
+        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
+
+        mensaje = armar_echo(datos, stan=STAN_MARCADOR, momento=momento, perfil=self._perfil)
+        return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, no_reproducibles)
