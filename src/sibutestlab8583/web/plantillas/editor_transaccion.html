@@ -1,17 +1,27 @@
 {% extends "base.html" %}
 {% from "_piezas.html" import estado, senal, encabezado_pagina %}
-{% block titulo %}Compra financiera · SibuTestLab8583{% endblock %}
+{% block titulo %}{{ operacion.titulo_pagina }} · SibuTestLab8583{% endblock %}
 
 {% block contenido %}
-{{ encabezado_pagina(
-  'Compra financiera',
-  'Construye un mensaje 0200 (transacción financiera: mueve fondos en el mismo mensaje, a diferencia de la autorización 0100), lo transmite por TCP a la conexión elegida e interpreta la respuesta 0210. Cada intento queda registrado en el historial, igual que una autorización.'
-) }}
+{# Editor comun a cualquier operacion CON TARJETA (B5): antes de esto,
+   `compra.html` (Autorizacion, 0100) y `financiera.html` (Compra financiera,
+   0200) eran ~90% el mismo formulario, con solo el MTI/textos/rutas de
+   ejecucion realmente distintos -toda esa diferencia real ahora vive en el
+   objeto `operacion` (OperacionIso, ver web/operaciones.py) que la ruta
+   pasa al renderizar; esta plantilla nunca condiciona por MTI. Agregar una
+   tercera operacion con tarjeta no exige copiar este archivo: exige una
+   entrada nueva en `OPERACIONES_CON_TARJETA`.
+
+   Echo (0800) NO usa esta plantilla -no tiene tarjeta ni monto, ver
+   echo.html-: unificar aqui hubiera sido homogeneizar, no simplificar. #}
+{{ encabezado_pagina(operacion.titulo_pagina, operacion.descripcion_pagina) }}
 
 {% if aviso %}
 {{ estado(aviso) }}
 {% endif %}
 
+{# El bloque de error de entrada no usa el macro: su titulo es fijo y no
+   proviene de un `Aviso`, asi que no es la misma pieza. #}
 {% if error %}
 <div class="aviso error">
   <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
@@ -41,13 +51,38 @@
 </div>
 {% endif %}
 
-<form method="post" action="/financiera" id="formulario-financiera">
+<form method="post" action="{{ operacion.ruta_ejecutar }}" id="formulario-constructor">
   <input type="hidden" name="conexion_id" value="{{ conexion_id }}">
   <input type="hidden" name="escenario_id" value="{{ escenario_actual.escenario_id if escenario_actual else '' }}">
-  <input type="hidden" name="mti" value="{{ mti_financiera }}">
+  <input type="hidden" name="mti" value="{{ operacion.mti }}">
+  {# Fuente de verdad de que opcionales se muestran como fila -independiente
+     de si ya tienen un valor escrito-. "+ Agregar campo"/"Quitar" reenvian
+     todo el formulario a `operacion.ruta` (mismo mecanismo que "Cambiar
+     conexion"), que recalcula este CSV con el campo agregado/quitado y
+     vuelve a renderizar. #}
+  <input type="hidden" name="opcionales_activos" value="{{ opcionales_activos_csv }}">
 
+  {# El selector de conexion vive DENTRO del formulario a proposito: el boton
+     "Cambiar" somete el formulario entero por POST a `operacion.ruta`
+     (hereda el metodo del propio <form>; sin `formmethod`, a diferencia del
+     resto de botones de esta pantalla, que si cambian de metodo/destino)
+     -asi el navegador entrega TODOS los campos ya escritos (tarjeta, monto,
+     campos editables, expectativas, nombre de escenario) en el CUERPO de la
+     peticion, nunca en la URL. `formnovalidate` evita que un `monto` vacio o
+     invalido (campo `required`) bloquee el cambio de conexion. El boton usa
+     su propio nombre, `ir_a_conexion`, para no chocar con el campo oculto
+     `conexion_id` de arriba (ese lleva el valor VIEJO, antes del cambio). #}
   <div class="compra-shell">
+    {# El aside va PRIMERO en el DOM -aunque se vea a la derecha, via
+       `order` en CSS-: mismo orden de lectura/tabulacion para cualquier
+       operacion con tarjeta -conexion y tarjeta antes que la tabla de
+       campos-. #}
     <aside class="compra-shell__aside">
+      <p class="recorrido__paso">
+        <span class="recorrido__numero">1</span> Configuración
+        <span class="recorrido__linea" aria-hidden="true"></span>
+      </p>
+
       <div class="conexion-barra">
         {% if conexion_actual %}
         <span class="chip chip--sintetica">Sin verificar</span>
@@ -66,7 +101,7 @@
           <summary>Cambiar</summary>
           <div class="tarjetas">
             {% for conexion in conexiones %}
-            <button type="submit" formaction="/financiera" formnovalidate
+            <button type="submit" formaction="{{ operacion.ruta }}" formnovalidate
                     name="ir_a_conexion" value="{{ conexion.conexion_id }}"
                     class="tarjeta tarjeta--boton{{ ' tarjeta--seleccionada' if conexion_actual and conexion.conexion_id == conexion_actual.conexion_id }}">
               <span class="tarjeta__id">{{ conexion.nombre }}</span>
@@ -129,7 +164,12 @@
             {% if vista_previa %}<span class="panel__nota">{{ vista_previa.mti }}</span>{% endif %}
           </summary>
           <div class="panel__cuerpo">
-            <button type="submit" formaction="/financiera" formnovalidate class="boton boton--sm">
+            {# Sin JavaScript, elegir tarjeta o escribir el monto no recarga la
+               pantalla por si solo: este boton somete el formulario completo
+               a `operacion.ruta` -mismo mecanismo sin efectos que ya usa
+               "Cambiar conexion"- para refrescar la vista previa con lo que
+               este escrito en este momento, sin ejecutar nada. #}
+            <button type="submit" formaction="{{ operacion.ruta }}" formnovalidate class="boton boton--sm">
               Actualizar vista previa
             </button>
             {% if vista_previa %}
@@ -182,11 +222,15 @@
         </details>
       </section>
 
+      <p class="recorrido__paso">
+        <span class="recorrido__numero">3</span> Ejecución
+        <span class="recorrido__linea" aria-hidden="true"></span>
+      </p>
       <section class="panel">
         <div class="panel__cuerpo acciones acciones--columna">
-          <button class="boton" type="submit" formaction="/financiera/ejecutar" {{ 'disabled' if not puede_ejecutar }}>
+          <button class="boton" type="submit" formaction="{{ operacion.ruta_ejecutar }}" {{ 'disabled' if not puede_ejecutar }}>
             {{ senal('transmision', 16) }}
-            Ejecutar compra financiera
+            {{ operacion.verbo_ejecutar }}
           </button>
           <span class="acciones__nota">
             Requiere un receptor escuchando en la conexión elegida. Para la demostración:
@@ -197,25 +241,40 @@
     </aside>
 
     <div class="compra-shell__principal">
+      <p class="recorrido__paso">
+        <span class="recorrido__numero">2</span> Mensaje {{ operacion.mti }}
+        <span class="recorrido__linea" aria-hidden="true"></span>
+      </p>
       <section class="panel">
         <div class="panel__cabecera">
-          <h2 class="panel__titulo">Construir transacción · 0200</h2>
+          <h2 class="panel__titulo">{{ operacion.titulo_constructor }}</h2>
           <span class="panel__nota">{{ filas_constructor|length }} campos</span>
         </div>
         <div class="panel__cuerpo">
+          {# Agrupados por origen -editable/derivado/automatico-, el mismo dato
+             que `fila.origen` ya trae: se lee mejor "qué puedo tocar" primero y
+             "qué se resuelve solo" despues, sin reordenar ni recalcular nada. #}
           {% for grupo_origen, etiqueta_grupo, nota_grupo in [
                ('editable', 'Editables', 'usted decide el valor'),
+               ('opcional', 'Opcionales agregados', 'usted decide el valor, y puede quitarlos'),
                ('derivado', 'Derivados de la tarjeta', 'se resuelven solos'),
                ('automatico', 'Automáticos', 'se generan al enviar'),
              ] %}
           {% set filas_grupo = filas_constructor|selectattr('origen', 'equalto', grupo_origen)|list %}
-          {% if filas_grupo %}
+          {% if filas_grupo or (grupo_origen == 'opcional' and campos_opcionales_disponibles) %}
           <div class="grupo-campos">
             <p class="grupo-campos__titulo">{{ etiqueta_grupo }} <span class="grupo-campos__nota">· {{ nota_grupo }}</span></p>
+            {% if filas_grupo %}
             <div class="desplazable" tabindex="0" role="region" aria-label="Campos {{ etiqueta_grupo|lower }}">
               <table class="tabla">
                 <thead>
-                  <tr><th>DE</th><th>Nombre</th><th>Valor</th><th>Estado</th></tr>
+                  <tr>
+                    <th>DE</th>
+                    <th>Nombre</th>
+                    <th>Valor</th>
+                    <th>Estado</th>
+                    {% if grupo_origen == 'opcional' %}<th><span class="visualmente-oculto">Acción</span></th>{% endif %}
+                  </tr>
                 </thead>
                 <tbody>
                   {% for fila in filas_grupo %}
@@ -223,7 +282,7 @@
                     <td><span class="campo-iso">{{ fila.numero }}</span></td>
                     <td>{{ fila.descripcion }}</td>
                     <td>
-                      {% if fila.origen == 'editable' %}
+                      {% if fila.origen == 'editable' or fila.origen == 'opcional' %}
                       <input type="text" name="campo_{{ fila.numero }}" class="campo-tabla" autocomplete="off"
                              value="{{ campos_manuales.get(fila.numero, fila.valor) }}">
                       {% else %}
@@ -239,25 +298,57 @@
                       <span class="chip chip--qa">Derivado</span>
                       {% elif fila.origen == 'automatico' %}
                       <span class="chip chip--sintetica">Automático</span>
+                      {% elif fila.origen == 'opcional' %}
+                      <span class="chip chip--activa">Opcional agregado</span>
                       {% elif fila.obligatorio %}
                       <span class="chip chip--inactiva">Requerido</span>
                       {% else %}
                       <span class="chip chip--activa">Opcional</span>
                       {% endif %}
                     </td>
+                    {% if grupo_origen == 'opcional' %}
+                    <td>
+                      <button type="submit" formaction="{{ operacion.ruta }}" formnovalidate
+                              name="quitar_opcional" value="{{ fila.numero }}"
+                              class="boton boton--sm">
+                        Quitar
+                      </button>
+                    </td>
+                    {% endif %}
                   </tr>
                   {% endfor %}
                 </tbody>
               </table>
             </div>
+            {% endif %}
+            {% if grupo_origen == 'opcional' and campos_opcionales_disponibles %}
+            <div class="agregar-campo">
+              {# `candidato_opcional` (el <select>) viaja SIEMPRE que se somete
+                 el formulario, sin importar que boton se haya pulsado -asi
+                 funciona un <select> dentro de un <form> con varios
+                 submits-. Por eso el disparador real es el propio boton,
+                 `agregar_opcional` -solo un boton aporta su name=value
+                 cuando ES el que se pulsa-: sin esta separacion, pulsar
+                 "Quitar" en otra fila reenviaria tambien el candidato que
+                 haya quedado seleccionado aqui, agregandolo por error. #}
+              <label class="visualmente-oculto" for="candidato_opcional">Agregar campo opcional</label>
+              <select id="candidato_opcional" name="candidato_opcional">
+                {% for candidato in campos_opcionales_disponibles %}
+                <option value="{{ candidato.numero }}">DE{{ candidato.numero }} — {{ candidato.descripcion }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" formaction="{{ operacion.ruta }}" formnovalidate
+                      name="agregar_opcional" value="1" class="boton boton--sm">
+                + Agregar campo
+              </button>
+            </div>
+            {% endif %}
           </div>
           {% endif %}
           {% endfor %}
           <p class="campo__pista">
             Los campos derivados y automáticos no se pueden editar aquí: el servidor los ignora y
-            los reemplaza aunque lleguen en el envío. Esta pantalla todavía no ofrece "+ Agregar
-            campo" para los opcionales de esta operación (18/25/32/42/43) -pueden guardarse desde
-            un escenario/CLI/suite igual, es una deuda documentada de esta iteración-.
+            los reemplaza aunque lleguen en el envío.
           </p>
         </div>
       </section>
