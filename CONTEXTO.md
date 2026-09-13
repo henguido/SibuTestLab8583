@@ -4,25 +4,32 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-13 (B7 — reverso interactivo real, 0400/0410)
+**Última actualización:** 2026-09-13 (C1 — Secuencias transaccionales, infraestructura mínima)
 
 ## Estado actual
 
-**Modelo multi-MTI (Fase B, `docs/roadmap/SIBU_3.md`):** B1-B6 integrados a `main` (merges
-`1998491`, `07b69f3`, `7c034ed`): núcleo genérico del Orquestador, Echo 0800/0810,
+**Modelo multi-MTI (Fase B, `docs/roadmap/SIBU_3.md`):** B1-B7 integrados a `main` (merges
+`1998491`, `07b69f3`, `7c034ed`, `6a31ce3`): núcleo genérico del Orquestador, Echo 0800/0810,
 escenarios/suites/CLI Multi-MTI, compra financiera 0200/0210, editor común de operaciones con
-tarjeta (`OperacionIso`), y el modelo de operación derivada (`ejecucion_origen_id`, elegibilidad,
-`ReferenciaEjecucion`). **B7** (`feature/multi-mti-b7-reversal-0400`, commits `820bd5e`/
-`cde3852`/`6f4f3f6`/`de0556b`, sin mergear todavía) implementó el reverso **real** 0400/0410:
-perfil cerrado sin campos editables, `application/armado_reverso.py::armar_reverso_financiero`
-(builder puro, sin texto libre), `Orquestador.ejecutar_reverso_financiero` (revalida elegibilidad
-siempre, server-side), y el flujo completo en la UI (Historial → 0200 aprobada → "Crear reverso"
-→ preview → ejecutar). Host simulado y RN-3 no necesitaron ningún cambio (ya eran genéricos por
-MTI desde B1/B2). DE90 investigado de nuevo con la composición exacta en mano y **no
-implementado** (falta institución receptora/DE33 en el perfil; ver justificación en el código).
-Detalle completo (reporte A-N) en `docs/roadmap/SIBU_3.md` sección 9; decisiones de gobernanza en
-`BITACORA.md`, entrada "B7 — Reverso interactivo real". Suite completa: **1296 passed,
-0 skipped**.
+tarjeta (`OperacionIso`), el modelo de operación derivada (`ejecucion_origen_id`, elegibilidad,
+`ReferenciaEjecucion`, B6) y el reverso financiero real 0400/0410 (`armar_reverso_financiero`,
+`Orquestador.ejecutar_reverso_financiero`, B7). DE90 investigado dos veces (B6/B7) y **no
+implementado** (falta institución receptora/DE33 en el perfil).
+
+**Fase C — Secuencias transaccionales (`feature/secuencias-c1-core`, commits `a81e080`/
+`e139522`/`f52eaf5`, sin mergear todavía):** infraestructura mínima (C1) para ejecutar una lista
+de pasos DEPENDIENTES -a diferencia de una Suite, cuyos escenarios son independientes-. Primer
+caso real soportado: paso 1 = compra financiera (escenario guardado), paso 2 = su reverso,
+automático (`PasoSecuencia.origen_tipo="derivado"` + `origen_paso_orden`). `ContextoSecuencia`
+(mapa `{orden: ejecucion_id}`, API explícita) + `EjecutorDeSecuencia` reutilizan tal cual
+`EjecutorDeEscenarios` (paso independiente) y `Orquestador.ejecutar_reverso_financiero` (paso
+derivado, B6/B7) — ningún sistema de referencias nuevo. Nuevo estado `BLOQUEADO`
+(`EstadoPasoSecuencia`): un paso derivado cuyo origen no produjo una ejecución elegible (0200
+rechazada, timeout, etc.) — nunca se finge FAIL/ERROR de algo que no se intentó. UI mínima:
+`/secuencias`, `/secuencias/nueva`, `/secuencias/corridas[/{id}]`.
+
+Detalle completo (reporte A-N de B7 y de C1) en `docs/roadmap/SIBU_3.md` secciones 9 y 10;
+decisiones de gobernanza en `BITACORA.md`. Suite completa: **1330 passed, 0 skipped**.
 
 **Estado anterior a Fase B (2026-09-09):**
 

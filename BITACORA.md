@@ -2899,3 +2899,50 @@ no de dispersión de código.
 `820bd5e` (B7.1 perfil), `cde3852` (B7.2 referencia+builder), `6f4f3f6` (B7.3 orquestador),
 `de0556b` (B7.4-B7.7 UI/preview/seguridad). Sin merge a `main` — pendiente de aprobación del
 propietario. Reporte completo (secciones A-N) en `docs/roadmap/SIBU_3.md` sección 9.
+
+## 2026-09-13 · B7 integrado a main; C1 — Secuencias transaccionales (infraestructura mínima)
+
+**Decisión de orden, tomada por el propietario antes de abrir C1:** no avanzar a 0420/0430
+todavía. Primero integrar B7 a `main`, y luego construir la infraestructura mínima de
+Secuencias -objetivo explícito: demostrar correctamente un paso 1 (0200→0210) seguido de un
+paso 2 (0400→0410) que usa la ejecución del paso 1 como origen del reverso, reutilizando B6/B7
+sin crear un segundo sistema de referencias-.
+
+**Integración de B7 a `main`:** merge `6a31ce3`, historia preservada (sin squash). Suite
+completa verde antes y después (1296 passed, 0 skipped). Smoke real en navegador (0200 aprobada
+→ chip "Elegible para reverso" → preview → 0400/0410 real → navegación bidireccional) sin
+cambios de comportamiento.
+
+**C1 — Secuencias transaccionales:** primera vez que este laboratorio ejecuta una lista de
+pasos DEPENDIENTES -a diferencia de una Suite, cuyos escenarios son independientes-. Investigado
+antes de diseñar (4 agentes de solo lectura: arquitectura, persistencia, contexto/variables,
+UX), siguiendo el mismo criterio que B6. Decisiones clave: `PasoSecuencia.origen_tipo`
+(independiente/derivado) en vez del `ContextoPaso`/`depende_de`/`captura` genérico que el diseño
+original de Agente 3 había propuesto -no había un segundo caso real que lo justificara todavía-;
+tablas nuevas nombradas `secuencias_transaccionales`/`secuencia_transaccional_pasos`/
+`corridas_secuencia`/`corrida_secuencia_pasos` para NO chocar con la tabla `secuencias`
+preexistente (contador de STAN, hallazgo de la investigación previa); `EstadoPasoSecuencia`
+reutiliza el vocabulario de `EstadoItemCorrida` + agrega `BLOQUEADO` (un paso derivado cuyo
+origen no produjo una ejecución elegible -nunca se finge FAIL/ERROR de algo que no llegó a
+intentarse-).
+
+**El motor no duplica nada de B6/B7:** un paso independiente delega tal cual en
+`EjecutorDeEscenarios`; un paso derivado arma `DatosReversoFinanciero` con el `ejecucion_id` que
+`ContextoSecuencia` ya registró y delega en `Orquestador.ejecutar_reverso_financiero`, que
+revalida la elegibilidad él mismo -las excepciones ya existentes se clasifican como `BLOQUEADO`,
+nunca se reimplementa la regla-.
+
+**Persistencia:** 4 tablas nuevas vía `CREATE TABLE IF NOT EXISTS`, sin tocar ninguna tabla
+existente. Aplicada contra la base real de desarrollo con backup
+(`sibutestlab8583.db.bak-preC1-20260913-162610`), 72 filas antes/después, `PRAGMA
+foreign_key_check` vacío, re-ejecutada para confirmar idempotencia.
+
+**E2E real (TCP/host/SQLite reales):** compra financiera → reverso derivado con STAN nuevo y
+`ejecucion_origen_id` correcto; una 0200 rechazada bloquea el paso 2 sin generar ningún 0400; un
+timeout en el paso 1 también lo bloquea. Verificado además con un recorrido manual completo en
+navegador real: crear escenario, crear secuencia, ejecutarla, navegar la corrida y su Isoscopio.
+
+**Tests:** 1296 passed al cerrar B7 → 1330 passed al cerrar C1 (34 nuevos, 0 skipped). Commits:
+`a81e080` (C1.1 modelo+persistencia), `e139522` (C1.2 contexto+ejecutor), `f52eaf5` (C1.3 UI
+mínima). Sin merge a `main` — pendiente de aprobación del propietario. Reporte completo
+(secciones A-N) en `docs/roadmap/SIBU_3.md` sección 10.
