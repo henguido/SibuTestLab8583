@@ -48,6 +48,13 @@ prueba real de que `_ejecutar` sirve para algo distinto de compra. Mismo
 patron que `ejecutar_compra` -arma su propio `MensajeIso` (`armar_echo`,
 sin tarjeta ni monto) y llama a `_ejecutar`-, nunca un `if tipo == ...`
 dentro de este archivo ni una funcion `armar_todo` con banderas.
+
+TERCERA OPERACION (B4, 2026-09-13): `ejecutar_compra_financiera` (0200) es
+la prueba de que el nucleo tambien reutiliza sin cambios una operacion que
+SI vuelve a usar tarjeta y monto -no solo una sin ellos (echo)-. Cero lineas
+tocadas en `_ejecutar`, en `domain/validacion.py` ni en `domain/expectativas.py`
+para agregarla: toda la novedad vive en `armar_compra_financiera` (que MTI
+arma) y en la politica del perfil (que campos exige).
 """
 
 from __future__ import annotations
@@ -59,15 +66,17 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Callable
 
-from ..domain.armado import armar_compra, armar_echo
+from ..domain.armado import armar_compra, armar_compra_financiera, armar_echo
 from ..domain.catalogo import CatalogoDeRespuestas
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 from ..domain.expectativas import evaluacion_a_dict, evaluar_expectativas, validar_expectativas
 from ..domain.modelos import (
     MTI_COMPRA,
+    MTI_COMPRA_FINANCIERA,
     MTI_ECHO,
     DatosCompra,
+    DatosCompraFinanciera,
     DatosEcho,
     DestinoTcp,
     Ejecucion,
@@ -247,6 +256,56 @@ class Orquestador:
         return await self._ejecutar(
             solicitud,
             stan,
+            escenario_id=escenario_id,
+            escenario_nombre=escenario_nombre,
+            expectativas=expectativas,
+        )
+
+    async def ejecutar_compra_financiera(
+        self,
+        datos: DatosCompraFinanciera,
+        *,
+        escenario_id: str | None = None,
+        escenario_nombre: str | None = None,
+        expectativas: Expectativas | None = None,
+    ) -> ResultadoCompra:
+        """Arma, valida y ejecuta una compra financiera (0200, B4). Tercera
+        operacion real sobre `_ejecutar`: mismo patron exacto que
+        `ejecutar_compra` -busca tarjeta, resuelve variables dinamicas, arma
+        el mensaje, delega en el nucleo generico- porque una compra
+        financiera comparte con una compra el mismo concepto de dominio
+        (mueve fondos con una tarjeta elegida). La UNICA diferencia real es
+        que arma con `armar_compra_financiera` (MTI 0200) en vez de
+        `armar_compra` (MTI 0100); no se introduce ningun `if` nuevo en
+        `_ejecutar` ni en RN-1..RN-4 para lograrlo.
+        """
+        if expectativas is not None:
+            validar_expectativas(
+                expectativas, self._perfil, mti_de_respuesta(MTI_COMPRA_FINANCIERA)
+            )
+
+        tarjeta = await self._tarjetas.obtener(datos.card_id)
+        if tarjeta is None or not tarjeta.activa:
+            raise TarjetaDesconocida(f"no existe la tarjeta {datos.card_id!r}")
+
+        momento = self._reloj()
+        stan = await self._stan.siguiente()
+        contexto_variables = ContextoResolucion(monto=datos.monto, stan=stan, momento=momento)
+        campos_resueltos, _ = resolver_campos_manuales(datos.campos_manuales, contexto_variables)
+        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
+        solicitud = armar_compra_financiera(
+            datos,
+            tarjeta,
+            stan=stan,
+            momento=momento,
+            perfil=self._perfil,
+        )
+
+        return await self._ejecutar(
+            solicitud,
+            stan,
+            card_id=datos.card_id,
+            monto=datos.monto,
             escenario_id=escenario_id,
             escenario_nombre=escenario_nombre,
             expectativas=expectativas,

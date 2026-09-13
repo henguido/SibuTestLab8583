@@ -27,9 +27,11 @@ from typing import Awaitable, Callable
 
 from ..domain.modelos import (
     DatosCompra,
+    DatosCompraFinanciera,
     DatosEcho,
     DestinoTcp,
     MTI_COMPRA,
+    MTI_COMPRA_FINANCIERA,
     MTI_ECHO,
     ResultadoCompra,
 )
@@ -48,6 +50,12 @@ def _datos_echo(escenario: EscenarioAdministrado) -> DatosEcho:
     return DatosEcho(campos_manuales=escenario.campos_manuales)
 
 
+def _datos_compra_financiera(escenario: EscenarioAdministrado) -> DatosCompraFinanciera:
+    return DatosCompraFinanciera(
+        card_id=escenario.card_id, monto=escenario.monto, campos_manuales=escenario.campos_manuales
+    )
+
+
 #: MTI -> (constructor de `DatosX` a partir del escenario, nombre del metodo
 #: del Orquestador que lo ejecuta). La unica fuente de "que operacion sabe
 #: reejecutar el sistema hoy"; un MTI que no este aqui revienta con un
@@ -55,6 +63,7 @@ def _datos_echo(escenario: EscenarioAdministrado) -> DatosEcho:
 _ADAPTADORES_POR_MTI: dict[str, tuple[Callable[[EscenarioAdministrado], object], str]] = {
     MTI_COMPRA: (_datos_compra, "ejecutar_compra"),
     MTI_ECHO: (_datos_echo, "ejecutar_network_echo"),
+    MTI_COMPRA_FINANCIERA: (_datos_compra_financiera, "ejecutar_compra_financiera"),
 }
 
 

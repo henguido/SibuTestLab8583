@@ -1,4 +1,5 @@
-"""Host simulado: recibe un 0100 (o un 0800, B2) y responde correlacionado.
+"""Host simulado: recibe un 0100, un 0800 (B2) o un 0200 (B4) y responde
+correlacionado.
 
 Reutiliza el mismo codec, el mismo perfil generico y el mismo framing de
 demostracion que el cliente. No valida reglas de negocio: es el sistema
@@ -17,25 +18,54 @@ responde con exito (DE39="00"): en esta primera entrega no hay concepto de
 "echo rechazado", y `--codigo` sigue siendo exclusivo de compra. `_alterados`
 (inyeccion de campos para pruebas adversariales) sigue aplicando a cualquier
 MTI, sin cambios.
+
+B4 (2026-09-13): la compra financiera (0200) agrega el primer RECHAZO
+DETERMINISTA de este laboratorio que no depende de `--codigo`: si el monto
+de la solicitud supera `UMBRAL_SINTETICO_RECHAZO_FINANCIERO`, la respuesta
+trae DE39="51" (fondos insuficientes) en vez de "00", SIN que quien construyo
+el host tuviera que pasar ningun parametro para activarlo. Es una regla de
+LABORATORIO, deliberadamente sintetica -umbral arbitrario, no un limite de
+ninguna marca ni de ningun emisor real-, pensada solo para poder demostrar
+PASS/FAIL/rechazo con una operacion financiera real (ver
+`test_seguridad_...`/`test_host_simulado_compra_financiera.py`). Un llamador
+que fije `--codigo`/`codigo_respuesta` explicitamente a un valor distinto de
+"00" sigue ganando siempre -mismo mecanismo ya usado por compra para forzar
+un codigo en pruebas-, asi que esta regla nunca le quita a nadie la
+capacidad de forzar un codigo especifico a mano.
 """
 
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 from typing import Mapping
 
+from ...domain.armado import formatear_monto
 from ...domain.errores import ErrorDeFraming
-from ...domain.modelos import MTI_COMPRA, MTI_ECHO, MensajeIso
+from ...domain.modelos import MTI_COMPRA, MTI_COMPRA_FINANCIERA, MTI_ECHO, MensajeIso
 from ...domain.validacion import CAMPO_CODIGO_RESPUESTA, campos_de_correlacion, mti_de_respuesta
 
-#: Campo que el autorizador agrega cuando aprueba una compra. No aplica a
-#: ningun otro MTI: un echo no tiene concepto de "codigo de autorizacion".
+#: Campo que el autorizador agrega cuando aprueba una compra (o una compra
+#: financiera, B4). No aplica a echo: un echo no tiene concepto de "codigo de
+#: autorizacion".
 CAMPO_AUTORIZACION = "38"
 
 #: El echo de este laboratorio siempre "responde bien" en esta primera
 #: entrega: no hay todavia un concepto de "echo rechazado" (ver
 #: docs/roadmap/SIBU_3.md, Fase D para reglas declarativas de rechazo).
 CODIGO_ECHO_EXITOSO = "00"
+
+#: Umbral SINTETICO de laboratorio para el rechazo automatico de una compra
+#: financiera (B4): un monto que lo supera responde DE39="51". No es un
+#: limite de ninguna marca, banco ni procesador real -un numero elegido para
+#: que la demostracion pueda producir un rechazo sin depender de `--codigo`-.
+UMBRAL_SINTETICO_RECHAZO_FINANCIERO = Decimal("100000.00")
+_MONTO_UMBRAL_RECHAZO_FINANCIERO = formatear_monto(UMBRAL_SINTETICO_RECHAZO_FINANCIERO)
+
+#: Codigo de "fondos insuficientes" para el rechazo sintetico por monto. Un
+#: numero de catalogo generico de laboratorio (ver `domain/catalogo.py`), no
+#: una especificacion de marca.
+CODIGO_RECHAZO_MONTO_SINTETICO = "51"
 
 
 class HostSimulado:
@@ -138,7 +168,24 @@ class HostSimulado:
             # Un echo siempre "responde bien" en esta primera entrega: no hay
             # concepto de rechazo ni de codigo de autorizacion para el.
             campos[CAMPO_CODIGO_RESPUESTA] = CODIGO_ECHO_EXITOSO
+        elif solicitud.mti == MTI_COMPRA_FINANCIERA and self._codigo == "00":
+            # Rechazo sintetico por monto (B4, ver docstring del modulo): solo
+            # se activa cuando nadie pidio un codigo explicito (`self._codigo`
+            # sigue en su default "00") -si alguien fijo `--codigo` a mano,
+            # esa eleccion explicita sigue ganando, igual que ya vale para
+            # compra, sin ningun camino especial aqui.
+            codigo = (
+                CODIGO_RECHAZO_MONTO_SINTETICO
+                if solicitud.campos.get("4", "0") > _MONTO_UMBRAL_RECHAZO_FINANCIERO
+                else "00"
+            )
+            campos[CAMPO_CODIGO_RESPUESTA] = codigo
+            if codigo == "00":
+                campos[CAMPO_AUTORIZACION] = solicitud.campos.get("11", "000000")
         else:
+            # Cubre MTI_COMPRA (codigo explicito o default) y MTI_COMPRA_FINANCIERA
+            # cuando alguien SI fijo `--codigo` a mano (self._codigo != "00"):
+            # el rechazo sintetico por monto ya se resolvio en el elif de arriba.
             campos[CAMPO_CODIGO_RESPUESTA] = self._codigo
             if solicitud.mti == MTI_COMPRA and self._codigo == "00":
                 campos[CAMPO_AUTORIZACION] = solicitud.campos.get("11", "000000")
