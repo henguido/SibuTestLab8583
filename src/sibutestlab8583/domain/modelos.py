@@ -637,6 +637,20 @@ class Ejecucion:
     motivo_detalle: str | None = None
     creada_en: datetime = field(default_factory=_ahora)
     id: int | None = None
+    #: Referencia a la ejecucion de la que ESTA se deriva (B6, 2026-09-13):
+    #: la relacion interna origen->derivada que un futuro reverso (0400/0410)
+    #: usara, sin depender de STAN/RRN -que pueden repetirse o no ser unicos-.
+    #: `None` para cualquier ejecucion independiente (la inmensa mayoria hoy:
+    #: B6 no crea ninguna derivada real todavia, solo el modelo). Un mismo
+    #: origen puede tener VARIAS derivadas -no es 1:1-: nada aqui lo impide,
+    #: la cardinalidad 1->N surge de que cualquier cantidad de filas puede
+    #: compartir el mismo `ejecucion_origen_id`. Nunca se resuelve con un
+    #: JOIN en cada lectura -mismo criterio que `escenario_id`/`escenario_nombre`-:
+    #: es un puntero de navegacion, no una fuente de datos; los datos seguros
+    #: de la ejecucion origen viajan aparte, en `ReferenciaEjecucion`
+    #: (`application/referencia_ejecucion.py`), construida SOLO con campos ya
+    #: enmascarados/no sensibles.
+    ejecucion_origen_id: int | None = None
 
 
 @dataclass(frozen=True)

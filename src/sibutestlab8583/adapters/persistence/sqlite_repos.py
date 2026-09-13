@@ -223,8 +223,8 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                 "  solicitud_enmascarada, respuesta_enmascarada,"
                 "  solicitud_json, respuesta_json, latencia_ms,"
                 "  escenario_id, escenario_nombre, evaluacion_estado, evaluacion_json,"
-                "  motivo_detalle)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  motivo_detalle, ejecucion_origen_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ejecucion.creada_en.isoformat(),
                     ejecucion.card_id,
@@ -247,6 +247,7 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
                     ejecucion.evaluacion_estado,
                     ejecucion.evaluacion_json,
                     ejecucion.motivo_detalle,
+                    ejecucion.ejecucion_origen_id,
                 ),
             )
             await conexion.commit()
@@ -268,6 +269,21 @@ class RepositorioEjecucionesSQLite(_RepositorioSQLite):
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
                 "SELECT * FROM ejecuciones ORDER BY id DESC LIMIT ?", (limite,)
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_ejecucion(f) for f in filas]
+
+    async def listar_derivadas(self, ejecucion_origen_id: int) -> Sequence[Ejecucion]:
+        """Todas las ejecuciones cuyo `ejecucion_origen_id` apunta a esta
+        (B6, modelo de reversos): 1 origen -> N derivadas, nunca 1:1. Sin
+        JOIN -cada fila ya es una `Ejecucion` completa por si misma, igual
+        que cualquier otra lectura de este repositorio.
+        """
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM ejecuciones WHERE ejecucion_origen_id = ? ORDER BY id ASC",
+                (ejecucion_origen_id,),
             ) as cursor:
                 filas = await cursor.fetchall()
         return [_a_ejecucion(f) for f in filas]
@@ -824,4 +840,5 @@ def _a_ejecucion(fila: aiosqlite.Row) -> Ejecucion:
         evaluacion_estado=_opcional(fila, "evaluacion_estado"),
         evaluacion_json=_opcional(fila, "evaluacion_json"),
         motivo_detalle=_opcional(fila, "motivo_detalle"),
+        ejecucion_origen_id=_opcional(fila, "ejecucion_origen_id"),
     )
