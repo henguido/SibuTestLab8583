@@ -191,6 +191,34 @@ ESPECIFICACION_GENERICA: dict[str, dict[str, Any]] = {
     "70": _fijo(3, "Código de información de gestión de red"),
 }
 
+#: Metadata de sensibilidad (ARCH-001/SEC-001, resuelto parcialmente en B2):
+#: que campos transporta este perfil que nunca deben persistirse ni mostrarse
+#: en claro. Separado de `METADATOS_CAMPOS_0100` a proposito -ese diccionario
+#: es "metadata de UI para campos editables"; este es un eje ortogonal que
+#: tambien cubre derivados (DE2 nunca se ofrece para editar a mano, pero SI
+#: es sensible)-. Es la fuente DECLARATIVA: `test_perfil_generico.py::
+#: test_todo_campo_declarado_sensible_tiene_autoridad_en_camposensibles`
+#: falla si algun dia se agrega aqui un campo que `domain.modelos.
+#: CAMPOS_SENSIBLES` no incluya -asi una futura ampliacion (Fase B2+, otro
+#: perfil, otro MTI con un campo de tarjeta bajo otro numero) no puede
+#: declarar sensibilidad aqui sin que la reja de enmascarado la aplique de
+#: verdad-.
+#:
+#: NO es todavia una migracion completa: `MensajeIso.enmascarado()` y el
+#: resto de los 6+ consumidores de `CAMPOS_SENSIBLES` (codec.py,
+#: expectativas.py, validacion.py, serializacion.py, presentacion.py) siguen
+#: leyendo la constante global de `domain/modelos.py`, no este diccionario -
+#: threading un `perfil` a traves de esas firmas es un cambio mayor,
+#: documentado como deuda explicita para B3 en docs/roadmap/SIBU_3.md-. Lo
+#: que SI cambia hoy: la constante global deja de ser la unica fuente de
+#: verdad no verificada; ahora tiene una prueba que la contrasta contra una
+#: declaracion explicita por campo.
+METADATOS_SENSIBLES: dict[str, MetadatoCampo] = {
+    "2": MetadatoCampo(
+        "2", "PAN", "Número de tarjeta (PAN)", TIPO_NUMERICO, False, 19, True,
+    ),
+}
+
 #: Metadata de UI/validacion de forma para los campos que este perfil conoce
 #: para el 0100 -obligatorios, editables y opcionales-. Automaticos/derivados
 #: no necesitan entrada aqui: la UI nunca ofrece escribirlos a mano.

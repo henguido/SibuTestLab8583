@@ -11,10 +11,11 @@ import iso8583
 import pytest
 
 from sibutestlab8583.domain.datos_sinteticos import monto_iso, pan_sintetico
-from sibutestlab8583.domain.modelos import MTI_COMPRA, MTI_RESPUESTA_COMPRA
+from sibutestlab8583.domain.modelos import CAMPOS_SENSIBLES, MTI_COMPRA, MTI_RESPUESTA_COMPRA
 from sibutestlab8583.profiles.generico import (
     CODIGO_PROCESO_COMPRA,
     METADATOS_CAMPOS_0100,
+    METADATOS_SENSIBLES,
     PERFIL_GENERICO,
     perfil_activo,
 )
@@ -201,3 +202,28 @@ def test_todo_editable_u_opcional_del_perfil_tiene_metadata():
     politica = PERFIL_GENERICO.politica(MTI_COMPRA)
     numeros_editables_u_opcionales = politica.editables | politica.opcionales
     assert numeros_editables_u_opcionales <= set(METADATOS_CAMPOS_0100)
+
+
+# --------------------------------- ARCH-001/SEC-001: autoridad de sensibilidad --
+#
+# Hallazgo de la jornada de agentes (docs/roadmap/SIBU_3.md): `CAMPOS_SENSIBLES`
+# (domain/modelos.py) es la unica fuente que de verdad gobierna el enmascarado,
+# pero antes de B2 no habia ninguna declaracion POR CAMPO que la contrastara -
+# nada impedia que un campo realmente sensible quedara fuera de esa constante
+# sin que ninguna prueba lo notara. `METADATOS_SENSIBLES` es esa declaracion
+# explicita (hoy solo DE2); esta prueba es la reja: si algun dia se agrega ahi
+# un campo sin agregarlo tambien a CAMPOS_SENSIBLES, falla aqui, no en
+# produccion como una fuga silenciosa.
+
+
+def test_todo_campo_declarado_sensible_tiene_autoridad_en_camposensibles():
+    for numero, metadato in METADATOS_SENSIBLES.items():
+        assert metadato.sensible is True, (
+            f"DE{numero} esta en METADATOS_SENSIBLES pero su propio metadato "
+            "dice sensible=False: la declaracion es inconsistente consigo misma"
+        )
+        assert numero in CAMPOS_SENSIBLES, (
+            f"DE{numero} se declara sensible en METADATOS_SENSIBLES pero "
+            "domain.modelos.CAMPOS_SENSIBLES no lo incluye: el enmascarado "
+            "real no lo protegeria"
+        )

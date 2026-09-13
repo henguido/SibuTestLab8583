@@ -14,6 +14,7 @@ qué fase está en qué estado:
 | A — Variables dinámicas | **IMPLEMENTADA** |
 | D0 — cobertura de `host_simulado/cli.py` | **IMPLEMENTADA** |
 | B — Modelo multi-MTI, subfase B1 (núcleo genérico) | **IMPLEMENTADA** en `feature/multi-mti-b1-core-generico` (sin mergear a `main`, en revisión) |
+| B — Modelo multi-MTI, subfase B2 (Echo 0800/0810, primer segundo flujo real) | **IMPLEMENTADA** en `feature/multi-mti-b2-network-management` (rama hija de B1, sin mergear a `main`, en revisión) |
 | B2 en adelante, C, D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
@@ -350,6 +351,25 @@ por metadata del perfil (`MetadatoCampo.sensible`, poblado de verdad y leído po
 que hoy importan la constante global), no por una constante de dominio que asume un único perfil.
 Un test de "sincronización" entre ambas fuentes sería cosmético mientras `MetadatoCampo.sensible`
 no tenga ningún consumidor real — se pospone a cuando B2 haga esa migración.
+
+**Actualización (B2, 2026-09-13): resuelto PARCIALMENTE, corrección mínima sin debilitar ninguna
+guardia existente.** Se agregó `profiles/generico.py::METADATOS_SENSIBLES` — una declaración
+explícita, por campo, de qué transporta datos sensibles (hoy solo DE2/PAN; DE35 no tiene entrada
+en `ESPECIFICACION_GENERICA` en absoluto, así que no hay nada que declarar todavía para Track 2) —
+más una prueba nueva (`test_todo_campo_declarado_sensible_tiene_autoridad_en_camposensibles`) que
+falla si algún campo declarado `sensible=True` ahí llegara a faltar en `CAMPOS_SENSIBLES`. Esto
+le da a la metadata una autoridad real y verificada: ya no es un campo inerte, es la fuente
+declarativa contra la que se contrasta el enforcement.
+
+**Lo que NO se hizo, deliberadamente, y queda como deuda explícita para B3:** los 6+ consumidores
+de `CAMPOS_SENSIBLES` (`codec.py`, `expectativas.py`, `validacion.py`, `serializacion.py`,
+`presentacion.py`, `modelos.py`) siguen leyendo la constante global de `domain/modelos.py`, no
+`METADATOS_SENSIBLES` directamente — en particular, `MensajeIso.enmascarado()` no recibe un
+`perfil` como parámetro hoy, y agregarlo sería un cambio de firma que toca código de seguridad
+crítico en muchos call sites a la vez. Esa migración completa (perfil→sensibilidad real en cada
+guardia) es la que de verdad cerraría ARCH-001/SEC-001 para un perfil arbitrario en B3+; lo hecho
+en B2 es la base declarativa y la prueba de regresión, no la migración completa. Ninguna guardia
+existente se tocó ni se debilitó.
 
 **NO se implementa en Fase B:** ningún catálogo de "tipos de operación" con nombres de negocio
 (retiro, transferencia) como enum de dominio — eso sería inventar semántica de marca, prohibido
