@@ -27,7 +27,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from ..domain.elegibilidad_reverso import puede_generar_operacion_derivada
+from ..domain.errores import EjecucionOrigenNoElegible, EjecucionOrigenNoEncontrada
+from ..domain.puertos import RepositorioEjecuciones
 from .consultas import DetalleEjecucion
+from .serializacion import interpretar
 
 #: Numeros de campo de la RESPUESTA que un futuro reverso podria necesitar
 #: para correlacionar/justificar la operacion derivada (DE37 RRN, DE38
@@ -59,6 +63,14 @@ class ReferenciaEjecucion:
     destino_host: str | None
     destino_puerto: int | None
     creada_en: datetime
+    #: DE41 (terminal) y DE37 (RRN) de la SOLICITUD original (B7): ninguno de
+    #: los dos es sensible, y un futuro reverso los necesita como datos
+    #: "referenciados del original" (ver `application/armado_reverso.py`).
+    #: `rrn` puede ser `None` -DE37 no es obligatorio en una 0200 (ver
+    #: `profiles.generico.OBLIGATORIOS_0200`), asi que el original pudo no
+    #: haberlo tenido nunca-.
+    terminal: str | None
+    rrn: str | None
     #: Subconjunto whitelisted de campos de la RESPUESTA (ver
     #: `CAMPOS_REFERENCIA_RESPUESTA`), numero -> valor ya enmascarado/seguro.
     #: Ausente (no en el dict) si ese campo no vino en la respuesta original.
@@ -89,5 +101,37 @@ def referencia_desde_detalle(detalle: DetalleEjecucion) -> ReferenciaEjecucion:
         destino_host=ejecucion.destino_host,
         destino_puerto=ejecucion.destino_puerto,
         creada_en=ejecucion.creada_en,
+        terminal=detalle.solicitud.valor("41"),
+        rrn=detalle.solicitud.valor("37"),
         campos_respuesta=campos_respuesta,
     )
+
+
+async def referencia_origen_elegible(
+    ejecucion_origen_id: int, repositorio_ejecuciones: RepositorioEjecuciones,
+) -> ReferenciaEjecucion:
+    """Resuelve, valida y construye la referencia de una futura operacion
+    derivada, en un unico lugar reusado por el orquestador (B7,
+    `ejecutar_reverso_financiero`) y por la vista previa del reverso -nunca
+    duplicado-.
+
+    Revienta con `EjecucionOrigenNoEncontrada`/`EjecucionOrigenNoElegible`
+    si `ejecucion_origen_id` no existe o no cumple
+    `domain.elegibilidad_reverso.puede_generar_operacion_derivada` (B6): la
+    autoridad de elegibilidad es SIEMPRE del servidor, nunca de lo que un
+    POST declare (B7, puntos 15/16) -asi una ejecucion origen no elegible,
+    o un id inexistente, nunca llega a generar un STAN ni a tocar la red.
+    """
+    origen = await repositorio_ejecuciones.obtener(ejecucion_origen_id)
+    if origen is None:
+        raise EjecucionOrigenNoEncontrada(f"no existe la ejecución #{ejecucion_origen_id}")
+    if not puede_generar_operacion_derivada(origen):
+        raise EjecucionOrigenNoElegible(
+            f"la ejecución #{ejecucion_origen_id} no es elegible para generar una operación derivada"
+        )
+    detalle = DetalleEjecucion(
+        ejecucion=origen,
+        solicitud=interpretar(origen.solicitud_json, origen.solicitud_enmascarada),
+        respuesta=interpretar(origen.respuesta_json, origen.respuesta_enmascarada),
+    )
+    return referencia_desde_detalle(detalle)
