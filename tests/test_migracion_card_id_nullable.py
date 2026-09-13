@@ -40,7 +40,13 @@ async def test_una_base_nueva_ya_nace_con_card_id_nullable(tmp_path):
 def _crear_base_anterior_a_b2(ruta) -> None:
     """Reproduce `ejecuciones` tal como era justo antes de B2: todas las
     columnas modernas ya presentes, pero `card_id`/`monto`/`moneda` todavia
-    `NOT NULL` (el esquema real anterior a este cambio)."""
+    `NOT NULL` (el esquema real anterior a este cambio). Incluye ademas
+    `suites`/`corridas_suite`/`corrida_suite_items` con una fila que
+    REFERENCIA la ejecucion -el caso real que revela el bug de FK: dropear
+    `ejecuciones` para reconstruirla, con `PRAGMA foreign_keys=ON`, viola la
+    FK de `corrida_suite_items.ejecucion_id` mientras exista esa fila, salvo
+    que la migracion la maneje explicitamente (ver
+    `_migrar_ejecuciones_card_id_nullable`)-."""
     ddl_anterior = """
     CREATE TABLE tarjetas_prueba (
         card_id           TEXT PRIMARY KEY,
@@ -80,8 +86,30 @@ def _crear_base_anterior_a_b2(ruta) -> None:
         evaluacion_json         TEXT,
         motivo_detalle          TEXT
     );
+    CREATE TABLE suites (
+        suite_id TEXT PRIMARY KEY,
+        nombre   TEXT NOT NULL
+    );
+    CREATE TABLE corridas_suite (
+        corrida_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+        suite_id     TEXT NOT NULL REFERENCES suites(suite_id),
+        suite_nombre TEXT NOT NULL,
+        estado       TEXT NOT NULL,
+        total        INTEGER NOT NULL,
+        iniciada_en  TEXT NOT NULL
+    );
+    CREATE TABLE corrida_suite_items (
+        corrida_id       INTEGER NOT NULL REFERENCES corridas_suite(corrida_id),
+        escenario_id     TEXT    NOT NULL,
+        escenario_nombre TEXT    NOT NULL,
+        orden            INTEGER NOT NULL,
+        resultado        TEXT    NOT NULL,
+        ejecucion_id     INTEGER REFERENCES ejecuciones(id),
+        PRIMARY KEY (corrida_id, orden)
+    );
     """
     with sqlite3.connect(ruta) as conexion:
+        conexion.execute("PRAGMA foreign_keys = ON")
         conexion.executescript(ddl_anterior)
         pan = pan_sintetico("6666")
         conexion.execute(
@@ -98,6 +126,20 @@ def _crear_base_anterior_a_b2(ruta) -> None:
             " VALUES ('2026-01-01T00:00:00+00:00', 'VIEJA-B2', '0100', '10.00', '188',"
             "         '000001', 'aprobada', '127.0.0.1', 8583, '00', 42)"
         )
+        conexion.execute(
+            "INSERT INTO suites (suite_id, nombre) VALUES ('S1', 'Suite vieja')"
+        )
+        conexion.execute(
+            "INSERT INTO corridas_suite"
+            " (corrida_id, suite_id, suite_nombre, estado, total, iniciada_en)"
+            " VALUES (1, 'S1', 'Suite vieja', 'finalizada', 1, '2026-01-01T00:00:00+00:00')"
+        )
+        conexion.execute(
+            "INSERT INTO corrida_suite_items"
+            " (corrida_id, escenario_id, escenario_nombre, orden, resultado, ejecucion_id)"
+            " VALUES (1, 'ESC1', 'Escenario viejo', 1, 'pass', 1)"
+        )
+        conexion.commit()
 
 
 async def test_una_base_anterior_a_b2_se_reconstruye_sin_perder_filas(tmp_path):
@@ -123,6 +165,27 @@ async def test_una_base_anterior_a_b2_se_reconstruye_sin_perder_filas(tmp_path):
     assert fila["destino_puerto"] == 8583
     assert fila["codigo_respuesta"] == "00"
     assert fila["latencia_ms"] == 42
+
+
+async def test_la_migracion_preserva_la_fk_de_corrida_suite_items(tmp_path):
+    """El caso real que revelo el bug: reconstruir `ejecuciones` mientras
+    `corrida_suite_items` la referencia no debe romper esa referencia ni
+    fallar por violacion de FK (ver docstring de
+    `_migrar_ejecuciones_card_id_nullable`)."""
+    ruta = tmp_path / "con_corridas.db"
+    _crear_base_anterior_a_b2(ruta)
+
+    await inicializar(ruta, con_datos_demo=False)  # no debe reventar
+
+    with sqlite3.connect(ruta) as conexion:
+        conexion.execute("PRAGMA foreign_keys = ON")
+        violaciones = conexion.execute("PRAGMA foreign_key_check").fetchall()
+        assert violaciones == [], f"quedaron referencias rotas: {violaciones}"
+
+        item = conexion.execute(
+            "SELECT ejecucion_id FROM corrida_suite_items WHERE corrida_id = 1"
+        ).fetchone()
+        assert item[0] == 1, "el enlace hacia el isoscopio de esa ejecucion se conserva"
 
 
 async def test_la_migracion_de_card_id_nullable_es_idempotente(tmp_path):

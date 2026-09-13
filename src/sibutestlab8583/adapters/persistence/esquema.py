@@ -428,7 +428,24 @@ async def _migrar_ejecuciones_card_id_nullable(conexion: aiosqlite.Connection) -
     que todavia tenga la restriccion vieja-.
 
     Idempotente por diseno: si `card_id` ya admite `NULL` (base nueva, o ya
-    migrada), no hace nada y devuelve `False`.
+    migrada), no hace nada y devuelve `False`. El `DROP TABLE IF EXISTS
+    ejecuciones_nueva_b2` inicial existe porque un intento anterior
+    interrumpido a mitad de camino (verificado en la practica: una version
+    previa de esta funcion fallaba por la FK de abajo, dejando la tabla
+    temporal creada pero `ejecuciones` intacta) no debe bloquear el reintento
+    con "the table already exists" -limpiar el residuo es seguro porque esa
+    tabla temporal nunca es la fuente de verdad mientras no se haya
+    renombrado.
+
+    `corrida_suite_items.ejecucion_id` referencia `ejecuciones(id)`: mientras
+    existan filas de suites ya corridas, `DROP TABLE ejecuciones` viola esa
+    FK si `PRAGMA foreign_keys` esta ON durante el rebuild -aunque la tabla
+    reaparezca con el mismo nombre e ids un instante despues-. Se apaga el
+    chequeo solo durante esta operacion (nunca se borra ni se recrea ninguna
+    fila de otra tabla, asi que no hay ninguna referencia real que se
+    rompa) y se restaura antes de devolver el control. `PRAGMA foreign_keys`
+    no se puede cambiar dentro de una transaccion abierta, por eso el commit
+    explicito antes de tocarlo.
     """
     async with conexion.execute("PRAGMA table_info(ejecuciones)") as cursor:
         columnas_info = await cursor.fetchall()
@@ -446,8 +463,11 @@ async def _migrar_ejecuciones_card_id_nullable(conexion: aiosqlite.Connection) -
     existentes = {fila[1] for fila in columnas_info}
     columnas_a_copiar = tuple(c for c in _COLUMNAS_EJECUCIONES if c in existentes)
     columnas_sql = ", ".join(columnas_a_copiar)
+    await conexion.commit()
+    await conexion.execute("PRAGMA foreign_keys = OFF")
     await conexion.executescript(
         f"""
+        DROP TABLE IF EXISTS ejecuciones_nueva_b2;
         CREATE TABLE ejecuciones_nueva_b2 (
             id                      INTEGER PRIMARY KEY AUTOINCREMENT,
             creada_en               TEXT    NOT NULL,
@@ -480,6 +500,8 @@ async def _migrar_ejecuciones_card_id_nullable(conexion: aiosqlite.Connection) -
         CREATE INDEX IF NOT EXISTS idx_ejecuciones_card_id   ON ejecuciones(card_id);
         """
     )
+    await conexion.commit()
+    await conexion.execute("PRAGMA foreign_keys = ON")
     return True
 
 
