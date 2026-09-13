@@ -252,6 +252,94 @@ CREATE TABLE IF NOT EXISTS corrida_suite_items (
     PRIMARY KEY (corrida_id, orden)
 );
 
+-- Fase C1: Secuencias transaccionales -pasos DEPENDIENTES (el paso 2 usa la
+-- ejecucion producida por el paso 1), a diferencia de una Suite (escenarios
+-- INDEPENDIENTES). Nombradas "secuencias_transaccionales"/"secuencia_
+-- transaccional_pasos" -NUNCA "secuencias" a secas- para no chocar con la
+-- tabla de arriba, que es el contador de STAN y no tiene relacion alguna
+-- con este concepto.
+--
+-- origen_tipo distingue, por paso, de donde salen sus datos:
+--   'independiente' -> arma su propio DatosX desde escenario_id, igual que
+--                      cualquier item de una suite hoy.
+--   'derivado'      -> NO tiene escenario_id (nada que armar libremente):
+--                      se construye enteramente desde la ejecucion que
+--                      produjo el paso `origen_paso_orden` de ESTA MISMA
+--                      secuencia (ver application/referencia_ejecucion.py,
+--                      B6/B7 -reusado tal cual, nunca un segundo sistema de
+--                      referencias).
+CREATE TABLE IF NOT EXISTS secuencias_transaccionales (
+    secuencia_id   TEXT    PRIMARY KEY,
+    nombre         TEXT    NOT NULL,
+    descripcion    TEXT    NOT NULL DEFAULT '',
+    activa         INTEGER NOT NULL DEFAULT 1,
+    creado_en      TEXT    NOT NULL,
+    actualizado_en TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_secuencias_transaccionales_nombre
+    ON secuencias_transaccionales(nombre);
+
+-- Pasos de la DEFINICION, en orden. escenario_id es NULL para un paso
+-- derivado -a proposito, no tiene sentido "que escenario arma un reverso
+-- derivado"-; origen_paso_orden es NULL para un paso independiente.
+-- expectativas_json solo aplica a un paso derivado (uno independiente ya
+-- trae sus propias expectativas en el escenario referenciado -no se
+-- duplican aqui, para no tener dos fuentes de la misma expectativa-).
+CREATE TABLE IF NOT EXISTS secuencia_transaccional_pasos (
+    secuencia_id      TEXT    NOT NULL REFERENCES secuencias_transaccionales(secuencia_id),
+    orden             INTEGER NOT NULL,
+    origen_tipo       TEXT    NOT NULL,
+    escenario_id      TEXT    REFERENCES escenarios(escenario_id),
+    origen_paso_orden INTEGER,
+    expectativas_json TEXT,
+    PRIMARY KEY (secuencia_id, orden)
+);
+
+-- Corrida = ejecucion historica concreta de una secuencia. Mismo criterio de
+-- "copiar, nunca join" que corridas_suite. cantidad_bloqueado es el unico
+-- contador nuevo respecto de corridas_suite: un paso derivado cuyo origen no
+-- produjo una ejecucion elegible NO es lo mismo que FAIL (no se intento) ni
+-- que ERROR (no fue un fallo tecnico) -ver domain/secuencias.py.
+CREATE TABLE IF NOT EXISTS corridas_secuencia (
+    corrida_id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    secuencia_id               TEXT    NOT NULL REFERENCES secuencias_transaccionales(secuencia_id),
+    secuencia_nombre           TEXT    NOT NULL,
+    estado                     TEXT    NOT NULL,
+    resultado_global           TEXT,
+    total                      INTEGER NOT NULL,
+    cantidad_pass              INTEGER NOT NULL DEFAULT 0,
+    cantidad_fail              INTEGER NOT NULL DEFAULT 0,
+    cantidad_error             INTEGER NOT NULL DEFAULT 0,
+    cantidad_sin_expectativas  INTEGER NOT NULL DEFAULT 0,
+    cantidad_bloqueado         INTEGER NOT NULL DEFAULT 0,
+    cantidad_no_ejecutado      INTEGER NOT NULL DEFAULT 0,
+    iniciada_en                TEXT    NOT NULL,
+    finalizada_en              TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_corridas_secuencia_iniciada_en ON corridas_secuencia(iniciada_en);
+
+-- Paso = resultado historico de UN paso dentro de una corrida de secuencia.
+-- origen_tipo/origen_paso_orden se copian de la definicion al presembrar
+-- -editar la secuencia despues no altera una corrida ya registrada-.
+-- ejecucion_id es el enlace de navegacion hacia el detalle ISO completo,
+-- igual que en corrida_suite_items; NULL si el paso quedo BLOQUEADO (nunca
+-- se genero ninguna ejecucion para el).
+CREATE TABLE IF NOT EXISTS corrida_secuencia_pasos (
+    corrida_id        INTEGER NOT NULL REFERENCES corridas_secuencia(corrida_id),
+    orden             INTEGER NOT NULL,
+    escenario_id      TEXT,
+    escenario_nombre  TEXT,
+    origen_tipo       TEXT    NOT NULL,
+    origen_paso_orden INTEGER,
+    resultado         TEXT    NOT NULL,
+    ejecucion_id      INTEGER REFERENCES ejecuciones(id),
+    detalle           TEXT,
+    evaluacion_json   TEXT,
+    PRIMARY KEY (corrida_id, orden)
+);
+
 -- Secuencias persistentes. Existe para que el numero de trazabilidad sobreviva
 -- a los reinicios y sea unico entre peticiones concurrentes. NO se deriva de
 -- MAX(id) de ejecuciones: dos peticiones simultaneas leerian el mismo maximo.

@@ -12,6 +12,7 @@ from typing import Protocol, Sequence, runtime_checkable
 
 from .catalogo import CatalogoDeRespuestas
 from .modelos import (
+    CorridaSecuencia,
     CorridaSuite,
     DestinoGuardado,
     DestinoTcp,
@@ -21,6 +22,8 @@ from .modelos import (
     FalloDeTransmision,
     FiltroHistorial,
     ItemCorridaSuite,
+    PasoCorridaSecuencia,
+    Secuencia,
     Suite,
     TarjetaPrueba,
     TiempoAgotado,
@@ -231,6 +234,60 @@ class RepositorioCorridasSuite(Protocol):
         ...
 
     async def obtener_items(self, corrida_id: int) -> Sequence[ItemCorridaSuite]: ...
+
+
+@runtime_checkable
+class RepositorioSecuencias(Protocol):
+    """Catalogo de secuencias guardadas: pasos DEPENDIENTES en orden (Fase C1).
+
+    Mismo contrato que `RepositorioSuites` -por diseno: son dos catalogos de
+    definiciones reutilizables, la unica diferencia real vive en el
+    contenido de `Secuencia.pasos`, no en como se administra el catalogo-.
+    """
+
+    async def obtener(self, secuencia_id: str) -> Secuencia | None: ...
+
+    async def listar(self) -> Sequence[Secuencia]: ...
+
+    async def guardar(self, secuencia: Secuencia) -> None:
+        """Reemplaza entera la secuencia y sus pasos, en una sola
+        transaccion: nunca fusiona con lo que ya estaba guardado."""
+        ...
+
+
+@runtime_checkable
+class RepositorioCorridasSecuencia(Protocol):
+    """Historial de corridas de secuencia (Fase C1). Misma forma que
+    `RepositorioCorridasSuite`: tres momentos de escritura separados.
+    """
+
+    async def crear_con_pasos(
+        self, corrida: CorridaSecuencia, pasos: Sequence[PasoCorridaSecuencia]
+    ) -> int:
+        """Inserta la corrida y TODOS sus pasos (en NO_EJECUTADO) en una sola
+        transaccion. Devuelve el `corrida_id` asignado."""
+        ...
+
+    async def actualizar_paso(self, paso: PasoCorridaSecuencia) -> None:
+        """Sobrescribe el paso `(corrida_id, orden)` con su resultado real.
+        Se persiste de inmediato -no se agrupa con los demas-, para que un
+        paso ya corrido sobreviva aunque el proceso muera despues."""
+        ...
+
+    async def cerrar(self, corrida: CorridaSecuencia) -> None:
+        """Un unico UPDATE atomico: estado, resultado_global, contadores y
+        finalizada_en. Se llama una sola vez, al final."""
+        ...
+
+    async def obtener(self, corrida_id: int) -> CorridaSecuencia | None: ...
+
+    async def listar(self, limite: int = 50) -> Sequence[CorridaSecuencia]: ...
+
+    async def listar_por_secuencia(
+        self, secuencia_id: str, limite: int = 50
+    ) -> Sequence[CorridaSecuencia]: ...
+
+    async def obtener_pasos(self, corrida_id: int) -> Sequence[PasoCorridaSecuencia]: ...
 
 
 @runtime_checkable
