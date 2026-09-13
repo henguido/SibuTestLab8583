@@ -83,6 +83,7 @@
       <thead>
         <tr>
           <th>Fecha y hora (UTC)</th>
+          <th>Operación</th>
           <th>STAN</th>
           <th>Tarjeta</th>
           <th class="num">Monto</th>
@@ -99,15 +100,23 @@
            tabla con una herramienta sin depender del rotulo visible ni de una
            clase de estilo. Nunca transporta datos de tarjeta. #}
         {% for ejecucion in pagina_resultado.ejecuciones %}
+        {% set operacion = operacion_por_mti.get(ejecucion.mti_solicitud, ejecucion.mti_solicitud) %}
+        {% set ruta_pantalla = ruta_pantalla_por_operacion.get(operacion, '/') %}
         <tr data-estado="{{ ejecucion.estado.value }}">
           <td class="mono">{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          <td>
+            <span class="chip {{ 'chip--sintetica' if operacion == OPERACION_ECHO else 'chip--qa' }}">
+              {{ etiqueta_operacion(operacion) }}
+            </span>
+            <span class="mono">{{ ejecucion.mti_solicitud }}</span>
+          </td>
           <td class="mono">{{ ejecucion.stan }}</td>
           <td class="mono">
             {# card_id es None para una operacion sin tarjeta (Echo, B2): sin
                "or ''" Jinja renderizaria el texto "None" en la celda. #}
             {{ ejecucion.card_id or '' }}
             {%- if ejecucion.escenario_id %}
-            <br><a href="/?escenario_id={{ ejecucion.escenario_id }}">Escenario: {{ ejecucion.escenario_nombre or ejecucion.escenario_id }}</a>
+            <br><a href="{{ ruta_pantalla }}?escenario_id={{ ejecucion.escenario_id }}">Escenario: {{ ejecucion.escenario_nombre or ejecucion.escenario_id }}</a>
             {%- endif %}
           </td>
           {# El importe y su moneda en la misma celda, pero el codigo con

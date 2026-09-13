@@ -75,6 +75,7 @@ from ..domain.modelos import (
     MTI_RESPUESTA_ECHO,
     OPERACION_COMPRA_FINANCIERA,
     OPERACION_ECHO,
+    OPERACION_POR_MTI,
     DatosCompra,
     DatosCompraFinanciera,
     DatosEcho,
@@ -100,6 +101,7 @@ PLANTILLAS.env.globals["ruta_activa"] = presentacion.ruta_activa
 PLANTILLAS.env.globals["etiqueta_operacion"] = presentacion.etiqueta_operacion
 PLANTILLAS.env.globals["OPERACION_ECHO"] = OPERACION_ECHO
 PLANTILLAS.env.globals["ruta_pantalla_por_operacion"] = presentacion.RUTA_PANTALLA_POR_OPERACION
+PLANTILLAS.env.globals["operacion_por_mti"] = OPERACION_POR_MTI
 
 enrutador = APIRouter()
 

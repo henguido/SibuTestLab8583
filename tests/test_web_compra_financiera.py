@@ -235,6 +235,25 @@ def test_editar_y_volver_a_ejecutar_reconstruye_tarjeta_y_monto_de_una_ejecucion
     assert 'value="50.00"' in texto
 
 
+def test_el_historial_distingue_la_operacion_financiera_y_enruta_al_escenario_correcto():
+    """Punto 24 de B4: el historial debe distinguir la operacion sin que haya
+    que inspeccionar el MTI a mano, y el enlace "Escenario:" debe apuntar a
+    /financiera (no a / como antes de esta correccion)."""
+    resultado = _resultado_financiera(
+        EstadoEjecucion.APROBADA,
+    )
+    ejecucion = resultado.ejecucion
+    import dataclasses
+
+    ejecucion = dataclasses.replace(
+        ejecucion, escenario_id="ESC-fin01", escenario_nombre="Financiera de historial"
+    )
+    texto = _cliente(ejecuciones=[ejecucion]).get("/historial").text
+    assert "Compra financiera" in texto
+    assert MTI_COMPRA_FINANCIERA in texto
+    assert f'href="/financiera?escenario_id=ESC-fin01"' in texto
+
+
 def test_guardar_una_compra_normal_sigue_funcionando_tras_generalizar_leer_enviado():
     """Regresion: generalizar `_leer_enviado`/`_leer_opcionales_activos` con
     `mti` no debe romper el uso por defecto (compra, sin `mti` en el form)."""
