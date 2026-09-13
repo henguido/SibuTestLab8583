@@ -24,13 +24,16 @@ from sibutestlab8583.adapters.transporte.framing_demo import FramingDemostracion
 from sibutestlab8583.application.orquestador import Orquestador
 from sibutestlab8583.domain.catalogo import CATALOGO_GENERICO
 from sibutestlab8583.domain.modelos import (
-    MTI_RESPUESTA_COMPRA,
     DatosCompra,
     DestinoTcp,
     MensajeIso,
     TiempoAgotado,
 )
-from sibutestlab8583.domain.validacion import CAMPO_CODIGO_RESPUESTA, campos_de_correlacion
+from sibutestlab8583.domain.validacion import (
+    CAMPO_CODIGO_RESPUESTA,
+    campos_de_correlacion,
+    mti_de_respuesta,
+)
 from sibutestlab8583.profiles.generico import PERFIL_GENERICO
 
 MOMENTO_FIJO = datetime(2026, 8, 19, 12, 30, 45, tzinfo=timezone.utc)
@@ -70,16 +73,22 @@ class TransporteFalso:
         return self.respuesta
 
     def _responder_correlacionado(self, payload: bytes) -> bytes:
+        """El MTI de respuesta se DERIVA de `solicitud.mti` (B3, 2026-09-13)
+        -misma regla generica que ya usa RN-3-, nunca el literal de compra:
+        este doble tambien lo usan las pruebas de suites heterogeneas
+        (compra + echo) para correlacionar cualquiera de las dos.
+        """
         codec = CodecIso8583()
         solicitud = codec.decodificar(payload, PERFIL_GENERICO).como_mensaje()
+        mti_respuesta = mti_de_respuesta(solicitud.mti)
         campos = {
             numero: solicitud.campos[numero]
-            for numero in campos_de_correlacion(PERFIL_GENERICO, MTI_RESPUESTA_COMPRA)
+            for numero in campos_de_correlacion(PERFIL_GENERICO, mti_respuesta)
             if numero in solicitud.campos
         }
         campos[CAMPO_CODIGO_RESPUESTA] = self.codigo
         return codec.codificar(
-            MensajeIso(mti=MTI_RESPUESTA_COMPRA, campos=campos), PERFIL_GENERICO
+            MensajeIso(mti=mti_respuesta, campos=campos), PERFIL_GENERICO
         )
 
 
