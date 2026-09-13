@@ -24,8 +24,6 @@ from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
-    OPERACION_COMPRA,
-    OPERACION_COMPRA_FINANCIERA,
     OPERACION_ECHO,
     EstadoEjecucion,
     FiltroHistorial,
@@ -33,6 +31,7 @@ from ..domain.modelos import (
     MensajeIso,
     ResultadoCompra,
 )
+from .operaciones import OPERACIONES_CON_TARJETA
 
 #: Valores admitidos para el filtro de evaluacion del historial. "" significa
 #: "sin restriccion" -nunca un cuarto valor de `EstadoEvaluacion`, que solo
@@ -41,16 +40,18 @@ VALORES_FILTRO_EVALUACION = frozenset({"", "pass", "fail", "sin_expectativas"})
 
 MONTO_MAXIMO = Decimal("9999999999.99")
 
-#: Rotulo humano por operacion, para el listado de escenarios (B3): la unica
-#: informacion nueva de alto valor que ese listado necesitaba para distinguir
-#: Compra de Echo de red a simple vista, sin rediseñar la pantalla. Un
-#: `operacion` que esta tabla no reconozca (no deberia ocurrir hoy, pero el
-#: modelo lo deja abierto a mas operaciones futuras) cae al propio valor: se
-#: ve un identificador tecnico en vez de una etiqueta amigable, nunca un error.
+#: Rotulo humano por operacion, para el listado de escenarios (B3) y el
+#: historial (B4). B5: derivada del registro declarativo unico
+#: (`web.operaciones.OPERACIONES_CON_TARJETA`) en vez de mantenerse como una
+#: segunda lista manual que pudiera desincronizarse -Echo se agrega aparte
+#: porque genuinamente no es una operacion "con tarjeta" y por eso no vive en
+#: ese registro (ver docstring de `web/operaciones.py`). Un `operacion` que
+#: esta tabla no reconozca (no deberia ocurrir hoy, pero el modelo lo deja
+#: abierto a mas operaciones futuras) cae al propio valor: se ve un
+#: identificador tecnico en vez de una etiqueta amigable, nunca un error.
 ETIQUETAS_OPERACION: dict[str, str] = {
-    OPERACION_COMPRA: "Compra",
+    **{op.clave: op.nombre for op in OPERACIONES_CON_TARJETA},
     OPERACION_ECHO: "Echo de red",
-    OPERACION_COMPRA_FINANCIERA: "Compra financiera",
 }
 
 
@@ -59,14 +60,13 @@ def etiqueta_operacion(operacion: str) -> str:
 
 
 #: operacion -> ruta de la pantalla de constructor que la carga (B4, punto
-#: 25): la misma tabla que consulta la capa de rutas
-#: (`web.app._config_pantalla_de_operacion`), expuesta aqui para que las
-#: plantillas Jinja -que no importan `web.app`- puedan armar el enlace
-#: "Cargar" sin un `if`/`elif` propio por operacion.
+#: 25; B5: misma fuente que `ETIQUETAS_OPERACION`). La consultan
+#: `web.app._config_pantalla_de_operacion` y las plantillas Jinja -que no
+#: importan `web.app`- para armar el enlace "Cargar" sin un `if`/`elif`
+#: propio por operacion.
 RUTA_PANTALLA_POR_OPERACION: dict[str, str] = {
-    OPERACION_COMPRA: "/",
+    **{op.clave: op.ruta for op in OPERACIONES_CON_TARJETA},
     OPERACION_ECHO: "/echo",
-    OPERACION_COMPRA_FINANCIERA: "/financiera",
 }
 
 

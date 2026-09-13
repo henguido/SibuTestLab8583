@@ -2492,9 +2492,14 @@ def _enviado_echo_desde_ejecucion(
 #: vez de un `if mti == ... elif ...` que creciera por operacion). Un MTI que
 #: no este aqui simplemente no puede reutilizarse desde el historial todavia
 #: -`_reconstruir_desde_ejecucion` devuelve `None`, nunca un intento a medias.
+#:
+#: B5: las entradas "con tarjeta" (compra, compra financiera, y cualquier
+#: operacion futura que se agregue a `OPERACIONES_CON_TARJETA`) se derivan
+#: del registro declarativo -nunca se listan aqui una por una-; Echo se
+#: agrega aparte porque no es una operacion con tarjeta (no vive en ese
+#: registro, ver docstring de `web/operaciones.py`).
 _RECONSTRUCCION_POR_MTI: dict[str, tuple[bool, Callable]] = {
-    MTI_COMPRA: (True, _enviado_con_tarjeta_desde_ejecucion),
-    MTI_COMPRA_FINANCIERA: (True, _enviado_con_tarjeta_desde_ejecucion),
+    **{op.mti: (True, _enviado_con_tarjeta_desde_ejecucion) for op in OPERACIONES_CON_TARJETA},
     MTI_ECHO: (False, _enviado_echo_desde_ejecucion),
 }
 
