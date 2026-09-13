@@ -36,7 +36,13 @@ from sibutestlab8583.application.ejecutor_escenarios import EjecutorDeEscenarios
 from sibutestlab8583.application.escenarios import DatosNuevoEscenario, ServicioEscenarios
 from sibutestlab8583.application.suites import DatosNuevaSuite, ServicioSuites
 from sibutestlab8583.cli import ejecutar_cli
-from sibutestlab8583.domain.modelos import EstadoEjecucion, ExpectativaCampo, Expectativas
+from sibutestlab8583.domain.modelos import (
+    MTI_COMPRA,
+    MTI_ECHO,
+    EstadoEjecucion,
+    ExpectativaCampo,
+    Expectativas,
+)
 from sibutestlab8583.profiles.generico import PERFIL_GENERICO
 
 DESCRIPCIONES = {"39": "Código de respuesta", "41": "Identificador del terminal"}
@@ -83,10 +89,20 @@ def _preparar_suite(base, nombre_suite: str, escenarios_spec: list[dict]) -> str
         )
         ids = []
         for spec in escenarios_spec:
+            # `mti` (B3): por defecto compra, con card_id/monto de siempre.
+            # Un spec con mti=MTI_ECHO omite card_id/monto -el perfil no los
+            # exige para esa operacion- y puede traer campos_manuales propios
+            # (ej. DE70).
+            es_echo = spec.get("mti") == MTI_ECHO
             creado = await servicio_escenarios.crear(
                 DatosNuevoEscenario(
-                    nombre=spec["nombre"], card_id=CARD_ID_DEMO, conexion_id=DESTINO_ID_DEMO,
-                    monto=Decimal("10.00"), expectativas=spec.get("expectativas"),
+                    nombre=spec["nombre"],
+                    conexion_id=DESTINO_ID_DEMO,
+                    mti=spec.get("mti", MTI_COMPRA),
+                    card_id=None if es_echo else CARD_ID_DEMO,
+                    monto=None if es_echo else Decimal("10.00"),
+                    campos_manuales=spec.get("campos_manuales", {}),
+                    expectativas=spec.get("expectativas"),
                 )
             )
             if not spec.get("activo", True):
@@ -125,6 +141,29 @@ def test_run_suite_todo_pass_sale_0_y_muestra_el_resumen(tmp_path, capsys):
     assert "Resultado: PASS" in salida.out
     assert "[PASS] E1" in salida.out
     assert salida.err == ""
+
+
+def test_run_suite_heterogenea_compra_y_echo_sin_cambios_de_sintaxis(tmp_path, capsys):
+    """B3: `run-suite` ejecuta una suite mixta (Compra + Echo) exactamente
+    con la misma sintaxis que cualquier otra -la operacion pertenece al
+    escenario, no al comando."""
+    base = _base(tmp_path)
+    suite_id = _preparar_suite(base, "Suite mixta", [
+        {"nombre": "Compra", "expectativas": Expectativas(estado=EstadoEjecucion.APROBADA)},
+        {
+            "nombre": "Echo", "mti": MTI_ECHO,
+            "expectativas": Expectativas(estado=EstadoEjecucion.APROBADA),
+        },
+    ])
+    composicion = _ComposicionPrueba(base, TransporteFalso(codigo="00"))
+
+    codigo = ejecutar_cli(["run-suite", suite_id], composicion=composicion)
+
+    assert codigo == 0
+    salida = capsys.readouterr()
+    assert "Resultado: PASS" in salida.out
+    assert "[PASS] Compra" in salida.out
+    assert "[PASS] Echo" in salida.out
 
 
 def test_run_suite_con_fail_sale_1_y_muestra_la_discrepancia(tmp_path, capsys):
