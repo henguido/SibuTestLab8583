@@ -110,6 +110,14 @@ class ServicioConsultas:
     async def ejecuciones_recientes(self, limite: int = 20) -> Sequence[Ejecucion]:
         return await self._ejecuciones.listar(limite)
 
+    async def derivadas_de(self, id_ejecucion: int) -> Sequence[Ejecucion]:
+        """Ejecuciones que tienen a `id_ejecucion` como su
+        `ejecucion_origen_id` (B6, modelo de operacion derivada). Lista
+        vacia si no tiene ninguna -no distingue eso de "no existe": el
+        llamador ya sabe si `id_ejecucion` existe por otro lado
+        (`detalle_ejecucion`)."""
+        return await self._ejecuciones.listar_derivadas(id_ejecucion)
+
     async def historial(
         self,
         filtro: FiltroHistorial,
