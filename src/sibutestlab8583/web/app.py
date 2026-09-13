@@ -69,6 +69,8 @@ from ..domain.modelos import (
     MTI_COMPRA,
     MTI_ECHO,
     MTI_RESPUESTA_COMPRA,
+    MTI_RESPUESTA_ECHO,
+    OPERACION_ECHO,
     DatosCompra,
     DatosEcho,
     DestinoTcp,
@@ -90,6 +92,8 @@ RUTA_ESTATICA = "/estatico"
 PLANTILLAS.env.globals["secciones"] = presentacion.SECCIONES
 PLANTILLAS.env.globals["grupos_nav"] = presentacion.GRUPOS_NAV
 PLANTILLAS.env.globals["ruta_activa"] = presentacion.ruta_activa
+PLANTILLAS.env.globals["etiqueta_operacion"] = presentacion.etiqueta_operacion
+PLANTILLAS.env.globals["OPERACION_ECHO"] = OPERACION_ECHO
 
 enrutador = APIRouter()
 
@@ -326,26 +330,32 @@ async def ejecutar_compra(
     )
 
 
-# ----------------------------------------------------------------- Echo (B2) --
+# ----------------------------------------------------------------- Echo (B2/B3) --
 #
 # Segunda operacion real sobre el nucleo generico (Orquestador._ejecutar, B1):
 # Network Management/Echo (0800/0810). Deliberadamente una pantalla propia, no
 # una pestana dentro de "Nueva transaccion": esta operacion no tiene tarjeta,
 # monto, comercio ni campos opcionales -entrelazarla con `compra.html`/
-# `_formulario` (que ya administra escenarios, expectativas y "+ Agregar
-# campo") hubiera significado condicionar buena parte de esa logica por
-# operacion, exactamente el tipo de acoplamiento que se queria evitar. Sin
-# integracion con escenarios/suites todavia -ver docs/roadmap/SIBU_3.md,
-# deuda de B2 para B3-: esta pantalla solo previsualiza y ejecuta.
+# `_formulario` (que administra tarjeta/monto/campos opcionales, ajenos a
+# echo) hubiera significado condicionar buena parte de esa logica por
+# operacion, exactamente el tipo de acoplamiento que se queria evitar.
+#
+# B3 cierra la integracion con escenarios/expectativas que B2 dejaba pendiente
+# (`_formulario_echo` ahora admite `escenario_id` igual que `_formulario`, y
+# las expectativas se leen/evaluan con el mismo motor generico, solo que
+# contra `MTI_RESPUESTA_ECHO`): Compra y Echo comparten el mismo ciclo crear
+# -> guardar escenario -> editar/reutilizar -> expected vs actual -> suite,
+# sin que `application/escenarios.py` dependa de Compra.
 
 
 @enrutador.get("/echo", response_class=HTMLResponse)
 async def pantalla_echo(
     request: Request,
     conexion_id: str | None = Query(None),
+    escenario_id: str | None = Query(None),
     composicion: Composicion = Depends(obtener_composicion),
 ):
-    return await _formulario_echo(request, composicion, conexion_id=conexion_id)
+    return await _formulario_echo(request, composicion, conexion_id=conexion_id, escenario_id=escenario_id)
 
 
 @enrutador.post("/echo", response_class=HTMLResponse)
@@ -357,9 +367,10 @@ async def cambiar_conexion_echo(
     mecanismo que `cambiar_conexion` para compra."""
     formulario_bruto = await request.form()
     ir_a_conexion = (formulario_bruto.get("ir_a_conexion", "") or "").strip() or None
-    de70 = (formulario_bruto.get("de70", "") or "").strip()
+    escenario_id = (formulario_bruto.get("escenario_id", "") or "").strip() or None
+    enviado = _leer_enviado_echo(formulario_bruto, composicion.perfil)
     return await _formulario_echo(
-        request, composicion, conexion_id=ir_a_conexion, de70=de70,
+        request, composicion, conexion_id=ir_a_conexion, escenario_id=escenario_id, enviado=enviado,
     )
 
 
@@ -368,26 +379,63 @@ async def ejecutar_echo(
     request: Request,
     conexion_id: str = Form(""),
     de70: str = Form(""),
+    # Mismo mecanismo de trazabilidad que `escenario_id` en `/compra`: viaja
+    # oculto en el formulario solo cuando la pantalla se cargo desde un
+    # escenario guardado.
+    escenario_id: str = Form(""),
     composicion: Composicion = Depends(obtener_composicion),
 ):
+    formulario_bruto = await request.form()
     campos_manuales = {"70": de70.strip()} if de70.strip() else {}
+
+    try:
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil, mti_respuesta=MTI_RESPUESTA_ECHO)
+    except ValueError as error:
+        return await _formulario_echo(
+            request, composicion, conexion_id=conexion_id or None, escenario_id=escenario_id or None,
+            de70=de70, error=str(error), estado_http=400,
+        )
 
     conexion = await composicion.administracion_conexiones.obtener_activa(conexion_id)
     if conexion is None:
         return await _formulario_echo(
-            request, composicion, conexion_id=conexion_id or None, de70=de70,
-            error="Seleccione una conexión activa, o verifique que siga disponible.",
+            request, composicion, conexion_id=conexion_id or None, escenario_id=escenario_id or None,
+            de70=de70, error="Seleccione una conexión activa, o verifique que siga disponible.",
             estado_http=400,
         )
     destino = DestinoTcp(host=conexion.host, puerto=conexion.puerto)
 
+    # El escenario asociado (si lo hay) se resuelve aqui, no antes -mismo
+    # criterio que `ejecutar_compra`-: si ya no existe, la ejecucion sigue
+    # adelante sin trazabilidad en vez de fallar por una referencia vieja.
+    id_escenario_asociado: str | None = None
+    nombre_escenario_asociado: str | None = None
+    if escenario_id:
+        escenario_asociado = await composicion.administracion_escenarios.obtener(escenario_id)
+        if escenario_asociado is not None:
+            if not escenario_asociado.activo:
+                return await _formulario_echo(
+                    request, composicion, conexion_id=conexion_id or None, escenario_id=escenario_id,
+                    de70=de70,
+                    error="Este escenario está inactivo. Reactívelo para poder ejecutarlo, "
+                    "o guarde una copia.",
+                    estado_http=400,
+                )
+            id_escenario_asociado = escenario_asociado.escenario_id
+            nombre_escenario_asociado = escenario_asociado.nombre
+
     try:
         orquestador = await composicion.orquestador(destino, tiempo_limite=conexion.timeout)
-        resultado = await orquestador.ejecutar_network_echo(DatosEcho(campos_manuales=campos_manuales))
+        resultado = await orquestador.ejecutar_network_echo(
+            DatosEcho(campos_manuales=campos_manuales),
+            escenario_id=id_escenario_asociado,
+            escenario_nombre=nombre_escenario_asociado,
+            expectativas=expectativas,
+        )
     except ErrorDelSimulador as error:
         return await _formulario_echo(
-            request, composicion, conexion_id=conexion_id or None, de70=de70,
-            aviso=presentacion.aviso_de_error(error),
+            request, composicion, conexion_id=conexion_id or None, escenario_id=escenario_id or None,
+            de70=de70, aviso=presentacion.aviso_de_error(error),
         )
 
     return PLANTILLAS.TemplateResponse(
@@ -415,7 +463,9 @@ async def _formulario_echo(
     composicion: Composicion,
     *,
     conexion_id: str | None = None,
+    escenario_id: str | None = None,
     de70: str = "",
+    enviado: dict | None = None,
     error: str | None = None,
     aviso=None,
     estado_http: int = 200,
@@ -425,22 +475,74 @@ async def _formulario_echo(
     Mismo principio de "nunca sustituir en silencio" que `_formulario`: si se
     pidio una conexion especifica y no esta entre las activas, se deja sin
     resolver -el boton de ejecutar queda deshabilitado con una nota-, en vez
-    de elegir otra por su cuenta.
+    de elegir otra por su cuenta. B3: ahora tambien admite cargar un
+    escenario guardado (sin tarjeta ni monto, esta operacion nunca los usa) y
+    definir/mostrar expectativas -mismo motor generico que compra, sin ningun
+    evaluador especial para echo-.
     """
     conexiones = await composicion.administracion_conexiones.listar_activas()
+    enviado = enviado or {}
 
-    conexion_actual = None
-    if conexion_id:
-        conexion_actual = next((c for c in conexiones if c.conexion_id == conexion_id), None)
+    escenario_actual = None
+    diagnostico = None
+    if escenario_id:
+        escenario_actual = await composicion.administracion_escenarios.obtener(escenario_id)
+        if escenario_actual is not None:
+            diagnostico = await composicion.administracion_escenarios.diagnosticar(
+                escenario_actual
+            )
+
+    if enviado:
+        de70_valor = enviado.get("de70", de70)
+        conexion_id_solicitada = (
+            conexion_id if conexion_id is not None else enviado.get("conexion_id")
+        )
+        nombre_escenario = enviado.get(
+            "nombre_escenario", escenario_actual.nombre if escenario_actual else ""
+        )
+        expectativas_actuales = enviado.get(
+            "expectativas", escenario_actual.expectativas if escenario_actual else None
+        )
+    elif escenario_actual is not None:
+        de70_valor = de70 or escenario_actual.campos_manuales.get("70", "")
+        conexion_id_solicitada = (
+            conexion_id if conexion_id is not None else escenario_actual.conexion_id
+        )
+        nombre_escenario = escenario_actual.nombre
+        expectativas_actuales = escenario_actual.expectativas
+    else:
+        de70_valor = de70
+        conexion_id_solicitada = conexion_id
+        nombre_escenario = ""
+        expectativas_actuales = None
+
+    conexion_no_disponible = False
+    if conexion_id_solicitada:
+        conexion_actual = next(
+            (c for c in conexiones if c.conexion_id == conexion_id_solicitada), None
+        )
+        if conexion_actual is None:
+            conexion_no_disponible = True
     else:
         conexion_actual = conexiones[0] if conexiones else None
 
-    puede_ejecutar = conexion_actual is not None
+    bloqueo_escenario = None
+    if escenario_actual is not None:
+        bloqueo_escenario = {
+            "inactivo": not escenario_actual.activo,
+            "conexion_no_disponible": conexion_no_disponible,
+            "incompatibilidades": diagnostico.incompatibilidades if diagnostico else (),
+        }
+
+    puede_ejecutar = conexion_actual is not None and not (
+        bloqueo_escenario
+        and (bloqueo_escenario["inactivo"] or bloqueo_escenario["incompatibilidades"])
+    )
 
     politica_echo = composicion.perfil.politica(MTI_ECHO)
     de70_default = politica_echo.valores_por_defecto.get("70", "")
 
-    campos_manuales = {"70": de70.strip()} if de70.strip() else {}
+    campos_manuales = {"70": de70_valor.strip()} if de70_valor.strip() else {}
     vista_previa = None
     vista_previa_no_disponible = None
     try:
@@ -450,6 +552,13 @@ async def _formulario_echo(
     except ErrorDeCamposManuales as error_campos:
         vista_previa_no_disponible = str(error_campos)
 
+    campos_esperados = expectativas_actuales.campos if expectativas_actuales else {}
+    estado_esperado_actual = (
+        expectativas_actuales.estado.value
+        if expectativas_actuales and expectativas_actuales.estado
+        else ""
+    )
+
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="echo.html",
@@ -457,14 +566,25 @@ async def _formulario_echo(
             "seccion": "echo",
             "conexiones": conexiones,
             "conexion_actual": conexion_actual,
-            "de70": de70,
+            "de70": de70_valor,
             "de70_default": de70_default,
             "filas_constructor": presentacion.filas_constructor(
                 composicion.perfil, MTI_ECHO, composicion.descripciones_de_campos,
             ),
             "error": error,
             "aviso": aviso,
+            "escenario_actual": escenario_actual,
+            "nombre_escenario": nombre_escenario,
+            "bloqueo_escenario": bloqueo_escenario,
             "puede_ejecutar": puede_ejecutar,
+            "mti_echo": MTI_ECHO,
+            "estados_ejecucion": list(EstadoEjecucion),
+            "avisos": presentacion.AVISOS,
+            "estado_esperado_actual": estado_esperado_actual,
+            "filas_expectativas": presentacion.filas_expectativas(
+                composicion.perfil, MTI_RESPUESTA_ECHO, composicion.descripciones_de_campos,
+                campos_esperados,
+            ),
             "vista_previa": presentacion.contexto_de_vista_previa(
                 vista_previa, composicion.descripciones_de_campos
             ) if vista_previa else None,
@@ -1046,22 +1166,49 @@ async def escenario_crear(
     card_id: str = Form(""),
     monto: str = Form(""),
     conexion_id: str = Form(""),
+    mti: str = Form(MTI_COMPRA),
     composicion: Composicion = Depends(obtener_composicion),
 ):
     """Crea un escenario. Es el destino de "Guardar como escenario" y de
     "Guardar como copia" -ambas son la misma operacion: crear uno nuevo a
-    partir del estado actual del constructor-.
+    partir del estado actual del constructor (compra o echo, segun cual haya
+    enviado el formulario)-. `mti` decide la operacion: echo.html envia
+    `MTI_ECHO` en un campo oculto, compra.html no envia nada y por eso el
+    valor por defecto sigue siendo compra -sin romper el formulario existente-.
     """
+    if mti == MTI_ECHO:
+        formulario_bruto = await request.form()
+        enviado = _leer_enviado_echo(formulario_bruto, composicion.perfil)
+        try:
+            expectativas = _leer_expectativas(
+                formulario_bruto, composicion.perfil, mti_respuesta=MTI_RESPUESTA_ECHO
+            )
+            creado = await composicion.administracion_escenarios.crear(
+                DatosNuevoEscenario(
+                    nombre=nombre,
+                    mti=MTI_ECHO,
+                    conexion_id=conexion_id,
+                    campos_manuales=enviado["campos_manuales"],
+                    expectativas=expectativas,
+                )
+            )
+        except ValueError as error:
+            return await _formulario_echo(
+                request, composicion, conexion_id=conexion_id or None,
+                de70=enviado["de70"], error=str(error), estado_http=400,
+            )
+        return RedirectResponse(f"/echo?escenario_id={creado.escenario_id}", status_code=303)
+
     formulario_bruto = await request.form()
     enviado = _leer_enviado(formulario_bruto, composicion.perfil)
     campos_manuales = enviado["campos_manuales"]
-    expectativas = enviado["expectativas"]
     try:
         monto_decimal = presentacion.validar_monto(monto)
         expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
         creado = await composicion.administracion_escenarios.crear(
             DatosNuevoEscenario(
                 nombre=nombre,
+                mti=MTI_COMPRA,
                 card_id=card_id.strip(),
                 conexion_id=conexion_id,
                 monto=monto_decimal,
@@ -1087,12 +1234,43 @@ async def escenario_actualizar(
     composicion: Composicion = Depends(obtener_composicion),
 ):
     """"Guardar cambios": vuelve a congelar los valores efectivos de hoy, no
-    parcha lo que ya estaba guardado -mismo criterio que crear-.
+    parcha lo que ya estaba guardado -mismo criterio que crear-. Editar nunca
+    cambia la operacion (`DatosEdicionEscenario` no tiene `mti`): se consulta
+    el escenario existente solo para saber si es de echo (sin tarjeta/monto)
+    o de compra, y leer/validar el formulario en consecuencia.
     """
+    existente = await composicion.administracion_escenarios.obtener(escenario_id)
+    if existente is None:
+        return _escenario_no_encontrado(request)
+
+    if existente.mti == MTI_ECHO:
+        formulario_bruto = await request.form()
+        enviado = _leer_enviado_echo(formulario_bruto, composicion.perfil)
+        try:
+            expectativas = _leer_expectativas(
+                formulario_bruto, composicion.perfil, mti_respuesta=MTI_RESPUESTA_ECHO
+            )
+            await composicion.administracion_escenarios.actualizar(
+                escenario_id,
+                DatosEdicionEscenario(
+                    nombre=nombre,
+                    conexion_id=conexion_id,
+                    campos_manuales=enviado["campos_manuales"],
+                    expectativas=expectativas,
+                ),
+            )
+        except EscenarioNoEncontrado:
+            return _escenario_no_encontrado(request)
+        except ValueError as error:
+            return await _formulario_echo(
+                request, composicion, escenario_id=escenario_id, conexion_id=conexion_id or None,
+                de70=enviado["de70"], error=str(error), estado_http=400,
+            )
+        return RedirectResponse(f"/echo?escenario_id={escenario_id}", status_code=303)
+
     formulario_bruto = await request.form()
     enviado = _leer_enviado(formulario_bruto, composicion.perfil)
     campos_manuales = enviado["campos_manuales"]
-    expectativas = enviado["expectativas"]
     try:
         monto_decimal = presentacion.validar_monto(monto)
         expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
@@ -1149,7 +1327,8 @@ async def escenario_duplicar(
         copia = await composicion.administracion_escenarios.duplicar(escenario_id)
     except EscenarioNoEncontrado:
         return _escenario_no_encontrado(request)
-    return RedirectResponse(f"/?escenario_id={copia.escenario_id}", status_code=303)
+    destino_carga = "/echo" if copia.mti == MTI_ECHO else "/"
+    return RedirectResponse(f"{destino_carga}?escenario_id={copia.escenario_id}", status_code=303)
 
 
 @enrutador.post("/escenarios/{escenario_id}/ejecutar", response_class=HTMLResponse)
@@ -1163,27 +1342,38 @@ async def escenario_ejecutar(
     Si algo lo bloquea -escenario inactivo, tarjeta o conexion no disponible,
     incompatibilidad con el perfil actual- no se ejecuta nada: se muestra el
     constructor cargado con ese escenario, con el motivo explicado. Es el
-    mismo diagnostico que "cargar" ya calcula (`_formulario`), reutilizado
-    aqui en vez de duplicado.
+    mismo diagnostico que "cargar" ya calcula (`_formulario`/`_formulario_echo`
+    segun la operacion), reutilizado aqui en vez de duplicado.
     """
+    escenario_previo = await composicion.administracion_escenarios.obtener(escenario_id)
+    if escenario_previo is None:
+        return _escenario_no_encontrado(request)
+    es_echo = escenario_previo.mti == MTI_ECHO
+
+    async def _recargar(*, error: str | None = None, aviso=None, estado_http: int = 200):
+        if es_echo:
+            return await _formulario_echo(
+                request, composicion, escenario_id=escenario_id,
+                error=error, aviso=aviso, estado_http=estado_http,
+            )
+        return await _formulario(
+            request, composicion, escenario_id=escenario_id,
+            error=error, aviso=aviso, estado_http=estado_http,
+        )
+
     try:
         resultado = await composicion.ejecutor_escenarios.ejecutar(escenario_id)
     except EscenarioNoEncontrado:
         return _escenario_no_encontrado(request)
     except EscenarioNoEjecutable:
-        return await _formulario(request, composicion, escenario_id=escenario_id, estado_http=400)
+        return await _recargar(estado_http=400)
     except TarjetaDesconocida:
-        escenario = await composicion.administracion_escenarios.obtener(escenario_id)
-        return await _formulario(
-            request, composicion, escenario_id=escenario_id,
-            error=f"No existe la tarjeta {escenario.card_id!r} en el catálogo, o está inactiva.",
+        return await _recargar(
+            error=f"No existe la tarjeta {escenario_previo.card_id!r} en el catálogo, o está inactiva.",
             estado_http=400,
         )
     except ErrorDelSimulador as error:
-        return await _formulario(
-            request, composicion, escenario_id=escenario_id,
-            aviso=presentacion.aviso_de_error(error),
-        )
+        return await _recargar(aviso=presentacion.aviso_de_error(error))
 
     # El destino que se muestra aqui es el SOLICITADO -de la conexion elegida-,
     # no el persistido: mismo criterio que ya distingue el resultado inmediato
@@ -1206,6 +1396,7 @@ async def escenario_ejecutar(
                 composicion.raw_hex_seguro(resultado.respuesta.como_mensaje())
                 if resultado.respuesta else None
             ),
+            seccion="echo" if es_echo else "compra",
         ),
     )
 
@@ -1755,7 +1946,9 @@ def _no_encontrado(request: Request):
     )
 
 
-def _leer_expectativas(formulario_bruto, perfil) -> Expectativas | None:
+def _leer_expectativas(
+    formulario_bruto, perfil, mti_respuesta: str = MTI_RESPUESTA_COMPRA
+) -> Expectativas | None:
     """Lee `estado_esperado` y `tipo_esperado_{n}`/`valor_esperado_{n}` del
     formulario, igual que `campos_manuales` se lee de `campo_{n}`.
 
@@ -1777,7 +1970,7 @@ def _leer_expectativas(formulario_bruto, perfil) -> Expectativas | None:
     expectativa es un estado propio, no un caso particular de "todo vacio", y
     tampoco debe confundirse con una peticion rechazada.
     """
-    permitidos = campos_permitidos_expectativa(perfil, MTI_RESPUESTA_COMPRA)
+    permitidos = campos_permitidos_expectativa(perfil, mti_respuesta)
     for clave in formulario_bruto:
         for prefijo in ("tipo_esperado_", "valor_esperado_"):
             if clave.startswith(prefijo) and clave[len(prefijo):] not in permitidos:
@@ -1855,6 +2048,26 @@ def _leer_enviado(mapping, perfil) -> dict:
         "conexion_id": (mapping.get("conexion_id", "") or ""),
         "campos_manuales": campos_manuales,
         "opcionales_activos": opcionales_activos,
+        "nombre_escenario": (mapping.get("nombre", "") or ""),
+        "expectativas": expectativas,
+    }
+
+
+def _leer_enviado_echo(mapping, perfil) -> dict:
+    """Version de `_leer_enviado` para Echo: sin tarjeta, monto ni opcionales
+    -esta operacion solo tiene DE70-. Mismo criterio de un unico lugar de
+    lectura, para que "cambiar de conexion" conserve exactamente lo mismo que
+    ya conserva un error de validacion.
+    """
+    de70 = (mapping.get("de70", "") or "").strip()
+    try:
+        expectativas = _leer_expectativas(mapping, perfil, mti_respuesta=MTI_RESPUESTA_ECHO)
+    except ValueError:
+        expectativas = None
+    return {
+        "conexion_id": (mapping.get("conexion_id", "") or ""),
+        "de70": de70,
+        "campos_manuales": ({"70": de70} if de70 else {}),
         "nombre_escenario": (mapping.get("nombre", "") or ""),
         "expectativas": expectativas,
     }

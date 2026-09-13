@@ -20,8 +20,28 @@
 </div>
 {% endif %}
 
+{% if bloqueo_escenario and (bloqueo_escenario.inactivo or bloqueo_escenario.conexion_no_disponible or bloqueo_escenario.incompatibilidades) %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Este escenario necesita atención</h2>
+  <ul class="aviso__detalle">
+    {% if bloqueo_escenario.inactivo %}
+    <li>Este escenario está inactivo. Reactívelo para poder ejecutarlo, o guarde una copia.</li>
+    {% endif %}
+    {% if bloqueo_escenario.conexion_no_disponible %}
+    <li>La conexión usada por este escenario ya no está disponible. Seleccione otra conexión para continuar.</li>
+    {% endif %}
+    {% for problema in bloqueo_escenario.incompatibilidades %}
+    <li>Este escenario ya no es compatible con el perfil actual: {{ problema }}.</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <form method="post" action="/echo" id="formulario-echo">
   <input type="hidden" name="conexion_id" value="{{ conexion_actual.conexion_id if conexion_actual else '' }}">
+  <input type="hidden" name="escenario_id" value="{{ escenario_actual.escenario_id if escenario_actual else '' }}">
+  <input type="hidden" name="mti" value="{{ mti_echo }}">
   <div class="compra-shell">
     <aside class="compra-shell__aside">
       <div class="conexion-barra">
@@ -172,5 +192,95 @@
       </section>
     </div>
   </div>
+
+  <section class="panel">
+    <details class="cambiar-conexion" {{ 'open' if estado_esperado_actual or filas_expectativas|selectattr('tipo')|list }}>
+      <summary>Expectativas (opcional)</summary>
+      <div class="panel__cuerpo">
+        <p class="grupo__sub">
+          Defina qué resultado espera de este echo. Al ejecutar, SibuTestLab compara lo recibido
+          contra lo indicado aquí e informa PASS o FAIL. Dejar todo en blanco significa sin
+          expectativas: la ejecución no se evalúa.
+        </p>
+        <div class="campo">
+          <label class="campo__rotulo" for="estado_esperado">Estado esperado</label>
+          <select id="estado_esperado" name="estado_esperado">
+            <option value="" {{ 'selected' if not estado_esperado_actual }}>No especificar</option>
+            {% for estado_valor in estados_ejecucion %}
+            <option value="{{ estado_valor.value }}" {{ 'selected' if estado_valor.value == estado_esperado_actual }}>
+              {{ avisos[estado_valor].etiqueta }}
+            </option>
+            {% endfor %}
+          </select>
+          <p class="campo__pista">
+            Compara contra el resultado semántico del echo (RN-1/RN-3), no contra un valor literal
+            del campo 39.
+          </p>
+        </div>
+        <div class="desplazable" tabindex="0" role="region" aria-label="Campos con expectativa">
+          <table class="tabla">
+            <thead>
+              <tr>
+                <th>DE</th>
+                <th>Nombre</th>
+                <th>Tipo de expectativa</th>
+                <th>Valor esperado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for fila in filas_expectativas %}
+              <tr>
+                <td><span class="campo-iso">{{ fila.numero }}</span></td>
+                <td>{{ fila.descripcion }}</td>
+                <td>
+                  <select name="tipo_esperado_{{ fila.numero }}">
+                    <option value="" {{ 'selected' if not fila.tipo }}>No especificar</option>
+                    <option value="igual" {{ 'selected' if fila.tipo == 'igual' }}>Igual a</option>
+                    <option value="presente" {{ 'selected' if fila.tipo == 'presente' }}>Presente</option>
+                    <option value="ausente" {{ 'selected' if fila.tipo == 'ausente' }}>Ausente</option>
+                  </select>
+                </td>
+                <td>
+                  <input type="text" name="valor_esperado_{{ fila.numero }}" class="campo-tabla"
+                         autocomplete="off" value="{{ fila.valor or '' }}">
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="campo__pista">
+          El valor esperado solo se usa cuando el tipo es "Igual a"; se ignora para "Presente" y
+          "Ausente".
+        </p>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel" id="guardar-como-escenario">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Guardar como escenario</h2>
+    </div>
+    <div class="panel__cuerpo">
+      <div class="campo">
+        <label class="campo__rotulo" for="nombre">Nombre del escenario</label>
+        <input type="text" id="nombre" name="nombre" autocomplete="off" value="{{ nombre_escenario }}">
+        <p class="campo__pista">
+          Congela los valores de esta pantalla -DE70 y conexión- para poder recuperarlos y
+          reejecutarlos después, sin tarjeta ni monto: esta operación nunca los necesita.
+        </p>
+      </div>
+      <div class="acciones">
+        {% if escenario_actual %}
+        <button class="boton" type="submit" formaction="/escenarios/{{ escenario_actual.escenario_id }}">
+          Guardar cambios
+        </button>
+        <button class="boton" type="submit" formaction="/escenarios">Guardar como copia</button>
+        {% else %}
+        <button class="boton" type="submit" formaction="/escenarios">Guardar como escenario</button>
+        {% endif %}
+      </div>
+    </div>
+  </section>
 </form>
 {% endblock %}

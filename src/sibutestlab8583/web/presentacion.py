@@ -24,6 +24,8 @@ from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
+    OPERACION_COMPRA,
+    OPERACION_ECHO,
     EstadoEjecucion,
     FiltroHistorial,
     MensajeInterpretado,
@@ -37,6 +39,21 @@ from ..domain.modelos import (
 VALORES_FILTRO_EVALUACION = frozenset({"", "pass", "fail", "sin_expectativas"})
 
 MONTO_MAXIMO = Decimal("9999999999.99")
+
+#: Rotulo humano por operacion, para el listado de escenarios (B3): la unica
+#: informacion nueva de alto valor que ese listado necesitaba para distinguir
+#: Compra de Echo de red a simple vista, sin rediseñar la pantalla. Un
+#: `operacion` que esta tabla no reconozca (no deberia ocurrir hoy, pero el
+#: modelo lo deja abierto a mas operaciones futuras) cae al propio valor: se
+#: ve un identificador tecnico en vez de una etiqueta amigable, nunca un error.
+ETIQUETAS_OPERACION: dict[str, str] = {
+    OPERACION_COMPRA: "Compra",
+    OPERACION_ECHO: "Echo de red",
+}
+
+
+def etiqueta_operacion(operacion: str) -> str:
+    return ETIQUETAS_OPERACION.get(operacion, operacion)
 
 
 @dataclass(frozen=True)

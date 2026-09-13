@@ -168,3 +168,100 @@ def test_de70_personalizado_se_refleja_en_la_vista_previa():
         "/echo", data={"ir_a_conexion": "", "de70": "001"}
     ).text
     assert "001" in texto
+
+
+# --------------------------------------- B3: guardar/cargar escenario de echo --
+
+
+def test_guardar_como_escenario_desde_echo_sin_tarjeta_ni_monto():
+    """Punto 10 de B3: guardar una ejecucion de echo como escenario, sin
+    tarjeta ni monto ficticios -campos que esta operacion nunca tiene-."""
+    cliente = _cliente()
+    respuesta = cliente.post(
+        "/escenarios",
+        data={
+            "nombre": "Echo de humo",
+            "conexion_id": DESTINO_ID_DEMO,
+            "de70": "301",
+            "mti": MTI_ECHO,
+        },
+        follow_redirects=False,
+    )
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"].startswith("/echo?escenario_id=")
+
+
+def test_el_escenario_de_echo_guardado_se_carga_en_la_pantalla_de_echo():
+    cliente = _cliente()
+    creado = cliente.post(
+        "/escenarios",
+        data={
+            "nombre": "Echo de humo",
+            "conexion_id": DESTINO_ID_DEMO,
+            "de70": "301",
+            "mti": MTI_ECHO,
+        },
+        follow_redirects=False,
+    )
+    escenario_id = creado.headers["location"].split("escenario_id=")[1]
+
+    texto = cliente.get(f"/echo?escenario_id={escenario_id}").text
+    assert "Echo de humo" in texto
+    assert 'value="301"' in texto
+    assert "Guardar cambios" in texto
+
+
+def test_reejecutar_un_escenario_de_echo_pasa_expectativas_y_trazabilidad():
+    cliente = _cliente(resultado=_resultado_echo(EstadoEjecucion.APROBADA))
+    creado = cliente.post(
+        "/escenarios",
+        data={
+            "nombre": "Echo con expectativa",
+            "conexion_id": DESTINO_ID_DEMO,
+            "de70": "301",
+            "mti": MTI_ECHO,
+            "estado_esperado": "aprobada",
+        },
+        follow_redirects=False,
+    )
+    escenario_id = creado.headers["location"].split("escenario_id=")[1]
+
+    respuesta = cliente.post(f"/escenarios/{escenario_id}/ejecutar")
+    assert respuesta.status_code == 200
+    assert "Transacción aprobada" in respuesta.text
+
+
+def test_guardar_una_compra_sigue_funcionando_sin_el_campo_mti():
+    """Regresion: compra.html no envia `mti` -el valor por defecto de
+    `escenario_crear` sigue siendo compra, sin romper el formulario existente."""
+    from test_web import CARD_ID_DEMO
+
+    cliente = _cliente()
+    respuesta = cliente.post(
+        "/escenarios",
+        data={
+            "nombre": "Compra de siempre",
+            "card_id": CARD_ID_DEMO,
+            "monto": "150.00",
+            "conexion_id": DESTINO_ID_DEMO,
+        },
+        follow_redirects=False,
+    )
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"].startswith("/?escenario_id=")
+
+
+def test_la_lista_de_escenarios_distingue_compra_de_echo():
+    cliente = _cliente()
+    cliente.post(
+        "/escenarios",
+        data={
+            "nombre": "Echo de humo",
+            "conexion_id": DESTINO_ID_DEMO,
+            "de70": "301",
+            "mti": MTI_ECHO,
+        },
+    )
+    texto = cliente.get("/escenarios").text
+    assert "Echo de red" in texto
+    assert MTI_ECHO in texto

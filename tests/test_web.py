@@ -207,7 +207,8 @@ class RepositorioEscenariosFalso:
                 "   nombre = excluded.nombre, activo = excluded.activo",
                 (
                     escenario.escenario_id, escenario.nombre, escenario.perfil, escenario.mti,
-                    escenario.card_id, escenario.conexion_id, str(escenario.monto),
+                    escenario.card_id, escenario.conexion_id,
+                    str(escenario.monto) if escenario.monto is not None else None,
                     json.dumps({"version": 1, "campos": dict(escenario.campos_manuales)}),
                     None, int(escenario.activo),
                     escenario.creado_en.isoformat(), escenario.actualizado_en.isoformat(),
