@@ -2840,3 +2840,62 @@ EMV, cripto.
 5 `ReferenciaEjecucion`, 2 historial/UI). Commits: `53964b5`, `736dccd`, `c9b68e9`. Sin merge a
 `main` — pendiente de aprobación del propietario. Reporte completo (secciones A-M) en
 `docs/roadmap/SIBU_3.md` sección 8.
+
+## 2026-09-13 · B6 integrado a main; B7 — Reverso interactivo real (0400/0410)
+
+**Decisión de orden, tomada por el propietario antes de abrir B7:** Fase C (Secuencias) NO se
+adelanta. B6 ya permite construir una operación derivada a partir de una ejecución histórica
+concreta -eso alcanza para un reverso manual, iniciado por una persona desde Historial-;
+Secuencias sigue siendo necesaria más adelante, para automatizar 0200→0400 dentro de
+escenarios/suites, pero no es prerrequisito de un reverso interactivo. Orden aprobado:
+B6 → B7 (este bloque) → Fase C → 0420/0430 y automatización de reversos.
+
+**Integración de B6 a `main`:** merge `7c034ed`, historia preservada (sin squash). Suite
+completa verde antes y después (1268 passed, tras corregir un hallazgo propio del guardián de
+PAN: el timestamp de 14 dígitos del nombre de un backup de migración, citado en la
+documentación de B6, se detectaba como un posible PAN — corregido con un separador en el nombre
+citado, sin tocar el archivo real). Smoke real en navegador (0100/0800/0200 aprobada + su chip
+"Elegible para reverso") sin cambios de comportamiento.
+
+**B7 — Reverso financiero interactivo (0400/0410):** primer MTI de este laboratorio que se
+arma a partir de OTRA ejecución, nunca de un formulario libre. Perfil 0400 sin campos editables
+ni opcionales (`profiles/generico.py`): DE4/DE37/DE41/DE49 derivados del snapshot de la 0200
+original (`ReferenciaEjecucion`, extendida con `terminal`/`rrn`), DE3/DE7/DE11 automáticos del
+nuevo intercambio. Builder puro `application/armado_reverso.py::armar_reverso_financiero`, sin
+ningún parámetro de texto libre -verificado por firma en test-, con STAN siempre nuevo (nunca el
+de la 0200 que reversa). `Orquestador.ejecutar_reverso_financiero` revalida la elegibilidad del
+origen SIEMPRE, del lado del servidor -un POST directo contra un origen inexistente o no
+elegible (0200 rechazada, 0100, echo, sin respuesta) revienta antes de generar STAN o tocar la
+red-, reutilizando `_ejecutar`/`_registrar` sin ningún camino especial.
+
+**DE90 revisado de nuevo, con la composición exacta en mano (no solo "existe o no", como en
+B6):** los primeros 31 caracteres se podrían derivar sin inventar nada, pero los últimos 11 (ID
+de institución receptora, DE33) no tienen ninguna fuente en este perfil -ni siquiera está
+declarado para ningún MTI-. Decisión: NO implementado, documentado en el código con la
+justificación completa. La correlación origen↔reverso se apoya en DE37 (cuando existe) y en
+`ejecucion_origen_id`, nunca en STAN/RRN como identidad exclusiva.
+
+**Host simulado: cero líneas tocadas.** La derivación genérica del MTI de respuesta (B2) y la
+correlación RN-3 (B1) ya cubrían 0400/0410 sin ninguna rama especial -confirmado con un E2E real
+por TCP antes de asumir que hiciera falta tocar `adapters/host_simulado/servidor.py`.
+
+**UI:** Historial → 0200 aprobada → chip "Elegible para reverso" + botón "Crear reverso" →
+vista previa (`GET /historial/{id}/reverso`, con MTI/bitmap/RAW-HEX seguro/datos del original) →
+`POST .../ejecutar` → resultado (reutiliza `resultado.html`) → navegación bidireccional real.
+Verificado con recorrido manual completo en navegador real contra `sibu-host-demo`: 0200
+aprobada real, preview real, 0400/0410 real, navegación en ambos sentidos, un segundo reverso
+sobre el mismo origen (1→N), y una 0200 rechazada confirmando que ni el botón ni la URL directa
+del reverso están disponibles (404 server-side).
+
+**Arquitectura (métrica de reutilización, pedida explícitamente):** cero condicionales
+especiales por MTI en `domain/validacion.py`, `Orquestador._ejecutar` o el host simulado -los
+tres ya eran genéricos desde B1/B2-; cero duplicación de plantilla (`resultado.html` se
+reutiliza tal cual); la única infraestructura nueva es `armado_reverso.py` y la extensión de
+`ReferenciaEjecucion`, ambas ya anticipadas por B6. Ninguna señal de acoplamiento preocupante
+para 0420/0430 (B8): el riesgo real de esa fase es de producto (contexto entre pasos, Fase C),
+no de dispersión de código.
+
+**Tests:** 1268 passed al cerrar B6 → 1296 passed al cerrar B7 (28 nuevos, 0 skipped). Commits:
+`820bd5e` (B7.1 perfil), `cde3852` (B7.2 referencia+builder), `6f4f3f6` (B7.3 orquestador),
+`de0556b` (B7.4-B7.7 UI/preview/seguridad). Sin merge a `main` — pendiente de aprobación del
+propietario. Reporte completo (secciones A-N) en `docs/roadmap/SIBU_3.md` sección 9.

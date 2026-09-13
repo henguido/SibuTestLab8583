@@ -18,7 +18,8 @@ qué fase está en qué estado:
 | B — Modelo multi-MTI, subfase B3 (Escenarios/suites/CLI Multi-MTI, Echo con ciclo completo) | **IMPLEMENTADA**, integrada a `main` |
 | B — Modelo multi-MTI, subfase B4 (0200/0210 compra financiera real) | **IMPLEMENTADA**, integrada a `main` (merge `1998491`) |
 | B — Modelo multi-MTI, subfase B5 (editor común de operaciones con tarjeta) | **IMPLEMENTADA**, integrada a `main` (merge `07b69f3`) |
-| B — Modelo multi-MTI, subfase B6 (modelo conceptual de operación derivada/reverso, SIN 0400/0410) | **IMPLEMENTADA** en `feature/multi-mti-b6-reversal-model` (commits `53964b5`/`736dccd`/`c9b68e9`, sin mergear a `main`, en revisión) |
+| B — Modelo multi-MTI, subfase B6 (modelo conceptual de operación derivada/reverso, SIN 0400/0410) | **IMPLEMENTADA**, integrada a `main` (merge `7c034ed`) |
+| B — Modelo multi-MTI, subfase B7 (reverso interactivo real, 0400/0410) | **IMPLEMENTADA** en `feature/multi-mti-b7-reversal-0400` (commits `820bd5e`/`cde3852`/`6f4f3f6`/`de0556b`, sin mergear a `main`, en revisión) |
 | C, D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
@@ -322,8 +323,9 @@ escribirse, no asumirse):
 | B3 | Escenarios/suites/CLI genéricos para Multi-MTI; Echo gana el ciclo completo (escenario/suite/reintento/export) | B2 | **COMPLETO** |
 | B4 | 0200/0210 compra financiera real (primer MTI con tarjeta y monto además de 0100) | B3 | **COMPLETO**, integrado a `main` (`1998491`) |
 | B5 | Editor común de operaciones con tarjeta (`OperacionIso`, unifica Autorización/Compra financiera) | B4 | **COMPLETO**, integrado a `main` (`07b69f3`) |
-| B6 | Modelo conceptual de operación derivada (origen→derivada, futuro reverso), SIN 0400/0410 todavía | B5 | **COMPLETO** en rama, ver reporte de checkpoint (sección 8) |
-| B7 (propuesta) | Reversos reales (0400/0410, 0420/0430) | B6, y una estrategia de correlación cruzada (ver ARCH-005) | Alto: correlación entre dos mensajes distintos en el tiempo, el caso que RN-3 actual no cubre |
+| B6 | Modelo conceptual de operación derivada (origen→derivada, futuro reverso), SIN 0400/0410 todavía | B5 | **COMPLETO**, integrado a `main` (`7c034ed`), ver reporte de checkpoint (sección 8) |
+| B7 | Reverso interactivo real (0400/0410), iniciado desde Historial sobre una 0200 aprobada | B6 | **COMPLETO** en rama, ver reporte de checkpoint (sección 9) |
+| B8 (propuesta) | Reversos automatizados (0420/0430) dentro de escenarios/suites | B7, y Fase C (Secuencias) | Depende de que exista contexto entre pasos (Fase C) antes de automatizar; ver sección 9.N |
 
 **Nota (2026-09-13):** la numeración original de subfases (B2=0800, B3=0200 con variantes de
 DE3, B4=reversos) se ajustó contra la ejecución real: B2 pasó a ser Echo puro, B3 absorbió el
@@ -524,11 +526,17 @@ del criterio de este roadmap).
 
 ## 7. Próximo bloque exacto
 
-**B7 (propuesta) — Reversos reales (0400/0410, 0420/0430)**, condicionado a que el propietario
-apruebe explícitamente iniciarlos: B6 (sección 8) dejó el modelo conceptual listo
-(`ejecucion_origen_id`, elegibilidad, `ReferenciaEjecucion`) pero deliberadamente sin construir
-ningún mensaje 0400/0410. Antes de B7 hace falta decidir, con el propietario, si Secuencias
-(Fase C) se adelanta primero — B6 documentó la dependencia pero no la resolvió (ver sección 8.I).
+**Decisión del propietario (2026-09-13):** Fase C (Secuencias) NO se adelanta antes de un
+reverso manual — B6 ya permite construir una operación derivada a partir de una ejecución
+histórica concreta, y eso alcanza para un reverso **interactivo**, iniciado por una persona desde
+Historial. Secuencias sigue siendo necesaria más adelante, mas no como prerrequisito de B7.
+Orden aprobado: B6 → **B7 (reverso interactivo 0400/0410, completo — ver sección 9)** → Fase C
+(secuencias/contexto entre pasos) → 0420/0430 y automatización de reversos (B8, ver sección 6).
+
+**Próximo bloque:** **B8 (propuesta) — Reversos automatizados (0420/0430)**, condicionado a que
+exista Fase C (al menos C1, infraestructura de Secuencias): un escenario de reverso automatizado
+necesita expresar "usa la salida del paso anterior", que hoy no existe fuera de una ejecución
+manual concreta (ver sección 9.N).
 
 Alternativa independiente de esa decisión: **D0 — cerrar QA-002** (test dedicado para
 `adapters/host_simulado/cli.py`) y/o **C1 — infraestructura mínima de Secuencias** (no requiere
@@ -635,3 +643,109 @@ si se quiere que un escenario de reverso futuro no dependa de IDs fijos — ver 
 de datos, la elegibilidad y el snapshot seguro para B7 (reversos 0400/0410) ya están listos y
 probados; lo que falta para B7 es exclusivamente: el mensaje 0400/0410 en sí (armado, codec,
 orquestador), la decisión sobre DE90, y la decisión de producto sobre Secuencias.
+
+## 9. Checkpoint B7 — Reverso interactivo real (0400/0410)
+
+**Estado: COMPLETO para el alcance acordado.** Rama `feature/multi-mti-b7-reversal-0400`,
+commits `820bd5e` (B7.1 perfil), `cde3852` (B7.2 referencia+builder), `6f4f3f6` (B7.3
+orquestador), `de0556b` (B7.4-B7.7 UI/preview/seguridad). Sin mergear a `main`, pendiente de
+aprobación del propietario. Decisión de orden previa (2026-09-13): Secuencias NO se adelanta —
+B6 ya alcanza para un reverso manual (ver sección 7).
+
+**A. Integración B6:** confirmada antes de abrir B7 — `main`/`origin/main` en `7c034ed`,
+suite 1268 passed en verde.
+
+**B. Perfil 0400/0410** (`profiles/generico.py`): sin campos editables ni opcionales — un
+reverso no es un constructor libre. Obligatorios de la solicitud `{3,4,7,11,41,49}` (DE37/RRN
+queda fuera: el original pudo no haberlo tenido); de la respuesta `{3,4,7,11,39,41}`, mismo
+criterio que 0210. DE4/DE37/DE41/DE49 declarados `derivados` (vienen de `ReferenciaEjecucion`,
+nunca de texto libre); DE3/DE7/DE11 `automáticos` (datos nuevos de este intercambio). Ningún
+campo ISO nuevo: 0400/0410 solo reutiliza números ya declarados en `ESPECIFICACION_GENERICA`.
+
+**C. DE90:** investigado de nuevo con la composición exacta en mano (no solo "existe o no", como
+en B6). Los primeros 31 caracteres (MTI+STAN+fecha/hora+adquirente) serían derivables de
+`ReferenciaEjecucion` sin inventar nada; los últimos 11 (ID de institución receptora/forwarding,
+DE33) no tienen ninguna fuente en este perfil — ni siquiera está declarado para ningún MTI.
+Rellenarlos fabricaría un dato que el laboratorio no tiene. **Decisión: NO implementado**,
+documentado en `profiles/generico.py` y `application/armado_reverso.py`. La correlación
+origen↔reverso se apoya en DE37 (cuando existe) a nivel de protocolo y en
+`Ejecucion.ejecucion_origen_id` a nivel de aplicación.
+
+**D. Builder** (`application/armado_reverso.py::armar_reverso_financiero`): recibe
+`ReferenciaEjecucion` + `stan_nuevo` + `momento_nuevo`, sin ningún parámetro de texto libre
+(verificado por firma en test). Nuevos: DE3 (constante de laboratorio), DE7/DE11 (reloj/STAN de
+este intercambio). Del original: DE4/DE41/DE49 siempre, DE37 solo si existía. STAN del reverso
+≠ STAN original, verificado en `tests/test_armado_reverso.py` y en el E2E real. Revienta con
+`ReferenciaOrigenIncompleta` si falta monto/moneda/terminal (no debería ocurrir para un origen
+elegible real).
+
+**E. Correlación — dos conceptos, sin mezclar:**
+  - **0400↔0410** (RN-3 estándar, sin cambios): `domain.validacion`/`campos_de_correlacion` ya
+    eran genéricos por MTI (B1); el host simulado los reutiliza sin ningún camino especial para
+    0400 (confirmado — no fue necesario tocar `adapters/host_simulado/servidor.py`).
+  - **0400↔0200 original**: `Ejecucion.ejecucion_origen_id` (B6), nunca STAN/RRN. No se introdujo
+    ninguna `EstrategiaCorrelacion` nueva: los dos casos que ARCH-005 anticipaba como "correlación
+    cruzada" resultaron ser el mismo mecanismo de B6, no uno nuevo — no había un segundo
+    comportamiento real que justificara la abstracción.
+
+**F. Host simulado:** **CERO líneas tocadas.** `_construir_respuesta` ya derivaba el MTI de
+respuesta genéricamente (B2) y su rama `else` (cualquier MTI con código explícito o default) ya
+cubría 0400 sin necesitar una rama dedicada. Evidencia real: `tests/
+test_orquestador_reverso_financiero.py` (0400→0410/00 por TCP real) y la sesión de navegador real
+(ver I).
+
+**G. Persistencia:** `ejecucion_origen_id` (columna de B6, sin migración nueva) se hiló a través
+de `Orquestador._ejecutar`/`_registrar` (parámetro nuevo, `None` por defecto — cero cambio de
+comportamiento para compra/echo/financiera). 1 origen → N derivadas confirmado con dos reversos
+reales sobre la misma 0200 (test y navegador). Original releída de la base tras el reverso:
+estado, STAN y monto intactos.
+
+**H. Seguridad:** `tests/test_seguridad_reverso_financiero.py` confirma que el PAN nunca aparece
+en la vista previa, en el resultado ni en el detalle del reverso; que DE90 no aparece en ningún
+lado (documentando la decisión de C); que el reverso persiste por `card_id`, nunca duplicando el
+PAN. Adversarial POST: un intento directo (sin pasar por "Crear reverso") contra un origen no
+elegible o inexistente responde 404 sin generar STAN ni derivada — la elegibilidad se revalida
+siempre dentro de `Orquestador.ejecutar_reverso_financiero`, nunca se confía en la web.
+
+**I. UI:** Historial → 0200 aprobada → chip "Elegible para reverso" + botón "Crear reverso" →
+`GET /historial/{id}/reverso` (preview: MTI, bitmap, RAW/HEX seguro, campos con su origen,
+"Derivado de la ejecución #X" con monto/STAN original/RRN/código de autorización según
+disponibilidad) → `POST /historial/{id}/reverso/ejecutar` → resultado (reutiliza
+`resultado.html`) → navegación bidireccional real en `/historial/{id}`. Verificado con recorrido
+manual completo en navegador real contra `sibu-host-demo` (0200 aprobada real, preview real,
+0400/0410 real, navegación en ambos sentidos, segundo reverso 1→N, y una 0200 rechazada
+confirmando que ni el botón ni la ruta directa `/historial/{id}/reverso` están disponibles).
+
+**J. E2E:** `tests/test_orquestador_reverso_financiero.py::
+test_reverso_real_desde_una_financiera_aprobada` — 0200→0210/00→0400→0410/00, TCP/codec/SQLite
+reales, sin dobles.
+
+**K. Arquitectura — métrica de reutilización (punto 30):** de los ~1370 líneas netas agregadas en
+B7, la inmensa mayoría es específica del reverso por necesidad (perfil, builder, UI/preview,
+tests) — no por duplicación. Cero condicionales especiales por MTI se agregaron a
+`domain/validacion.py`, `Orquestador._ejecutar` ni `adapters/host_simulado/servidor.py`: los
+cuatro ya eran genéricos desde B1/B2. Cero duplicación de plantilla: `resultado.html` se reutiliza
+tal cual (parametrizado por `seccion="reverso"`); solo `reverso_preview.html` es nuevo, porque el
+flujo previo a ejecutar genuinamente no existía para ninguna otra operación (sin selector de
+tarjeta/monto/conexión). Cero duplicación de transporte, persistencia (`_registrar` extendido con
+un parámetro, no reescrito) ni de correlación (RN-3 sin tocar). La única pieza nueva de
+"infraestructura" real es `armado_reverso.py` + la extensión de `ReferenciaEjecucion` — ambas ya
+anticipadas por B6. **Ninguna señal de dispersión de lógica preocupante**: agregar 0400 no forzó
+tocar más de 2-3 módulos centrales (`Ejecucion`/`_ejecutar`/`_registrar` en orquestador, y nada
+en dominio de validación/host). Esto sugiere que 0420/0430 (B8) sería, arquitectónicamente, un
+incremento del mismo tamaño — el riesgo real de B8 es de producto (contexto entre pasos, Fase C),
+no de acoplamiento de código.
+
+**L. Tests:** 1268 passed al cerrar B6 → **1296 passed** al cerrar B7 (28 nuevos: 7 perfil, 7
+builder, 7 orquestador/E2E, 4 web, 2 seguridad, 1 actualizado en `test_perfil_generico.py`). 0
+skipped. `git diff --check` limpio en cada commit.
+
+**M. Commits:** `820bd5e` (B7.1), `cde3852` (B7.2), `6f4f3f6` (B7.3), `de0556b` (B7.4-B7.7).
+
+**N. Próximo paso — qué hace falta para Fase C (Secuencias):** nada de B7 lo bloquea ni lo
+adelanta. Fase C (sección 6, C1) puede iniciarse de forma independiente en cualquier momento: su
+entrega mínima (dos pasos 0100→0100) no depende de B7. Lo que SÍ depende de Fase C es **B8**
+(0420/0430 y automatización de reversos dentro de escenarios/suites): un escenario de reverso
+automatizado necesita expresar "usa la ejecución producida por el paso anterior", no un
+`ejecucion_id` fijo — ese es exactamente el contrato que Secuencias (`ContextoPaso`,
+`depende_de`/`captura`) está diseñada para dar. **No se avanza a 0420/0430 todavía.**
