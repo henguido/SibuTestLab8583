@@ -31,6 +31,8 @@ from ..domain.modelos import (
     MTI_RESPUESTA_COMPRA,
     MTI_RESPUESTA_COMPRA_FINANCIERA,
     MTI_RESPUESTA_ECHO,
+    MTI_RESPUESTA_REVERSO_FINANCIERO,
+    MTI_REVERSO_FINANCIERO,
 )
 
 NOMBRE_PERFIL_GENERICO = "generico"
@@ -440,6 +442,54 @@ _POLITICA_COMPRA_FINANCIERA = PoliticaCamposMti(
 #: cual de las dos copias quedo desactualizada.
 METADATOS_CAMPOS_0200 = METADATOS_CAMPOS_0100
 
+# --------------------------------------- Reverso financiero (0400/0410, B7) --
+#
+# Un reverso deshace una 0200 ya aprobada. Ningun campo de este MTI es
+# editable ni opcional -a proposito, B7 punto 5: un reverso no es un
+# constructor libre-. Cada campo es "nuevo intercambio" (DE3/DE7/DE11:
+# generados en el momento del reverso, nunca copiados del original) o
+# "referenciado del original" (DE4/DE41/DE49/DE37: copiados del snapshot
+# seguro de la ejecucion origen, `application.referencia_ejecucion.
+# ReferenciaEjecucion`, B6). El builder (`application/armado_reverso.py`)
+# construye estos campos directamente -no hay `campos_manuales` que
+# componer, asi que este MTI no reutiliza `domain.armado._componer_campos_base`-.
+#
+# DE90 (Original Data Elements) -investigado en B6 y revisado de nuevo aqui
+# con la composicion exacta en mano- NO se implementa: los primeros 31
+# caracteres (MTI+STAN+fecha/hora+adquirente del original) se podrian derivar
+# de `ReferenciaEjecucion` sin inventar nada, pero los ultimos 11 (ID de
+# institucion RECEPTORA/forwarding) no tienen ninguna fuente en este perfil
+# -`ESPECIFICACION_GENERICA` ni siquiera declara ese campo (DE33, Forwarding
+# Institution ID) para ningun MTI-. Rellenarlos con cualquier valor
+# fabricaria un dato que este laboratorio no tiene: exactamente lo que B7
+# punto 7 prohibe ("no aceptar DE90 como texto libre"). La correlacion
+# origen<->reverso se apoya en cambio en DE37 (RRN, cuando el original lo
+# tuvo) a nivel de protocolo, y en `Ejecucion.ejecucion_origen_id` (B6) a
+# nivel de aplicacion.
+CODIGO_PROCESO_REVERSO_FINANCIERO = "000000"
+
+# Obligatorios de la solicitud: DE37 (RRN) queda fuera a proposito -el
+# original puede no haberlo tenido (no es obligatorio en 0200, ver
+# OBLIGATORIOS_0200 mas arriba)-, asi que un reverso sin RRN sigue siendo un
+# 0400 valido segun este perfil.
+OBLIGATORIOS_0400 = frozenset({"3", "4", "7", "11", "41", "49"})
+
+# Obligatorios de la respuesta: mismo criterio que OBLIGATORIOS_0210.
+OBLIGATORIOS_0410 = frozenset({"3", "4", "7", "11", "39", "41"})
+
+#: Politica de campos del reverso financiero (0400, B7). Sin editables ni
+#: opcionales -un reverso no es un constructor libre-. DE4/DE41/DE49 son
+#: "derivados" en el mismo sentido que DE2/DE14 lo son en compra: vienen de
+#: otro dato del dominio (aqui, `ReferenciaEjecucion` en vez de
+#: `TarjetaPrueba`), nunca de texto libre. DE37 tambien es derivado -el
+#: builder simplemente no lo incluye cuando el original no lo tuvo-. DE3/
+#: DE7/DE11 son automaticos: datos NUEVOS de este intercambio, no del
+#: original.
+_POLITICA_REVERSO_FINANCIERO = PoliticaCamposMti(
+    derivados=frozenset({"4", "37", "41", "49"}),
+    automaticos=frozenset({"3", "7", "11"}),
+)
+
 PERFIL_GENERICO = PerfilDeMarca(
     nombre=NOMBRE_PERFIL_GENERICO,
     especificacion=ESPECIFICACION_GENERICA,
@@ -450,11 +500,14 @@ PERFIL_GENERICO = PerfilDeMarca(
         MTI_RESPUESTA_ECHO: OBLIGATORIOS_0810,
         MTI_COMPRA_FINANCIERA: OBLIGATORIOS_0200,
         MTI_RESPUESTA_COMPRA_FINANCIERA: OBLIGATORIOS_0210,
+        MTI_REVERSO_FINANCIERO: OBLIGATORIOS_0400,
+        MTI_RESPUESTA_REVERSO_FINANCIERO: OBLIGATORIOS_0410,
     },
     politica_por_mti={
         MTI_COMPRA: _POLITICA_COMPRA,
         MTI_ECHO: _POLITICA_ECHO,
         MTI_COMPRA_FINANCIERA: _POLITICA_COMPRA_FINANCIERA,
+        MTI_REVERSO_FINANCIERO: _POLITICA_REVERSO_FINANCIERO,
     },
 )
 

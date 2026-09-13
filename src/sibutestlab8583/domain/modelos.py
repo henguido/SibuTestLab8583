@@ -44,6 +44,17 @@ MTI_RESPUESTA_ECHO = "0810"
 MTI_COMPRA_FINANCIERA = "0200"
 MTI_RESPUESTA_COMPRA_FINANCIERA = "0210"
 
+#: Reverso financiero (B7, 2026-09-13): la primera OPERACION DERIVADA real
+#: de este laboratorio -deshace una 0200 ya aprobada, construida SIEMPRE
+#: desde el snapshot seguro de esa ejecucion origen (B6,
+#: `application.referencia_ejecucion.ReferenciaEjecucion`), nunca desde un
+#: constructor libre. `armar_reverso_financiero` vive en
+#: `application/armado_reverso.py`, no en `domain/armado.py`: su unico dato
+#: de entrada es un tipo de la capa de aplicacion, y el dominio no puede
+#: depender de ella (ver docstring de ese modulo).
+MTI_REVERSO_FINANCIERO = "0400"
+MTI_RESPUESTA_REVERSO_FINANCIERO = "0410"
+
 #: Identificador de la INTENCION funcional de un escenario (B3, 2026-09-13),
 #: separado del MTI: hoy cada MTI implica exactamente una operacion, asi que
 #: `OPERACION_POR_MTI` alcanza para derivarlo sin ambiguedad. El campo existe
@@ -55,10 +66,17 @@ MTI_RESPUESTA_COMPRA_FINANCIERA = "0210"
 OPERACION_COMPRA = "purchase"
 OPERACION_ECHO = "network_echo"
 OPERACION_COMPRA_FINANCIERA = "financial_purchase"
+#: Reverso financiero (B7): identidad funcional separada de "0400", mismo
+#: criterio que las tres anteriores -esta vez la separacion no es teorica:
+#: `MTI_REVERSO_FINANCIERO` identifica el MENSAJE, `OPERACION_REVERSO_FINANCIERO`
+#: identifica que ESTE mensaje concreto es una operacion derivada de otra
+#: ejecucion (ver `Ejecucion.ejecucion_origen_id`, B6).
+OPERACION_REVERSO_FINANCIERO = "financial_reversal"
 OPERACION_POR_MTI: Mapping[str, str] = {
     MTI_COMPRA: OPERACION_COMPRA,
     MTI_ECHO: OPERACION_ECHO,
     MTI_COMPRA_FINANCIERA: OPERACION_COMPRA_FINANCIERA,
+    MTI_REVERSO_FINANCIERO: OPERACION_REVERSO_FINANCIERO,
 }
 
 #: Campos ISO que transportan datos de tarjeta y nunca se persisten en claro.
@@ -207,6 +225,24 @@ class DatosCompraFinanciera:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
+
+
+@dataclass(frozen=True)
+class DatosReversoFinanciero:
+    """Lo minimo para pedir un reverso financiero (0400, B7): la identidad
+    de la ejecucion origen, nada mas.
+
+    A diferencia de `DatosCompra`/`DatosCompraFinanciera`, NO tiene
+    `campos_manuales`: un reverso no es un constructor libre -todo campo del
+    0400 se deriva del snapshot de la ejecucion origen (`ReferenciaEjecucion`,
+    B6) o se genera automaticamente (nuevo STAN, nuevo momento), nunca de
+    texto que alguien escriba a mano (B7, punto 5). La elegibilidad de
+    `ejecucion_origen_id` (hoy, solo una 0200 aprobada -ver
+    `domain.elegibilidad_reverso`-) se revalida siempre en el orquestador:
+    nunca se confia en que quien llama ya la valido.
+    """
+
+    ejecucion_origen_id: int
 
 
 @dataclass(frozen=True)
