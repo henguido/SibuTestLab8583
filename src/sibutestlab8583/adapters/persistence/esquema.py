@@ -158,11 +158,29 @@ CREATE TABLE IF NOT EXISTS ejecuciones (
     -- Causa concreta y segura del desenlace (ver Ejecucion.motivo_detalle en
     -- domain/modelos.py). NULL para una APROBADA (no aplica) y para filas
     -- anteriores a que este campo existiera (no se reconstruye).
-    motivo_detalle          TEXT
+    motivo_detalle          TEXT,
+    -- Referencia a la ejecucion de la que ESTA se deriva (B6, modelo de
+    -- reversos, 2026-09-13): FK auto-referencial, nullable -NULL para
+    -- cualquier ejecucion independiente, la inmensa mayoria hoy. Un mismo
+    -- origen puede tener varias derivadas (1->N): nada aqui impone
+    -- unicidad. Nunca se resuelve con join en cada lectura -ver
+    -- Ejecucion.ejecucion_origen_id en domain/modelos.py-: es un puntero de
+    -- navegacion, los datos seguros de la ejecucion origen viajan aparte en
+    -- `ReferenciaEjecucion` (application/referencia_ejecucion.py).
+    ejecucion_origen_id     INTEGER REFERENCES ejecuciones(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_creada_en ON ejecuciones(creada_en);
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_card_id   ON ejecuciones(card_id);
+-- Sin indice para ejecucion_origen_id a proposito: es una columna migrada
+-- (ADD COLUMN), y este DDL corre integro -incluidas las CREATE INDEX- ANTES
+-- de que las migraciones de columnas se apliquen (ver inicializar() mas
+-- abajo); un indice aqui fallaria con "no such column" contra una base
+-- existente que todavia no la tenga. Ningun otro campo agregado por
+-- migracion (escenario_id, evaluacion_estado, motivo_detalle) tiene indice
+-- propio tampoco -mismo motivo-. El volumen esperado de derivadas no lo
+-- justifica todavia; se puede agregar despues con su propia migracion si
+-- hiciera falta.
 
 -- Bloque 4: suites de regresion. Una suite es una agrupacion reutilizable de
 -- escenarios, en un orden fijo -no una corrida-. Igual que escenarios, nunca
@@ -343,6 +361,16 @@ COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION: tuple[tuple[str, str], ...] = (
     ("evaluacion_json", "TEXT"),
 )
 
+#: Lo mismo para `ejecuciones`: `ejecucion_origen_id` es posterior (B6,
+#: modelo de reversos). Aditiva y nullable -sin conflicto de default ni de
+#: constraint existente-, asi que basta el camino liviano de `_migrar()`
+#: (`ALTER TABLE ... ADD COLUMN`): a diferencia de `card_id`/`monto`
+#: (`_migrar_ejecuciones_card_id_nullable`), aqui no se relaja ningun
+#: `NOT NULL` previo, se agrega una columna nueva desde cero.
+COLUMNAS_AGREGADAS_EJECUCIONES_ORIGEN: tuple[tuple[str, str], ...] = (
+    ("ejecucion_origen_id", "INTEGER REFERENCES ejecuciones(id)"),
+)
+
 #: Lo mismo para `ejecuciones`: `motivo_detalle` es posterior (diagnostico
 #: historico de fallos, mejora funcional posterior al cierre).
 COLUMNAS_AGREGADAS_EJECUCIONES_MOTIVO: tuple[tuple[str, str], ...] = (
@@ -423,6 +451,7 @@ _COLUMNAS_EJECUCIONES = (
     "codigo_respuesta", "solicitud_enmascarada", "respuesta_enmascarada",
     "solicitud_json", "respuesta_json", "latencia_ms", "escenario_id",
     "escenario_nombre", "evaluacion_estado", "evaluacion_json", "motivo_detalle",
+    "ejecucion_origen_id",
 )
 
 
@@ -503,7 +532,8 @@ async def _migrar_ejecuciones_card_id_nullable(conexion: aiosqlite.Connection) -
             escenario_nombre        TEXT,
             evaluacion_estado       TEXT,
             evaluacion_json         TEXT,
-            motivo_detalle          TEXT
+            motivo_detalle          TEXT,
+            ejecucion_origen_id     INTEGER REFERENCES ejecuciones(id)
         );
         INSERT INTO ejecuciones_nueva_b2 ({columnas_sql})
             SELECT {columnas_sql} FROM ejecuciones;
@@ -616,6 +646,7 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_ESCENARIO)
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_EVALUACION)
         await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_MOTIVO)
+        await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS_EJECUCIONES_ORIGEN)
         await _migrar(conexion, "escenarios", COLUMNAS_AGREGADAS_ESCENARIOS)
         await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
         await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)

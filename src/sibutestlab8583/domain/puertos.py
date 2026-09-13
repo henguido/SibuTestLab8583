@@ -133,6 +133,11 @@ class RepositorioEjecuciones(Protocol):
 
     async def listar(self, limite: int = 50) -> Sequence[Ejecucion]: ...
 
+    async def listar_derivadas(self, ejecucion_origen_id: int) -> Sequence[Ejecucion]:
+        """Ejecuciones cuyo `ejecucion_origen_id` es `ejecucion_origen_id`
+        (B6, modelo de reversos): 1 origen puede tener N derivadas."""
+        ...
+
     async def buscar(
         self, filtro: FiltroHistorial, pagina: int, tam_pagina: int
     ) -> tuple[Sequence[Ejecucion], int]:

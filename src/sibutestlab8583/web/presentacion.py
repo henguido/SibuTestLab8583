@@ -818,6 +818,8 @@ def contexto_de_detalle(
     bitmap_respuesta: str | None = None,
     raw_solicitud: tuple[str, int] | None = None,
     raw_respuesta: tuple[str, int] | None = None,
+    derivadas: Sequence = (),
+    elegible_para_derivada: bool = False,
 ) -> dict:
     """Arma lo que la plantilla del detalle historico necesita.
 
@@ -864,6 +866,10 @@ def contexto_de_detalle(
         "evaluacion": evaluacion_de_ejecucion(ejecucion, descripciones),
         "motivo_esperado": ejecucion.estado in ESTADOS_CON_MOTIVO,
         "motivo_detalle": motivo_de(ejecucion),
+        # B6: modelo de operacion derivada (reverso, todavia sin 0400/0410
+        # implementado). Ver domain/elegibilidad_reverso.py.
+        "derivadas": derivadas,
+        "elegible_para_derivada": elegible_para_derivada,
     }
 
 

@@ -123,6 +123,12 @@ class ConsultasFalsas:
                 )
         return None
 
+    async def derivadas_de(self, id_ejecucion):
+        """Ejecuciones cuyo `ejecucion_origen_id` es `id_ejecucion` (B6): el
+        doble filtra en memoria, mismo criterio que `historial`/`detalle_ejecucion`.
+        """
+        return [e for e in self._ejecuciones if e.ejecucion_origen_id == id_ejecucion]
+
 
 class RepositorioTarjetasFalso:
     """Doble en memoria de `RepositorioTarjetas`, para probar la web sin SQLite.
