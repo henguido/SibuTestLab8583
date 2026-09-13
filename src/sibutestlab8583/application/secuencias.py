@@ -34,10 +34,6 @@ from ..domain.puertos import RepositorioEscenarios, RepositorioSecuencias
 PREFIJO_SECUENCIA_ID = "SEQ"
 
 
-class SecuenciaNoEncontrada(Exception):
-    """No existe una secuencia con el `secuencia_id` indicado."""
-
-
 @dataclass(frozen=True)
 class DatosPaso:
     """Lo que la pantalla de creacion de secuencias necesita por paso -antes

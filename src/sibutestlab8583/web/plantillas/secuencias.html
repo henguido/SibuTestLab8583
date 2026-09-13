@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal, encabezado_pagina %}
+{% block titulo %}Secuencias · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+{{ encabezado_pagina(
+  'Secuencias transaccionales',
+  'A diferencia de una suite (escenarios independientes), una secuencia es una lista ordenada de pasos DEPENDIENTES: el paso 2 usa la ejecución que produjo el paso 1. Hoy solo se admite compra financiera seguida de su reverso.',
+  'Nueva secuencia', '/secuencias/nueva'
+) }}
+
+<div class="barra-filtros">
+  <a class="enlace-boton" href="/secuencias/corridas">Ver corridas &rarr;</a>
+</div>
+
+{% if secuencias %}
+<div class="rejilla-fichas">
+  {% for secuencia in secuencias %}
+  <article class="ficha">
+    <div class="ficha__cabecera">
+      <h2 class="ficha__titulo">{{ secuencia.nombre }}</h2>
+      {% if secuencia.activa %}
+      <span class="chip chip--activa">Activa</span>
+      {% else %}
+      <span class="chip chip--inactiva">Inactiva</span>
+      {% endif %}
+    </div>
+    <div class="ficha__meta">
+      <span><strong>{{ secuencia.pasos|length }}</strong> paso{{ 's' if secuencia.pasos|length != 1 }}</span>
+    </div>
+    <div class="ficha__acciones">
+      <form method="post" action="/secuencias/{{ secuencia.secuencia_id }}/ejecutar">
+        <button class="boton boton--sm" type="submit">{{ senal('transmision', 13) }} Ejecutar</button>
+      </form>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="estado-vacio">
+  <p class="estado-vacio__titulo">Todavía no hay secuencias guardadas</p>
+  <p class="estado-vacio__detalle">
+    Cree una secuencia con una compra financiera y su reverso para ver el vínculo entre pasos
+    en acción.
+  </p>
+  <a class="boton" href="/secuencias/nueva">Nueva secuencia</a>
+</div>
+{% endif %}
+{% endblock %}

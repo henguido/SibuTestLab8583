@@ -426,6 +426,21 @@ class ComposicionFalsa:
             self.ejecutor_escenarios,
         )
 
+        from sibutestlab8583.adapters.persistence.sqlite_repos import (
+            RepositorioCorridasSecuenciaSQLite,
+            RepositorioSecuenciasSQLite,
+        )
+        from sibutestlab8583.application.secuencias import ServicioSecuencias
+
+        # Fase C1: mismo criterio que suites -SQLite real sobre el mismo
+        # espejo, ningun doble en memoria para el catalogo/historico-.
+        self._repositorio_secuencias = RepositorioSecuenciasSQLite(self._ruta_suites)
+        self._repositorio_corridas_secuencia = RepositorioCorridasSecuenciaSQLite(self._ruta_suites)
+        self.administracion_secuencias = ServicioSecuencias(
+            self._repositorio_secuencias, self.administracion_escenarios._escenarios
+        )
+        self.corridas_secuencia = self._repositorio_corridas_secuencia
+
         from sibutestlab8583.application.comparacion_corridas import ServicioComparacionCorridas
 
         self.comparador_corridas = ServicioComparacionCorridas(self._repositorio_corridas_suite)

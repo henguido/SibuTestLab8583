@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import pastilla, evaluacion as pieza_evaluacion %}
+{% set etiquetas_resultado = {
+  'pass': 'PASS', 'fail': 'FAIL', 'error': 'ERROR',
+  'sin_expectativas': 'Sin expectativas', 'bloqueado': 'Bloqueado',
+  'no_ejecutado': 'No ejecutado',
+} %}
+{% block titulo %}Corrida de secuencia #{{ corrida.corrida_id }} · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/secuencias">Secuencias</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <a href="/secuencias/corridas">Corridas</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">Corrida #{{ corrida.corrida_id }}</span>
+</nav>
+<div class="reporte-cabecera">
+  <div class="reporte-cabecera__titulo">
+    <h1>{{ corrida.secuencia_nombre }} · Corrida #{{ corrida.corrida_id }}</h1>
+    {% if aviso_resultado %}
+    {{ pastilla(aviso_resultado) }}
+    {% endif %}
+  </div>
+  <p class="reporte-cabecera__meta">{{ corrida.iniciada_en }} UTC · {{ corrida.duracion }}</p>
+</div>
+
+{% if not aviso_resultado %}
+<div class="aviso indeterminado">
+  <h2 class="aviso__titulo">Corrida en curso</h2>
+  <p class="aviso__detalle">
+    Esta corrida todavía no terminó -o el proceso se interrumpió antes de cerrarla-.
+  </p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Resumen</h2>
+  </div>
+  <div class="panel__cuerpo">
+    <div class="metricas metricas--grande">
+      <div class="metrica">
+        <span class="metrica__rotulo">Total</span>
+        <span class="metrica__valor">{{ corrida.total }}</span>
+      </div>
+      <div class="metrica metrica--pass">
+        <span class="metrica__rotulo">PASS</span>
+        <span class="metrica__valor">{{ corrida.cantidad_pass }}</span>
+      </div>
+      <div class="metrica metrica--fail">
+        <span class="metrica__rotulo">FAIL</span>
+        <span class="metrica__valor">{{ corrida.cantidad_fail }}</span>
+      </div>
+      <div class="metrica metrica--error">
+        <span class="metrica__rotulo">ERROR</span>
+        <span class="metrica__valor">{{ corrida.cantidad_error }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Sin expectativas</span>
+        <span class="metrica__valor">{{ corrida.cantidad_sin_expectativas }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Bloqueado</span>
+        <span class="metrica__valor">{{ corrida.cantidad_bloqueado }}</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Pasos</h2>
+    <span class="panel__nota">{{ filas_pasos|length }} paso{{ 's' if filas_pasos|length != 1 }}</span>
+  </div>
+  <div class="desplazable" tabindex="0" role="region" aria-label="Pasos de la corrida">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Orden</th>
+          <th>Paso</th>
+          <th>Origen</th>
+          <th>Resultado</th>
+          <th>Detalle</th>
+          <th>Ejecución</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas_pasos %}
+        <tr data-resultado="{{ fila.resultado }}">
+          <td class="num">{{ fila.orden }}</td>
+          <td>
+            {{ fila.escenario_nombre or ('Reverso del paso ' ~ fila.origen_paso_orden) }}
+          </td>
+          <td>
+            {% if fila.origen_tipo == 'derivado' %}
+            <span class="chip chip--sintetica">Derivado del paso {{ fila.origen_paso_orden }}</span>
+            {% else %}
+            <span class="chip chip--activa">Independiente</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if fila.resultado == 'pass' %}
+            <span class="chip chip--pass">{{ etiquetas_resultado.pass }}</span>
+            {% elif fila.resultado == 'fail' %}
+            <span class="chip chip--fail">{{ etiquetas_resultado.fail }}</span>
+            {% elif fila.resultado == 'error' %}
+            <span class="chip chip--qa">{{ etiquetas_resultado.error }}</span>
+            {% else %}
+            <span class="chip chip--sintetica">{{ etiquetas_resultado.get(fila.resultado, fila.resultado) }}</span>
+            {% endif %}
+          </td>
+          <td>{{ fila.detalle or '—' }}</td>
+          <td>
+            {% if fila.ejecucion_id %}
+            <a href="/historial/{{ fila.ejecucion_id }}">Ver ejecución</a>
+            {% else %}
+            <span class="vacio">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% if fila.evaluacion %}
+        <tr>
+          <td colspan="6">{{ pieza_evaluacion(fila.evaluacion) }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<a class="volver" href="/secuencias/corridas">&larr; Corridas de secuencia</a>
+{% endblock %}
