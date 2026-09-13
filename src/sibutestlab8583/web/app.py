@@ -61,6 +61,7 @@ from ..application.tarjetas import (
 )
 from ..composicion import Composicion, Configuracion
 from ..domain.armado import validar_forma_de_opcionales
+from ..domain.elegibilidad_reverso import puede_generar_operacion_derivada
 from ..domain.errores import ErrorDeCamposManuales, ErrorDelSimulador
 from ..domain.expectativas import (
     campos_permitidos_expectativa,
@@ -990,6 +991,10 @@ async def detalle_ejecucion(
     mensaje_respuesta = _reconstruir_mensaje_persistido(
         detalle.ejecucion.mti_respuesta, detalle.respuesta
     )
+    # B6: modelo de operacion derivada -indicador pasivo y navegacion, sin
+    # 0400/0410 implementado todavia (ver domain/elegibilidad_reverso.py).
+    derivadas = await composicion.consultas.derivadas_de(numero)
+    elegible_para_derivada = puede_generar_operacion_derivada(detalle.ejecucion)
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="detalle.html",
@@ -999,6 +1004,8 @@ async def detalle_ejecucion(
             bitmap_respuesta=composicion.bitmap_hex(mensaje_respuesta) if mensaje_respuesta else None,
             raw_solicitud=composicion.raw_hex_seguro(mensaje_solicitud) if mensaje_solicitud else None,
             raw_respuesta=composicion.raw_hex_seguro(mensaje_respuesta) if mensaje_respuesta else None,
+            derivadas=derivadas,
+            elegible_para_derivada=elegible_para_derivada,
         ),
     )
 
