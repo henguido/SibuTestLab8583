@@ -37,9 +37,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Sequence
 
-from ..domain.armado import armar_compra, armar_echo
+from ..domain.armado import armar_compra, armar_compra_financiera, armar_echo
 from ..domain.errores import ErrorDeCodificacion
-from ..domain.modelos import DatosCompra, DatosEcho
+from ..domain.modelos import DatosCompra, DatosCompraFinanciera, DatosEcho
 from ..domain.puertos import RepositorioTarjetas
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 
@@ -161,6 +161,44 @@ class ServicioVistaPrevia:
         datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
 
         mensaje = armar_compra(
+            datos, tarjeta, stan=STAN_MARCADOR, momento=momento, perfil=self._perfil
+        )
+        return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, no_reproducibles)
+
+
+class ServicioVistaPreviaCompraFinanciera:
+    """Vista previa del 0200 (compra financiera, B4): mismo principio que
+    `ServicioVistaPrevia`, reusando `armar_compra_financiera` -nunca una
+    segunda implementacion del builder-. Vuelve a buscar tarjeta, igual que
+    compra: a diferencia de echo, esta operacion si tiene ese concepto.
+    """
+
+    def __init__(
+        self,
+        repositorio_tarjetas: RepositorioTarjetas,
+        codec,
+        perfil,
+        *,
+        reloj: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._tarjetas = repositorio_tarjetas
+        self._codec = codec
+        self._perfil = perfil
+        self._reloj = reloj or (lambda: datetime.now(timezone.utc))
+
+    async def construir(self, datos: DatosCompraFinanciera) -> VistaPreviaMensaje:
+        tarjeta = await self._tarjetas.obtener(datos.card_id)
+        if tarjeta is None or not tarjeta.activa:
+            raise TarjetaNoDisponibleParaVistaPrevia(datos.card_id)
+
+        momento = self._reloj()
+        contexto_variables = ContextoResolucion(monto=datos.monto, stan=STAN_MARCADOR, momento=momento)
+        campos_resueltos, no_reproducibles = resolver_campos_manuales(
+            datos.campos_manuales, contexto_variables
+        )
+        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
+
+        mensaje = armar_compra_financiera(
             datos, tarjeta, stan=STAN_MARCADOR, momento=momento, perfil=self._perfil
         )
         return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, no_reproducibles)

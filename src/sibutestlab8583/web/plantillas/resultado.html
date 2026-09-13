@@ -60,19 +60,21 @@
    "Guardar como escenario" enfoca directamente el bloque para nombrarlo y
    guardarlo; en los dos casos la persona revisa antes de reenviar, y cada
    repeticion es una ejecucion nueva con sus propios identificadores. #}
-{% if seccion == "compra" %}
+{% set rutas_por_seccion = {'compra': '/', 'echo': '/echo', 'financiera': '/financiera'} %}
+{% set ruta_reutilizar = rutas_por_seccion.get(seccion) %}
+{% if ruta_reutilizar %}
 {# "Editar y volver a ejecutar"/"Guardar como escenario" reconstruyen la
-   configuracion desde `_reconstruir_desde_ejecucion`, que hoy solo sabe
-   reconstruir una compra (ver su docstring en web/app.py). Para otras
-   operaciones (echo, B2) este bloque no aplica todavia -no porque el
-   dato no exista, sino porque esa reconstruccion aun no se generalizo-. #}
+   configuracion desde `_reconstruir_desde_ejecucion` -generalizada en B4
+   (punto 25) para las tres operaciones via `_RECONSTRUCCION_POR_MTI`, ya no
+   exclusiva de compra-. Un MTI que esa tabla no cubra simplemente no llega
+   aqui con una `seccion` reconocida. #}
 <section class="panel">
   <div class="panel__cabecera">
     <h2 class="panel__titulo">Reutilizar esta transacción</h2>
   </div>
   <div class="acciones">
-    <a class="boton" href="/?ejecucion_id={{ ejecucion.id }}">Editar y volver a ejecutar</a>
-    <a class="boton" href="/?ejecucion_id={{ ejecucion.id }}#guardar-como-escenario">Guardar como escenario</a>
+    <a class="boton" href="{{ ruta_reutilizar }}?ejecucion_id={{ ejecucion.id }}">Editar y volver a ejecutar</a>
+    <a class="boton" href="{{ ruta_reutilizar }}?ejecucion_id={{ ejecucion.id }}#guardar-como-escenario">Guardar como escenario</a>
     <span class="acciones__nota">
       Se recupera la configuración usada; puede revisarla y ajustarla antes de enviarla de nuevo.
     </span>

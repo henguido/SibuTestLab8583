@@ -148,6 +148,41 @@ def test_el_guardia_no_revienta_con_de35_45_ya_enmascarados():
     _verificar_enmascarado_para_inspeccion(mensaje, PERFIL_GENERICO)  # no debe reventar
 
 
+def test_bitmap_y_raw_hex_seguro_de_una_compra_financiera_real_quedan_seguros():
+    """B4: 0200 vuelve a usar tarjeta -a diferencia de echo-, asi que este es
+    el primer punto donde el guardian se ejercita de nuevo contra un mensaje
+    armado de verdad (no un dict sintetico) que SI trae un PAN real antes de
+    enmascarar."""
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from sibutestlab8583.domain.armado import armar_compra_financiera
+    from sibutestlab8583.domain.modelos import DatosCompraFinanciera, TarjetaPrueba
+
+    tarjeta = TarjetaPrueba(card_id="X", pan=pan_sintetico("6666"), expiracion="3012")
+    mensaje = armar_compra_financiera(
+        DatosCompraFinanciera(card_id="X", monto=Decimal("50.00")),
+        tarjeta, stan="000001",
+        momento=datetime(2026, 9, 13, tzinfo=timezone.utc),
+        perfil=PERFIL_GENERICO,
+    )
+
+    # El mensaje SIN enmascarar debe reventar el guardian -es real, con PAN-.
+    try:
+        CODEC.bitmap_hex(mensaje, PERFIL_GENERICO)
+        assert False, "debio reventar: DE2 real de una compra financiera sin enmascarar"
+    except MensajeSinEnmascararError:
+        pass
+
+    # Enmascarado, sigue calculando bitmap/RAW sin problema.
+    enmascarado = mensaje.enmascarado()
+    bitmap = CODEC.bitmap_hex(enmascarado, PERFIL_GENERICO)
+    assert bitmap == bitmap.upper()
+    raw, longitud = CODEC.raw_hex_seguro(enmascarado, PERFIL_GENERICO)
+    assert longitud > 0
+    assert tarjeta.pan not in raw
+
+
 def test_bitmap_y_raw_hex_siguen_funcionando_normalmente_para_un_mensaje_valido():
     """Confirma que la migracion de sensibilidad no rompio el camino feliz:
     un mensaje real, ya enmascarado, sigue calculando bitmap/RAW sin problema."""

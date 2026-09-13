@@ -25,6 +25,7 @@ from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
     OPERACION_COMPRA,
+    OPERACION_COMPRA_FINANCIERA,
     OPERACION_ECHO,
     EstadoEjecucion,
     FiltroHistorial,
@@ -49,11 +50,24 @@ MONTO_MAXIMO = Decimal("9999999999.99")
 ETIQUETAS_OPERACION: dict[str, str] = {
     OPERACION_COMPRA: "Compra",
     OPERACION_ECHO: "Echo de red",
+    OPERACION_COMPRA_FINANCIERA: "Compra financiera",
 }
 
 
 def etiqueta_operacion(operacion: str) -> str:
     return ETIQUETAS_OPERACION.get(operacion, operacion)
+
+
+#: operacion -> ruta de la pantalla de constructor que la carga (B4, punto
+#: 25): la misma tabla que consulta la capa de rutas
+#: (`web.app._config_pantalla_de_operacion`), expuesta aqui para que las
+#: plantillas Jinja -que no importan `web.app`- puedan armar el enlace
+#: "Cargar" sin un `if`/`elif` propio por operacion.
+RUTA_PANTALLA_POR_OPERACION: dict[str, str] = {
+    OPERACION_COMPRA: "/",
+    OPERACION_ECHO: "/echo",
+    OPERACION_COMPRA_FINANCIERA: "/financiera",
+}
 
 
 @dataclass(frozen=True)

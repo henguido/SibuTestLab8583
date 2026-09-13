@@ -127,15 +127,32 @@ def test_el_resultado_de_echo_muestra_el_mti_real_no_el_de_compra():
     assert "Isoscopio · solicitud 0100" not in texto
 
 
-def test_el_resultado_de_echo_no_ofrece_guardar_como_escenario():
-    """Esa reconstruccion (_reconstruir_desde_ejecucion) hoy solo sabe
-    reconstruir una compra -deuda documentada para B3-: el bloque no debe
-    ofrecerse para un resultado de echo."""
+def test_el_resultado_de_echo_ahora_si_ofrece_reutilizar_la_transaccion():
+    """B4 (punto 25) generalizo `_reconstruir_desde_ejecucion` mas alla de
+    compra: la deuda que B3 documento aqui (el bloque no se ofrecia para
+    echo) queda resuelta. Los enlaces apuntan a /echo, no a /."""
     texto = _cliente(resultado=_resultado_echo(EstadoEjecucion.APROBADA)).post(
         "/echo/ejecutar", data={"conexion_id": DESTINO_ID_DEMO, "de70": ""}
     ).text
-    assert "Guardar como escenario" not in texto
-    assert "Editar y volver a ejecutar" not in texto
+    assert "Guardar como escenario" in texto
+    assert "Editar y volver a ejecutar" in texto
+    assert '/echo?ejecucion_id=99' in texto
+
+
+def test_editar_y_volver_a_ejecutar_reconstruye_el_de70_de_una_ejecucion_de_echo(base):
+    """El recorrido completo: reejecutar un echo, seguir "Editar y volver a
+    ejecutar" y confirmar que /echo?ejecucion_id=... recupera el DE70 real."""
+    from sibutestlab8583.adapters.persistence.sqlite_repos import RepositorioEjecucionesSQLite
+
+    resultado = _resultado_echo(EstadoEjecucion.APROBADA)
+    cliente = _cliente(resultado=resultado, ejecuciones=[resultado.ejecucion])
+    respuesta_ejecutar = cliente.post(
+        "/echo/ejecutar", data={"conexion_id": DESTINO_ID_DEMO, "de70": "301"}
+    )
+    assert respuesta_ejecutar.status_code == 200
+
+    texto = cliente.get(f"/echo?ejecucion_id={resultado.ejecucion.id}").text
+    assert 'value="301"' in texto
 
 
 def test_el_resultado_de_echo_vuelve_a_echo_no_a_compra():
