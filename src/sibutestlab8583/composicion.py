@@ -48,6 +48,7 @@ from .application.vista_previa import (
     ServicioVistaPrevia,
     ServicioVistaPreviaCompraFinanciera,
     ServicioVistaPreviaEcho,
+    ServicioVistaPreviaReversoFinanciero,
 )
 from .domain.catalogo import NOMBRE_CATALOGO_GENERICO
 from .domain.errores import ErrorDeCodificacion
@@ -143,6 +144,13 @@ class Composicion:
         el mismo `armar_compra_financiera` y el mismo codec que la ejecucion
         real."""
         return ServicioVistaPreviaCompraFinanciera(self._tarjetas, self._codec, self._perfil)
+
+    @property
+    def vista_previa_reverso_financiero(self) -> ServicioVistaPreviaReversoFinanciero:
+        """Arma la vista previa del 0400 (reverso financiero, B7), desde el
+        snapshot seguro de la ejecucion origen -no hay tarjeta que buscar,
+        ver `application.armado_reverso`."""
+        return ServicioVistaPreviaReversoFinanciero(self._ejecuciones, self._codec, self._perfil)
 
     @property
     def administracion_conexiones(self) -> ServicioConexiones:

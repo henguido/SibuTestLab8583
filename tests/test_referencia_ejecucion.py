@@ -69,7 +69,8 @@ async def test_la_referencia_nunca_expone_el_pan_completo(base):
         referencia.stan, str(referencia.monto), str(referencia.moneda),
         str(referencia.card_id), str(referencia.codigo_respuesta),
         str(referencia.destino_host), str(referencia.destino_puerto),
-        str(referencia.creada_en), *referencia.campos_respuesta.values(),
+        str(referencia.creada_en), str(referencia.terminal), str(referencia.rrn),
+        *referencia.campos_respuesta.values(),
     ]
     texto_completo = " ".join(valores)
     assert PAN_DEMO not in texto_completo
@@ -112,6 +113,19 @@ async def test_los_datos_basicos_de_la_referencia_coinciden_con_la_ejecucion(bas
     assert referencia.mti_respuesta == resultado.ejecucion.mti_respuesta
     assert referencia.monto == Decimal("30.00")
     assert referencia.codigo_respuesta == "00"
+
+
+async def test_la_referencia_trae_terminal_y_rrn_de_la_solicitud_original(base):
+    """B7: `terminal` (DE41) y `rrn` (DE37) son los datos "referenciados del
+    original" que `armar_reverso_financiero` necesita -deben salir de la
+    SOLICITUD original, nunca de la respuesta."""
+    resultado = await _ejecutar_financiera_real(base)
+    consultas = ServicioConsultas(RepositorioTarjetasSQLite(base), RepositorioEjecucionesSQLite(base))
+    detalle = await consultas.detalle_ejecucion(resultado.ejecucion.id)
+    referencia = referencia_desde_detalle(detalle)
+
+    assert referencia.terminal == detalle.solicitud.valor("41")
+    assert referencia.terminal  # el perfil generico siempre lo exige en 0200
 
 
 async def test_la_referencia_se_construye_del_snapshot_no_del_escenario_vivo(base):

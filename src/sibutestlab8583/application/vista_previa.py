@@ -40,8 +40,10 @@ from typing import Callable, Sequence
 from ..domain.armado import armar_compra, armar_compra_financiera, armar_echo
 from ..domain.errores import ErrorDeCodificacion
 from ..domain.modelos import DatosCompra, DatosCompraFinanciera, DatosEcho
-from ..domain.puertos import RepositorioTarjetas
+from ..domain.puertos import RepositorioEjecuciones, RepositorioTarjetas
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
+from .armado_reverso import armar_reverso_financiero
+from .referencia_ejecucion import referencia_origen_elegible
 
 #: Nunca se transmite: solo sostiene la forma (6 digitos) para poder calcular
 #: bitmap/campos. Un valor fijo y reconocible, no un STAN real ni plausible.
@@ -65,6 +67,11 @@ class VistaPreviaMensaje:
     mti: str
     bitmap: str | None
     campos: Sequence[CampoVistaPrevia]
+    #: RAW/HEX seguro reconstruido (B7): igual criterio que
+    #: `Composicion.raw_hex_seguro` en el resultado/detalle real -se calcula
+    #: SIEMPRE sobre el mensaje ya enmascarado, nunca sobre el original-.
+    #: `None` si el codec no pudo codificarlo (mismo caso que `bitmap`).
+    raw: tuple[str, int] | None = None
 
 
 class TarjetaNoDisponibleParaVistaPrevia(Exception):
@@ -104,6 +111,11 @@ def _vista_previa_de_mensaje(
     except ErrorDeCodificacion:
         bitmap = None
 
+    try:
+        raw = codec.raw_hex_seguro(mensaje, perfil)
+    except ErrorDeCodificacion:
+        raw = None
+
     politica = perfil.politica(mti)
     campos = [
         CampoVistaPrevia(
@@ -116,7 +128,7 @@ def _vista_previa_de_mensaje(
         )
         for numero, valor in sorted(mensaje.campos.items(), key=lambda par: int(par[0]))
     ]
-    return VistaPreviaMensaje(mti=mti, bitmap=bitmap, campos=campos)
+    return VistaPreviaMensaje(mti=mti, bitmap=bitmap, campos=campos, raw=raw)
 
 
 class ServicioVistaPreviaTransaccionTarjeta:
@@ -237,3 +249,49 @@ class ServicioVistaPreviaEcho:
 
         mensaje = armar_echo(datos, stan=STAN_MARCADOR, momento=momento, perfil=self._perfil)
         return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, no_reproducibles)
+
+
+class ServicioVistaPreviaReversoFinanciero:
+    """Vista previa del 0400 (reverso financiero, B7): mismo principio de
+    STAN/momento MARCADOR que las demas vistas previas, pero construida
+    desde el snapshot seguro de la ejecucion origen (`ReferenciaEjecucion`,
+    B6) en vez de desde un `DatosX` con `card_id`/`monto` -un reverso no
+    tiene tarjeta que elegir, ver `application.armado_reverso`-.
+
+    Reutiliza `referencia_origen_elegible` -la MISMA funcion que
+    `Orquestador.ejecutar_reverso_financiero` usa para resolver y validar el
+    origen-, asi que la vista previa nunca puede mostrar un mensaje que la
+    ejecucion real fuera a rechazar despues por elegibilidad.
+    """
+
+    def __init__(
+        self,
+        repositorio_ejecuciones: RepositorioEjecuciones,
+        codec,
+        perfil,
+        *,
+        reloj: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._ejecuciones = repositorio_ejecuciones
+        self._codec = codec
+        self._perfil = perfil
+        self._reloj = reloj or (lambda: datetime.now(timezone.utc))
+
+    async def construir(self, ejecucion_origen_id: int) -> VistaPreviaMensaje:
+        """Puede lanzar `EjecucionOrigenNoEncontrada`/`EjecucionOrigenNoElegible`
+        -mismos motivos por los que la ejecucion real del reverso lo
+        rechazaria despues-: el llamador (la ruta web) ya sabe traducir
+        ambos a una respuesta 404/400, igual que ya hace con
+        `TarjetaNoDisponibleParaVistaPrevia`.
+        """
+        referencia = await referencia_origen_elegible(ejecucion_origen_id, self._ejecuciones)
+        momento = self._reloj()
+        mensaje = armar_reverso_financiero(
+            referencia, stan_nuevo=STAN_MARCADOR, momento_nuevo=momento
+        )
+        # Sin variables dinamicas en este MTI (no hay `campos_manuales`): no
+        # hay ningun campo "no reproducible" por resolucion de `{{...}}`. La
+        # politica ya marca DE3/DE7/DE11 como `automatico` -eso solo basta
+        # para que `_vista_previa_de_mensaje` los muestre como "se generará
+        # al enviar", sin necesitar nada mas aqui.
+        return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, frozenset())

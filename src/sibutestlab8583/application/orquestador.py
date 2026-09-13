@@ -75,9 +75,11 @@ from ..domain.modelos import (
     MTI_COMPRA,
     MTI_COMPRA_FINANCIERA,
     MTI_ECHO,
+    MTI_REVERSO_FINANCIERO,
     DatosCompra,
     DatosCompraFinanciera,
     DatosEcho,
+    DatosReversoFinanciero,
     DestinoTcp,
     Ejecucion,
     EstadoEjecucion,
@@ -101,6 +103,8 @@ from ..domain.validacion import (
     mti_de_respuesta,
     validar_envio,
 )
+from .armado_reverso import armar_reverso_financiero
+from .referencia_ejecucion import referencia_origen_elegible
 from .serializacion import a_json_respuesta, a_json_solicitud, a_texto
 
 
@@ -311,6 +315,54 @@ class Orquestador:
             expectativas=expectativas,
         )
 
+    async def ejecutar_reverso_financiero(
+        self,
+        datos: DatosReversoFinanciero,
+        *,
+        expectativas: Expectativas | None = None,
+    ) -> ResultadoCompra:
+        """Arma, valida y ejecuta un reverso financiero (0400, B7): la
+        primera OPERACION DERIVADA real de este laboratorio -construida
+        desde el snapshot seguro de una 0200 ya aprobada (B6), nunca desde
+        el escenario vivo ni desde texto libre (ver `application.
+        armado_reverso`)-.
+
+        La elegibilidad del origen se REVALIDA aqui siempre, sin importar
+        que la capa web ya la haya comprobado para decidir si mostrar el
+        boton "Crear reverso": un POST que apunte a un origen inexistente o
+        no elegible revienta ANTES de generar ningun STAN ni de tocar la
+        red (B7, puntos 15/16) -mismo criterio de defensa en profundidad
+        que `domain.armado.validar_campos_manuales` ya aplica dentro de
+        `armar_compra`.
+
+        Sin `escenario_id`/`escenario_nombre`: un reverso no se origina en
+        un escenario guardado (B7, punto 21) -se origina en una ejecucion
+        concreta, ya trazada via `ejecucion_origen_id`.
+        """
+        if expectativas is not None:
+            validar_expectativas(
+                expectativas, self._perfil, mti_de_respuesta(MTI_REVERSO_FINANCIERO)
+            )
+
+        referencia = await referencia_origen_elegible(
+            datos.ejecucion_origen_id, self._ejecuciones
+        )
+
+        momento = self._reloj()
+        stan = await self._stan.siguiente()
+        solicitud = armar_reverso_financiero(
+            referencia, stan_nuevo=stan, momento_nuevo=momento
+        )
+
+        return await self._ejecutar(
+            solicitud,
+            stan,
+            card_id=referencia.card_id,
+            monto=referencia.monto,
+            ejecucion_origen_id=referencia.ejecucion_id,
+            expectativas=expectativas,
+        )
+
     async def _ejecutar(
         self,
         solicitud: MensajeIso,
@@ -321,6 +373,7 @@ class Orquestador:
         escenario_id: str | None = None,
         escenario_nombre: str | None = None,
         expectativas: Expectativas | None = None,
+        ejecucion_origen_id: int | None = None,
     ) -> ResultadoCompra:
         """Nucleo generico request->response: RN-4, codec, transporte,
         RN-3/RN-1, registro. No conoce `DatosCompra`/`DatosEcho` ni como se
@@ -330,6 +383,12 @@ class Orquestador:
         participan en armar ni en validar nada aqui: `None` para una
         operacion sin tarjeta ni monto (B2: echo), igual que ya admite
         `Ejecucion.card_id`/`monto` (ver `domain/modelos.py`).
+
+        `ejecucion_origen_id` (B7): idem, exclusivamente trazabilidad -la
+        ejecucion de la que ESTA se deriva, si alguna (`Ejecucion.
+        ejecucion_origen_id`, B6)-. `None` para cualquier operacion
+        independiente (compra, echo, compra financiera); solo
+        `ejecutar_reverso_financiero` lo fija hoy.
         """
         # --- RN-4: si falta un obligatorio, no se codifica ni se envia ---
         validacion = validar_envio(solicitud, self._perfil)
@@ -344,6 +403,7 @@ class Orquestador:
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
+                ejecucion_origen_id=ejecucion_origen_id,
             )
 
         # Codificar puede fallar. Si falla, no se llega a intentar transmision
@@ -355,7 +415,7 @@ class Orquestador:
                 solicitud, stan, card_id, monto, EstadoEjecucion.NO_ENVIADA,
                 motivos=(str(error),),
                 escenario_id=escenario_id, escenario_nombre=escenario_nombre,
-                expectativas=expectativas,
+                expectativas=expectativas, ejecucion_origen_id=ejecucion_origen_id,
             )
 
         inicio = time.monotonic()
@@ -372,7 +432,7 @@ class Orquestador:
                 solicitud, stan, card_id, monto, EstadoEjecucion.NO_ENVIADA,
                 motivos=(str(error),),
                 escenario_id=escenario_id, escenario_nombre=escenario_nombre,
-                expectativas=expectativas,
+                expectativas=expectativas, ejecucion_origen_id=ejecucion_origen_id,
             )
         latencia_ms = int((time.monotonic() - inicio) * 1000)
 
@@ -389,6 +449,7 @@ class Orquestador:
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
+                ejecucion_origen_id=ejecucion_origen_id,
             )
 
         # --- Hubo sesion y el intercambio quedo indeterminado ---
@@ -404,6 +465,7 @@ class Orquestador:
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
+                ejecucion_origen_id=ejecucion_origen_id,
             )
 
         # --- RN-2: se espero una respuesta y no llego dentro del limite.
@@ -422,6 +484,7 @@ class Orquestador:
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
+                ejecucion_origen_id=ejecucion_origen_id,
             )
 
         try:
@@ -438,6 +501,7 @@ class Orquestador:
                 escenario_id=escenario_id,
                 escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
+                ejecucion_origen_id=ejecucion_origen_id,
             )
 
         # --- RN-3 primero, luego RN-1 ---
@@ -456,6 +520,7 @@ class Orquestador:
             escenario_id=escenario_id,
             escenario_nombre=escenario_nombre,
             expectativas=expectativas,
+            ejecucion_origen_id=ejecucion_origen_id,
         )
 
     async def _registrar(
@@ -472,6 +537,7 @@ class Orquestador:
         escenario_id: str | None = None,
         escenario_nombre: str | None = None,
         expectativas: Expectativas | None = None,
+        ejecucion_origen_id: int | None = None,
     ) -> ResultadoCompra:
         """Construye la Ejecucion, la persiste enmascarada y devuelve el resultado."""
         # Se registra el destino en todo intento que llego a tocar la red, y por
@@ -544,6 +610,7 @@ class Orquestador:
             evaluacion_json=evaluacion_json,
             motivo_detalle=motivo_detalle,
             creada_en=self._reloj(),
+            ejecucion_origen_id=ejecucion_origen_id,
         )
         await self._ejecuciones.guardar(ejecucion)
         return ResultadoCompra(

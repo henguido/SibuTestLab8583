@@ -78,3 +78,31 @@ class VariableNoDisponible(ErrorDeVariableDinamica):
     """La variable existe, pero no se puede resolver en este contexto (ej.
     `{{amount}}` en una operacion sin monto, como un echo de red)."""
 
+
+class ErrorDeOperacionDerivada(ErrorDelSimulador, ValueError):
+    """Raiz de errores al construir una operacion derivada (reverso, B7).
+
+    Es `ValueError` por el mismo motivo que `ErrorDeCamposManuales`: la capa
+    web debe poder tratarla como error de entrada (400, sin traza), sin
+    necesitar un manejador nuevo.
+    """
+
+
+class EjecucionOrigenNoEncontrada(ErrorDeOperacionDerivada):
+    """No existe ninguna ejecucion con el id de origen dado."""
+
+
+class EjecucionOrigenNoElegible(ErrorDeOperacionDerivada):
+    """La ejecucion de origen existe, pero
+    `domain.elegibilidad_reverso.puede_generar_operacion_derivada` (B6) la
+    rechaza -por ejemplo, una 0200 rechazada, una 0100, un echo, o una
+    ejecucion sin respuesta valida-. La autoridad de esta comprobacion es
+    siempre del servidor: un POST no puede forzar un origen no elegible."""
+
+
+class ReferenciaOrigenIncompleta(ErrorDeOperacionDerivada):
+    """El snapshot de la ejecucion origen no trae un dato imprescindible
+    para construir la operacion derivada (monto, moneda o terminal). No
+    deberia ocurrir para una ejecucion elegible real -senala un snapshot
+    corrupto, no un caso de negocio valido-."""
+

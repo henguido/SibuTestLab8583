@@ -25,6 +25,7 @@ from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
     OPERACION_ECHO,
+    OPERACION_REVERSO_FINANCIERO,
     EstadoEjecucion,
     FiltroHistorial,
     MensajeInterpretado,
@@ -52,6 +53,10 @@ MONTO_MAXIMO = Decimal("9999999999.99")
 ETIQUETAS_OPERACION: dict[str, str] = {
     **{op.clave: op.nombre for op in OPERACIONES_CON_TARJETA},
     OPERACION_ECHO: "Echo de red",
+    #: Reverso financiero (B7): no vive en `OPERACIONES_CON_TARJETA` -no es
+    #: una pantalla de constructor con tarjeta/monto (ver
+    #: `web/operaciones.py`)-, asi que su etiqueta se agrega aqui aparte.
+    OPERACION_REVERSO_FINANCIERO: "Reverso financiero",
 }
 
 
@@ -358,6 +363,7 @@ def contexto_de_vista_previa(vista: VistaPreviaMensaje, descripciones: Mapping[s
     return {
         "mti": vista.mti,
         "bitmap": vista.bitmap,
+        "raw": _raw_seguro(vista.raw),
         "filas": [
             FilaVistaPrevia(
                 numero=campo.numero,

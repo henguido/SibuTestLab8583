@@ -4,23 +4,25 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-13 (B6 — modelo de operación derivada/reverso, sin
-0400/0410)
+**Última actualización:** 2026-09-13 (B7 — reverso interactivo real, 0400/0410)
 
 ## Estado actual
 
-**Modelo multi-MTI (Fase B, `docs/roadmap/SIBU_3.md`):** B1-B5 integrados a `main` (merges
-`1998491` y `07b69f3`): núcleo genérico del Orquestador, Echo 0800/0810, escenarios/suites/CLI
-Multi-MTI, compra financiera 0200/0210, editor común de operaciones con tarjeta
-(`OperacionIso`). **B6** (`feature/multi-mti-b6-reversal-model`, commits `53964b5`/`736dccd`/
-`c9b68e9`, sin mergear todavía) agregó el modelo **conceptual** de operación derivada:
-`Ejecucion.ejecucion_origen_id` (1 origen → N derivadas, nunca por STAN/RRN), regla de
-elegibilidad (`domain/elegibilidad_reverso.py`, hoy solo 0200 aprobada), snapshot seguro
-(`application/referencia_ejecucion.py::ReferenciaEjecucion`, nunca expone PAN/Track), y
-navegación básica origen↔derivadas en `/historial/{id}` — **sin implementar 0400/0410 todavía**.
-Detalle completo (reporte A-M) en `docs/roadmap/SIBU_3.md` sección 8; decisiones de gobernanza
-en `BITACORA.md`, entrada "B6 — Modelo de operación derivada". Suite completa: **1266 passed,
-2 skipped**.
+**Modelo multi-MTI (Fase B, `docs/roadmap/SIBU_3.md`):** B1-B6 integrados a `main` (merges
+`1998491`, `07b69f3`, `7c034ed`): núcleo genérico del Orquestador, Echo 0800/0810,
+escenarios/suites/CLI Multi-MTI, compra financiera 0200/0210, editor común de operaciones con
+tarjeta (`OperacionIso`), y el modelo de operación derivada (`ejecucion_origen_id`, elegibilidad,
+`ReferenciaEjecucion`). **B7** (`feature/multi-mti-b7-reversal-0400`, commits `820bd5e`/
+`cde3852`/`6f4f3f6`/`de0556b`, sin mergear todavía) implementó el reverso **real** 0400/0410:
+perfil cerrado sin campos editables, `application/armado_reverso.py::armar_reverso_financiero`
+(builder puro, sin texto libre), `Orquestador.ejecutar_reverso_financiero` (revalida elegibilidad
+siempre, server-side), y el flujo completo en la UI (Historial → 0200 aprobada → "Crear reverso"
+→ preview → ejecutar). Host simulado y RN-3 no necesitaron ningún cambio (ya eran genéricos por
+MTI desde B1/B2). DE90 investigado de nuevo con la composición exacta en mano y **no
+implementado** (falta institución receptora/DE33 en el perfil; ver justificación en el código).
+Detalle completo (reporte A-N) en `docs/roadmap/SIBU_3.md` sección 9; decisiones de gobernanza en
+`BITACORA.md`, entrada "B7 — Reverso interactivo real". Suite completa: **1296 passed,
+0 skipped**.
 
 **Estado anterior a Fase B (2026-09-09):**
 
