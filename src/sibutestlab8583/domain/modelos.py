@@ -27,6 +27,18 @@ MTI_RESPUESTA_COMPRA = "0110"
 MTI_ECHO = "0800"
 MTI_RESPUESTA_ECHO = "0810"
 
+#: Identificador de la INTENCION funcional de un escenario (B3, 2026-09-13),
+#: separado del MTI: hoy cada MTI implica exactamente una operacion, asi que
+#: `OPERACION_POR_MTI` alcanza para derivarlo sin ambiguedad. El campo existe
+#: por adelantado porque un MTI futuro (ej. 0200) SI podria representar mas
+#: de una operacion segun el codigo de proceso -en ese momento, quien arme el
+#: escenario decidira la operacion explicitamente en vez de derivarla de este
+#: mapa; el campo ya esta listo para cargarla-. No es un catalogo de negocio:
+#: son dos strings, y agregar uno tercero no es una migracion, es una linea.
+OPERACION_COMPRA = "purchase"
+OPERACION_ECHO = "network_echo"
+OPERACION_POR_MTI: Mapping[str, str] = {MTI_COMPRA: OPERACION_COMPRA, MTI_ECHO: OPERACION_ECHO}
+
 #: Campos ISO que transportan datos de tarjeta y nunca se persisten en claro.
 CAMPOS_SENSIBLES = frozenset({"2", "35"})
 
@@ -217,6 +229,17 @@ class Escenario:
     estructural-, asi que nunca podria vivir junto a los campos que si
     gobierna esa politica.
 
+    `card_id`/`monto` son `None` para una operacion sin tarjeta ni monto (B3,
+    2026-09-13: Echo es la primera) -mismo criterio ya aplicado a
+    `Ejecucion` en B2-. `application.escenarios.ServicioEscenarios` decide,
+    a partir de que campos exige el perfil para ese MTI (`"2" in
+    perfil.obligatorios(mti)`, `"4" in ...`), si vale la pena exigirlos: este
+    dataclass no impone la regla, solo permite representarla sin un sentinel
+    inventado.
+
+    `operacion` es la intencion funcional (ver `OPERACION_POR_MTI`), separada
+    del MTI: hoy son 1:1, pero el campo ya existe para cuando dejen de serlo.
+
     `expectativas` es opcional: un escenario sin expectativas sigue siendo
     valido -simplemente no hay nada que evaluar, y eso no es lo mismo que
     "aprobado" (ver `domain.expectativas.evaluar_expectativas`).
@@ -226,9 +249,10 @@ class Escenario:
     nombre: str
     perfil: str
     mti: str
-    card_id: str
     conexion_id: str
-    monto: Decimal
+    card_id: str | None = None
+    monto: Decimal | None = None
+    operacion: str = OPERACION_COMPRA
     campos_manuales: Mapping[str, str] = field(default_factory=dict)
     expectativas: Expectativas | None = None
     activo: bool = True
@@ -237,11 +261,6 @@ class Escenario:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
-
-    def a_datos_compra(self) -> DatosCompra:
-        return DatosCompra(
-            card_id=self.card_id, monto=self.monto, campos_manuales=self.campos_manuales
-        )
 
 
 @dataclass(frozen=True)

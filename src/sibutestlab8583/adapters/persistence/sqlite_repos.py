@@ -29,6 +29,7 @@ from ...domain.modelos import (
     EstadoItemCorrida,
     FiltroHistorial,
     ItemCorridaSuite,
+    OPERACION_COMPRA,
     ResultadoGlobalSuite,
     Suite,
     TarjetaPrueba,
@@ -392,7 +393,7 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
-                "SELECT escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
+                "SELECT escenario_id, nombre, perfil, mti, operacion, card_id, conexion_id, monto,"
                 "       campos_json, expected_json, activo, creado_en, actualizado_en"
                 " FROM escenarios WHERE escenario_id = ?",
                 (escenario_id,),
@@ -404,7 +405,7 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             conexion.row_factory = aiosqlite.Row
             async with conexion.execute(
-                "SELECT escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
+                "SELECT escenario_id, nombre, perfil, mti, operacion, card_id, conexion_id, monto,"
                 "       campos_json, expected_json, activo, creado_en, actualizado_en"
                 " FROM escenarios ORDER BY nombre"
             ) as cursor:
@@ -416,13 +417,14 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
             await conexion.execute("PRAGMA foreign_keys = ON")
             await conexion.execute(
                 "INSERT INTO escenarios"
-                " (escenario_id, nombre, perfil, mti, card_id, conexion_id, monto,"
+                " (escenario_id, nombre, perfil, mti, operacion, card_id, conexion_id, monto,"
                 "  campos_json, expected_json, activo, creado_en, actualizado_en)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(escenario_id) DO UPDATE SET"
                 "   nombre = excluded.nombre,"
                 "   perfil = excluded.perfil,"
                 "   mti = excluded.mti,"
+                "   operacion = excluded.operacion,"
                 "   card_id = excluded.card_id,"
                 "   conexion_id = excluded.conexion_id,"
                 "   monto = excluded.monto,"
@@ -435,9 +437,10 @@ class RepositorioEscenariosSQLite(_RepositorioSQLite):
                     escenario.nombre,
                     escenario.perfil,
                     escenario.mti,
+                    escenario.operacion,
                     escenario.card_id,
                     escenario.conexion_id,
-                    str(escenario.monto),
+                    str(escenario.monto) if escenario.monto is not None else None,
                     json.dumps(
                         {"version": VERSION_CAMPOS_ESCENARIO, "campos": dict(escenario.campos_manuales)},
                         ensure_ascii=False,
@@ -741,9 +744,10 @@ def _a_escenario(fila: aiosqlite.Row) -> Escenario:
         nombre=fila["nombre"],
         perfil=fila["perfil"],
         mti=fila["mti"],
+        operacion=_opcional(fila, "operacion") or OPERACION_COMPRA,
         card_id=fila["card_id"],
         conexion_id=fila["conexion_id"],
-        monto=Decimal(fila["monto"]),
+        monto=Decimal(fila["monto"]) if fila["monto"] is not None else None,
         campos_manuales=campos,
         expectativas=expectativas,
         activo=bool(fila["activo"]),
