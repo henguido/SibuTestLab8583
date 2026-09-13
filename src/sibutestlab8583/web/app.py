@@ -67,8 +67,10 @@ from ..domain.expectativas import (
 )
 from ..domain.modelos import (
     MTI_COMPRA,
+    MTI_ECHO,
     MTI_RESPUESTA_COMPRA,
     DatosCompra,
+    DatosEcho,
     DestinoTcp,
     EstadoEjecucion,
     ExpectativaCampo,
@@ -321,6 +323,154 @@ async def ejecutar_compra(
                 if resultado.respuesta else None
             ),
         ),
+    )
+
+
+# ----------------------------------------------------------------- Echo (B2) --
+#
+# Segunda operacion real sobre el nucleo generico (Orquestador._ejecutar, B1):
+# Network Management/Echo (0800/0810). Deliberadamente una pantalla propia, no
+# una pestana dentro de "Nueva transaccion": esta operacion no tiene tarjeta,
+# monto, comercio ni campos opcionales -entrelazarla con `compra.html`/
+# `_formulario` (que ya administra escenarios, expectativas y "+ Agregar
+# campo") hubiera significado condicionar buena parte de esa logica por
+# operacion, exactamente el tipo de acoplamiento que se queria evitar. Sin
+# integracion con escenarios/suites todavia -ver docs/roadmap/SIBU_3.md,
+# deuda de B2 para B3-: esta pantalla solo previsualiza y ejecuta.
+
+
+@enrutador.get("/echo", response_class=HTMLResponse)
+async def pantalla_echo(
+    request: Request,
+    conexion_id: str | None = Query(None),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    return await _formulario_echo(request, composicion, conexion_id=conexion_id)
+
+
+@enrutador.post("/echo", response_class=HTMLResponse)
+async def cambiar_conexion_echo(
+    request: Request,
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """Cambia la conexion o actualiza la vista previa sin ejecutar nada -mismo
+    mecanismo que `cambiar_conexion` para compra."""
+    formulario_bruto = await request.form()
+    ir_a_conexion = (formulario_bruto.get("ir_a_conexion", "") or "").strip() or None
+    de70 = (formulario_bruto.get("de70", "") or "").strip()
+    return await _formulario_echo(
+        request, composicion, conexion_id=ir_a_conexion, de70=de70,
+    )
+
+
+@enrutador.post("/echo/ejecutar", response_class=HTMLResponse)
+async def ejecutar_echo(
+    request: Request,
+    conexion_id: str = Form(""),
+    de70: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    campos_manuales = {"70": de70.strip()} if de70.strip() else {}
+
+    conexion = await composicion.administracion_conexiones.obtener_activa(conexion_id)
+    if conexion is None:
+        return await _formulario_echo(
+            request, composicion, conexion_id=conexion_id or None, de70=de70,
+            error="Seleccione una conexión activa, o verifique que siga disponible.",
+            estado_http=400,
+        )
+    destino = DestinoTcp(host=conexion.host, puerto=conexion.puerto)
+
+    try:
+        orquestador = await composicion.orquestador(destino, tiempo_limite=conexion.timeout)
+        resultado = await orquestador.ejecutar_network_echo(DatosEcho(campos_manuales=campos_manuales))
+    except ErrorDelSimulador as error:
+        return await _formulario_echo(
+            request, composicion, conexion_id=conexion_id or None, de70=de70,
+            aviso=presentacion.aviso_de_error(error),
+        )
+
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="resultado.html",
+        context=presentacion.contexto_de_resultado(
+            resultado, destino, composicion.descripciones_de_campos,
+            bitmap_solicitud=composicion.bitmap_hex(resultado.solicitud),
+            bitmap_respuesta=(
+                composicion.bitmap_hex(resultado.respuesta.como_mensaje())
+                if resultado.respuesta else None
+            ),
+            raw_solicitud=composicion.raw_hex_seguro(resultado.solicitud),
+            raw_respuesta=(
+                composicion.raw_hex_seguro(resultado.respuesta.como_mensaje())
+                if resultado.respuesta else None
+            ),
+            seccion="echo",
+        ),
+    )
+
+
+async def _formulario_echo(
+    request: Request,
+    composicion: Composicion,
+    *,
+    conexion_id: str | None = None,
+    de70: str = "",
+    error: str | None = None,
+    aviso=None,
+    estado_http: int = 200,
+):
+    """Renderiza la pantalla de echo, opcionalmente con un aviso o un error.
+
+    Mismo principio de "nunca sustituir en silencio" que `_formulario`: si se
+    pidio una conexion especifica y no esta entre las activas, se deja sin
+    resolver -el boton de ejecutar queda deshabilitado con una nota-, en vez
+    de elegir otra por su cuenta.
+    """
+    conexiones = await composicion.administracion_conexiones.listar_activas()
+
+    conexion_actual = None
+    if conexion_id:
+        conexion_actual = next((c for c in conexiones if c.conexion_id == conexion_id), None)
+    else:
+        conexion_actual = conexiones[0] if conexiones else None
+
+    puede_ejecutar = conexion_actual is not None
+
+    politica_echo = composicion.perfil.politica(MTI_ECHO)
+    de70_default = politica_echo.valores_por_defecto.get("70", "")
+
+    campos_manuales = {"70": de70.strip()} if de70.strip() else {}
+    vista_previa = None
+    vista_previa_no_disponible = None
+    try:
+        vista_previa = await composicion.vista_previa_echo.construir(
+            DatosEcho(campos_manuales=campos_manuales)
+        )
+    except ErrorDeCamposManuales as error_campos:
+        vista_previa_no_disponible = str(error_campos)
+
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="echo.html",
+        context={
+            "seccion": "echo",
+            "conexiones": conexiones,
+            "conexion_actual": conexion_actual,
+            "de70": de70,
+            "de70_default": de70_default,
+            "filas_constructor": presentacion.filas_constructor(
+                composicion.perfil, MTI_ECHO, composicion.descripciones_de_campos,
+            ),
+            "error": error,
+            "aviso": aviso,
+            "puede_ejecutar": puede_ejecutar,
+            "vista_previa": presentacion.contexto_de_vista_previa(
+                vista_previa, composicion.descripciones_de_campos
+            ) if vista_previa else None,
+            "vista_previa_no_disponible": vista_previa_no_disponible,
+        },
+        status_code=estado_http,
     )
 
 

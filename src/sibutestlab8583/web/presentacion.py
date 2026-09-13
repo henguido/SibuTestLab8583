@@ -75,6 +75,7 @@ class Seccion:
 #: que un enlace ausente.
 SECCIONES: tuple[Seccion, ...] = (
     Seccion("compra", "/", "Nueva transacción"),
+    Seccion("echo", "/echo", "Echo de red"),
     Seccion("escenarios", "/escenarios", "Escenarios"),
     Seccion("suites", "/suites", "Suites"),
     Seccion("historial", "/historial", "Historial"),
@@ -134,6 +135,7 @@ def ruta_activa(path: str, grupos: Sequence[GrupoNav]) -> str | None:
 GRUPOS_NAV: tuple[GrupoNav, ...] = (
     GrupoNav("Ejecución", (
         Seccion("compra", "/", "Nueva transacción"),
+        Seccion("echo", "/echo", "Echo de red"),
         Seccion("historial", "/historial", "Historial"),
     )),
     GrupoNav("Automatización", (
@@ -713,6 +715,7 @@ def contexto_de_resultado(
     bitmap_respuesta: str | None = None,
     raw_solicitud: tuple[str, int] | None = None,
     raw_respuesta: tuple[str, int] | None = None,
+    seccion: str = "compra",
 ) -> dict:
     """Arma lo que la plantilla de resultado necesita.
 
@@ -721,11 +724,16 @@ def contexto_de_resultado(
 
     Los bitmaps se calculan afuera (`composicion.bitmap_hex`, que si conoce el
     codec) y llegan ya resueltos: esta funcion no importa `adapters.iso8583`.
+
+    `seccion` (B2, 2026-09-12) es que item de navegacion queda marcado -
+    "compra" por defecto para no romper el unico llamador anterior; la ruta
+    de echo pasa "echo"-. Esta funcion no sabe que operacion produjo
+    `resultado`: `filas_de_solicitud`/`filas_de_respuesta`/`evaluacion_de_ejecucion`
+    ya son genericas por campo, no por MTI.
     """
     return {
-        # El resultado es el desenlace de la pantalla de transaccion: la
-        # navegacion sigue marcando esa seccion, no ninguna otra.
-        "seccion": "compra",
+        "seccion": seccion,
+        "url_volver": "/" if seccion == "compra" else f"/{seccion}",
         "resultado": resultado,
         "aviso": aviso_de(resultado),
         "destino": destino,

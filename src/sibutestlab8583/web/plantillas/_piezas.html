@@ -118,7 +118,10 @@
     <span class="metrica__valor">{{ pastilla(aviso) }}</span>
   </div>
   {{ metrica('STAN', ejecucion.stan, mono=true, nota='campo 11') }}
-  {{ metrica('Monto', ejecucion.monto, mono=true, nota='moneda ' ~ ejecucion.moneda) }}
+  {# moneda es None para una operacion sin monto (Echo, B2): sin este guard,
+     Jinja concatenaria el texto literal "moneda None". #}
+  {{ metrica('Monto', ejecucion.monto, mono=true,
+             nota=('moneda ' ~ ejecucion.moneda) if ejecucion.moneda else none) }}
   {{ metrica('Código de respuesta', ejecucion.codigo_respuesta, mono=true, nota='campo 39') }}
   {{ metrica('Latencia', (ejecucion.latencia_ms ~ ' ms') if ejecucion.latencia_ms is not none else none) }}
   {{ metrica('MTI', ejecucion.mti_solicitud ~ (' → ' ~ ejecucion.mti_respuesta if ejecucion.mti_respuesta else ''),

@@ -45,9 +45,13 @@
 
 {{ pieza_evaluacion(evaluacion) }}
 
-{{ isoscopio('Isoscopio · solicitud 0100', filas_solicitud, false,
+{# El MTI del titulo se lee de la ejecucion real (`mti_solicitud`/
+   `mti_respuesta`, ya genericos por diseno -B1/B2-), nunca un literal
+   "0100"/"0110": un resultado de otra operacion (echo, 0800/0810) debe
+   mostrar su propio MTI, no el de compra. #}
+{{ isoscopio('Isoscopio · solicitud ' + ejecucion.mti_solicitud, filas_solicitud, false,
              'No se armó ningún mensaje.', bitmap_solicitud, raw_solicitud) }}
-{{ isoscopio('Isoscopio · respuesta 0110', filas_respuesta, true,
+{{ isoscopio('Isoscopio · respuesta ' + (ejecucion.mti_respuesta or ''), filas_respuesta, true,
              'No se recibió respuesta que interpretar.', bitmap_respuesta, raw_respuesta) }}
 
 {# Reutilizar esta transaccion: ambos botones llevan al mismo constructor
@@ -56,6 +60,12 @@
    "Guardar como escenario" enfoca directamente el bloque para nombrarlo y
    guardarlo; en los dos casos la persona revisa antes de reenviar, y cada
    repeticion es una ejecucion nueva con sus propios identificadores. #}
+{% if seccion == "compra" %}
+{# "Editar y volver a ejecutar"/"Guardar como escenario" reconstruyen la
+   configuracion desde `_reconstruir_desde_ejecucion`, que hoy solo sabe
+   reconstruir una compra (ver su docstring en web/app.py). Para otras
+   operaciones (echo, B2) este bloque no aplica todavia -no porque el
+   dato no exista, sino porque esa reconstruccion aun no se generalizo-. #}
 <section class="panel">
   <div class="panel__cabecera">
     <h2 class="panel__titulo">Reutilizar esta transacción</h2>
@@ -68,6 +78,7 @@
     </span>
   </div>
 </section>
+{% endif %}
 
-<a class="volver" href="/">&larr; Ejecutar otra transacción</a>
+<a class="volver" href="{{ url_volver }}">&larr; Ejecutar otra transacción</a>
 {% endblock %}

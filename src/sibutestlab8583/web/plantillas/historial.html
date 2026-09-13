@@ -103,17 +103,20 @@
           <td class="mono">{{ ejecucion.creada_en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
           <td class="mono">{{ ejecucion.stan }}</td>
           <td class="mono">
-            {{ ejecucion.card_id }}
+            {# card_id es None para una operacion sin tarjeta (Echo, B2): sin
+               "or ''" Jinja renderizaria el texto "None" en la celda. #}
+            {{ ejecucion.card_id or '' }}
             {%- if ejecucion.escenario_id %}
             <br><a href="/?escenario_id={{ ejecucion.escenario_id }}">Escenario: {{ ejecucion.escenario_nombre or ejecucion.escenario_id }}</a>
             {%- endif %}
           </td>
           {# El importe y su moneda en la misma celda, pero el codigo con
              tratamiento de codigo: si van con el mismo estilo se leen como un
-             solo numero. #}
+             solo numero. monto/moneda son None para una operacion sin importe
+             (Echo, B2). #}
           <td class="num">
-            {{ ejecucion.monto }}
-            <span class="moneda" title="Código de moneda ISO 4217">{{ ejecucion.moneda }}</span>
+            {{ ejecucion.monto or '' }}
+            <span class="moneda" title="Código de moneda ISO 4217">{{ ejecucion.moneda or '' }}</span>
           </td>
           <td>{{ pastilla(avisos[ejecucion.estado]) }}</td>
           <td data-evaluacion="{{ ejecucion.evaluacion_estado or '' }}">
