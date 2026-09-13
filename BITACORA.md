@@ -2767,3 +2767,76 @@ verificado en cada commit.
 
 Trabajo hecho en `feature/multi-mti-b2-network-management` (rama hija de
 `feature/multi-mti-b1-core-generico`), sin merge todavía a ninguna rama superior.
+
+## 2026-09-13 · B3 — Escenarios/suites/CLI genéricos; B4 — 0200 compra financiera; B5 — editor
+## común; merge B1-B5 a `main`
+
+Checkpoints aprobados en secuencia por el propietario, cada uno verificado (suite completa +
+`git diff --check` + smoke test real en navegador) antes de pasar al siguiente.
+
+**B3** cerró la deuda explícita que B2 había dejado: `ServicioEscenarios`/`EjecutorDeEscenarios`
+generalizados para admitir Echo con el mismo ciclo de escenarios/suites/reintento/export que
+compra, `sibu-run-suite` corriendo una suite heterogénea real (compra + echo) sin cambios de
+sintaxis, y cierre de ARCH-001/SEC-001 vía gobierno de sensibilidad profile-driven.
+
+**B4** implementó 0200/0210 (compra financiera) como primer MTI con tarjeta y monto además de
+0100: `Orquestador.ejecutar_compra_financiera`, política 0200/0210 en el perfil, UI propia,
+reejecución Multi-MTI generalizada, y una suite heterogénea real de 4 items (compra/echo/
+financiera aprobada/financiera rechazada).
+
+**B5** unificó el editor de operaciones con tarjeta: registro declarativo `OperacionIso`
+(`web/operaciones.py`, metadata de presentación/despacho, nunca política — eso sigue siendo
+exclusivo de `PerfilDeMarca`/`PoliticaCamposMti`), un solo `editor_transaccion.html` +
+funciones compartidas reemplazando las versiones casi duplicadas de Autorización/Compra
+financiera, y `ServicioVistaPreviaTransaccionTarjeta` unificando los dos servicios de vista
+previa detrás de una sola implementación parametrizada.
+
+**Integración a `main`:** B1-B4 en el merge `1998491` (preservando historia, sin squash);
+B5 en el merge `07b69f3`. Cada merge: suite completa en verde, `git diff --check` limpio,
+smoke test real en navegador (0100 autorización, 0800 Echo, 0200 financiera aprobada, 0200
+financiera rechazada) confirmando que el merge no cambió comportamiento, push con
+`HEAD == origin/main` verificado.
+
+## 2026-09-13 · B6 — Modelo de operación derivada (reversos), sin 0400/0410
+
+Autorizado explícitamente como modelo **conceptual**: origen→derivada→futuro reverso, sin
+implementar ningún mensaje 0400/0410/0420/0430. Precedido por 4 agentes de solo lectura
+(dominio ISO 8583 público, auditoría de `ejecuciones`/FKs, coexistencia con Secuencias futuras,
+qué es seguro heredar de una ejecución) antes de diseñar nada. Rama
+`feature/multi-mti-b6-reversal-model`, desde `main` en `07b69f3`.
+
+**Decisión central:** `Ejecucion.ejecucion_origen_id` (autorreferencial, nullable, 1→N
+derivadas) en vez de correlacionar por STAN/RRN — el propio RN-3 ya demuestra que esos campos no
+son una identidad estable. Migración aditiva, aplicada tanto a fixtures como a la base real de
+desarrollo (backup `sibutestlab8583.db.bak-preB6-20260913140615`, 62 filas antes/después,
+`PRAGMA foreign_key_check` vacío, re-ejecutada para confirmar idempotencia). Se encontró y
+corrigió un bug real: el rebuild legado de B2 (`_migrar_ejecuciones_card_id_nullable`) tenía un
+DDL hardcodeado que, contra una base suficientemente vieja, borraba silenciosamente la columna
+nueva de B6 al reconstruir la tabla.
+
+**Elegibilidad** (`domain/elegibilidad_reverso.py`): solo 0200 aprobada — 0100 no mueve fondos
+en este laboratorio, Echo no tiene tarjeta/monto, y una 0200 rechazada no movió nada que
+revertir. **Snapshot seguro** (`application/referencia_ejecucion.py::ReferenciaEjecucion`):
+construido únicamente del `DetalleEjecucion` ya persistido (nunca del escenario/perfil vigente),
+whitelist de campos de respuesta (DE37/DE38), con prueba adversarial confirmando que el PAN real
+nunca aparece en ningún campo de la referencia.
+
+**RN-3 no se tocó ni se mezcló con el nuevo mecanismo:** la correlación de RN-3 sigue siendo
+"solicitud vs. su propia respuesta, mismo intercambio"; `ejecucion_origen_id` es un eje distinto
+("esta ejecución vs. una ejecución anterior en el tiempo") — ver detalle en
+`docs/roadmap/SIBU_3.md` sección 8.H.
+
+**UI mínima:** chip pasivo "Elegible para reverso" y navegación bidireccional origen↔derivadas
+en `/historial/{id}`, verificada con tests automatizados y con una sesión de navegador real
+(0200 aprobada real vía TCP contra `sibu-host-demo` mostrando el chip; 0200 rechazada real
+confirmando que el panel no aparece).
+
+**Explícitamente NO implementado:** 0400/0410, 0420/0430, DE90 (confirmado que
+`ESPECIFICACION_GENERICA` no lo declara aunque `pyiso8583` sí lo soporta — documentado, no
+agregado por anticipación), Secuencias, `{{previous.*}}`, Host Simulator 2.0, proxy, carga,
+EMV, cripto.
+
+**Tests:** 1266 passed, 2 skipped (1245 al cerrar B5 + 21 nuevos: 6 migración, 8 elegibilidad,
+5 `ReferenciaEjecucion`, 2 historial/UI). Commits: `53964b5`, `736dccd`, `c9b68e9`. Sin merge a
+`main` — pendiente de aprobación del propietario. Reporte completo (secciones A-M) en
+`docs/roadmap/SIBU_3.md` sección 8.

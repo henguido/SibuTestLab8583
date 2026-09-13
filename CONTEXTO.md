@@ -4,10 +4,25 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-09 (gestión avanzada de corridas: comparación histórica y
-reintento selectivo)
+**Última actualización:** 2026-09-13 (B6 — modelo de operación derivada/reverso, sin
+0400/0410)
 
 ## Estado actual
+
+**Modelo multi-MTI (Fase B, `docs/roadmap/SIBU_3.md`):** B1-B5 integrados a `main` (merges
+`1998491` y `07b69f3`): núcleo genérico del Orquestador, Echo 0800/0810, escenarios/suites/CLI
+Multi-MTI, compra financiera 0200/0210, editor común de operaciones con tarjeta
+(`OperacionIso`). **B6** (`feature/multi-mti-b6-reversal-model`, commits `53964b5`/`736dccd`/
+`c9b68e9`, sin mergear todavía) agregó el modelo **conceptual** de operación derivada:
+`Ejecucion.ejecucion_origen_id` (1 origen → N derivadas, nunca por STAN/RRN), regla de
+elegibilidad (`domain/elegibilidad_reverso.py`, hoy solo 0200 aprobada), snapshot seguro
+(`application/referencia_ejecucion.py::ReferenciaEjecucion`, nunca expone PAN/Track), y
+navegación básica origen↔derivadas en `/historial/{id}` — **sin implementar 0400/0410 todavía**.
+Detalle completo (reporte A-M) en `docs/roadmap/SIBU_3.md` sección 8; decisiones de gobernanza
+en `BITACORA.md`, entrada "B6 — Modelo de operación derivada". Suite completa: **1266 passed,
+2 skipped**.
+
+**Estado anterior a Fase B (2026-09-09):**
 
 **Iteración posterior al cierre (2026-09-09) — Gestión avanzada de corridas:** segunda
 evolución funcional pedida explícitamente por el usuario, priorizada a partir de una
