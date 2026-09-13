@@ -37,6 +37,7 @@
       <thead>
         <tr>
           <th>Nombre</th>
+          <th>Operación</th>
           <th>Tarjeta</th>
           <th>Conexión</th>
           <th class="num">Monto</th>
@@ -47,11 +48,19 @@
       </thead>
       <tbody>
         {% for escenario in escenarios %}
+        {% set es_echo = escenario.operacion == OPERACION_ECHO %}
+        {% set ruta_pantalla = ruta_pantalla_por_operacion.get(escenario.operacion, '/') %}
         <tr>
           <td>{{ escenario.nombre }}</td>
-          <td class="mono">{{ escenario.card_id }}</td>
+          <td>
+            <span class="chip {{ 'chip--sintetica' if es_echo else 'chip--qa' }}">
+              {{ etiqueta_operacion(escenario.operacion) }}
+            </span>
+            <span class="mono">{{ escenario.mti }}</span>
+          </td>
+          <td class="mono">{{ escenario.card_id or '—' }}</td>
           <td class="mono">{{ escenario.conexion_id }}</td>
-          <td class="num mono">{{ escenario.monto }}</td>
+          <td class="num mono">{{ escenario.monto if escenario.monto is not none else '—' }}</td>
           <td>
             {% if escenario.expectativas %}
             <span class="chip chip--qa">Definidas</span>
@@ -71,7 +80,7 @@
               <form method="post" action="/escenarios/{{ escenario.escenario_id }}/ejecutar">
                 <button class="boton boton--sm" type="submit">{{ senal('transmision', 13) }} Ejecutar</button>
               </form>
-              <a href="/?escenario_id={{ escenario.escenario_id }}">Cargar</a>
+              <a href="{{ ruta_pantalla }}?escenario_id={{ escenario.escenario_id }}">Cargar</a>
               <form method="post" action="/escenarios/{{ escenario.escenario_id }}/duplicar">
                 <button class="enlace-boton" type="submit">Duplicar</button>
               </form>

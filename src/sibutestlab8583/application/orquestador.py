@@ -27,6 +27,34 @@ Los estados se eligen por lo que cada situacion permite **demostrar**:
   Aqui **no** se afirma que nada se envio, porque no se puede saber.
 - TIMEOUT solo con las cuatro premisas de RN-2 cumplidas. Que el drenaje local
   termine no demuestra que el destino recibiera: eso no se afirma en ningun lado.
+
+NUCLEO GENERICO (B1, 2026-09-12): `_ejecutar` es el motor request->response
+-RN-4, codec, transporte, RN-3/RN-1, registro- que no conoce `DatosCompra` ni
+`armar_compra`: recibe un `MensajeIso` ya armado (por quien sea que sepa armar
+esa operacion) mas los datos de trazabilidad que persiste `Ejecucion`
+(`card_id`/`monto`, ambos opcionales). `ejecutar_compra` concentra todo lo
+especifico de compra: buscar la tarjeta, resolver variables dinamicas, y
+llamar a `armar_compra`. Verificado contra el codigo real (no contra un
+diseno previo) que esta es la unica costura real: `PerfilDeMarca`/
+`PoliticaCamposMti` ya son genericos por MTI, y la correlacion RN-3
+(`domain.validacion.mti_de_respuesta`/`campos_de_correlacion`) ya deriva todo
+del perfil y del MTI que recibe -no hizo falta ninguna interfaz nueva de
+correlacion ni un eje `(mti, codigo_proceso)` en la politica de campos: no
+existe hoy un segundo caso real que lo justifique, y agregarlo seria
+sobre-diseno.
+
+SEGUNDA OPERACION (B2, 2026-09-12): `ejecutar_network_echo` es la primera
+prueba real de que `_ejecutar` sirve para algo distinto de compra. Mismo
+patron que `ejecutar_compra` -arma su propio `MensajeIso` (`armar_echo`,
+sin tarjeta ni monto) y llama a `_ejecutar`-, nunca un `if tipo == ...`
+dentro de este archivo ni una funcion `armar_todo` con banderas.
+
+TERCERA OPERACION (B4, 2026-09-13): `ejecutar_compra_financiera` (0200) es
+la prueba de que el nucleo tambien reutiliza sin cambios una operacion que
+SI vuelve a usar tarjeta y monto -no solo una sin ellos (echo)-. Cero lineas
+tocadas en `_ejecutar`, en `domain/validacion.py` ni en `domain/expectativas.py`
+para agregarla: toda la novedad vive en `armar_compra_financiera` (que MTI
+arma) y en la politica del perfil (que campos exige).
 """
 
 from __future__ import annotations
@@ -35,16 +63,21 @@ import dataclasses
 import json
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Callable
 
-from ..domain.armado import armar_compra
+from ..domain.armado import armar_compra, armar_compra_financiera, armar_echo
 from ..domain.catalogo import CatalogoDeRespuestas
 from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 from ..domain.expectativas import evaluacion_a_dict, evaluar_expectativas, validar_expectativas
 from ..domain.modelos import (
-    MTI_RESPUESTA_COMPRA,
+    MTI_COMPRA,
+    MTI_COMPRA_FINANCIERA,
+    MTI_ECHO,
     DatosCompra,
+    DatosCompraFinanciera,
+    DatosEcho,
     DestinoTcp,
     Ejecucion,
     EstadoEjecucion,
@@ -62,7 +95,12 @@ from ..domain.puertos import (
     RepositorioTarjetas,
     Transporte,
 )
-from ..domain.validacion import CAMPO_CODIGO_RESPUESTA, evaluar_respuesta, validar_envio
+from ..domain.validacion import (
+    CAMPO_CODIGO_RESPUESTA,
+    evaluar_respuesta,
+    mti_de_respuesta,
+    validar_envio,
+)
 from .serializacion import a_json_respuesta, a_json_solicitud, a_texto
 
 
@@ -139,7 +177,10 @@ class Orquestador:
         evaluarse o a dejar rastro en `evaluacion_json`.
         """
         if expectativas is not None:
-            validar_expectativas(expectativas, self._perfil, MTI_RESPUESTA_COMPRA)
+            # El MTI de respuesta esperado se DERIVA del de solicitud -misma
+            # regla generica que ya usa RN-3 (`mti_de_respuesta`)-, nunca una
+            # segunda constante independiente de compra.
+            validar_expectativas(expectativas, self._perfil, mti_de_respuesta(MTI_COMPRA))
 
         tarjeta = await self._tarjetas.obtener(datos.card_id)
         # Una tarjeta inactiva no debe poder iniciar una ejecucion nueva, sin
@@ -170,13 +211,134 @@ class Orquestador:
             perfil=self._perfil,
         )
 
+        # A partir de aqui el recorrido es generico request->response: no
+        # sabe que es una compra, ni conoce `DatosCompra`/`armar_compra`. Ver
+        # `_ejecutar` y el comentario de cabecera del modulo (B1).
+        return await self._ejecutar(
+            solicitud,
+            stan,
+            card_id=datos.card_id,
+            monto=datos.monto,
+            escenario_id=escenario_id,
+            escenario_nombre=escenario_nombre,
+            expectativas=expectativas,
+        )
+
+    async def ejecutar_network_echo(
+        self,
+        datos: DatosEcho,
+        *,
+        escenario_id: str | None = None,
+        escenario_nombre: str | None = None,
+        expectativas: Expectativas | None = None,
+    ) -> ResultadoCompra:
+        """Arma, valida y ejecuta un echo de red (0800). Segunda operacion
+        real sobre el nucleo generico de B1 (`_ejecutar`), sin tarjeta ni
+        monto: mismo patron que `ejecutar_compra`, solo que lo especifico de
+        esta operacion es mucho mas chico (no hay tarjeta que buscar).
+
+        Variables dinamicas se resuelven igual que en compra -mismo
+        `resolver_campos_manuales`, mismo momento del flujo-, con
+        `ContextoResolucion.monto=None`: `{{amount}}` en DE70 revienta con
+        `VariableNoDisponible` en vez de resolver a un valor inventado, ver
+        `domain/variables.py`.
+        """
+        if expectativas is not None:
+            validar_expectativas(expectativas, self._perfil, mti_de_respuesta(MTI_ECHO))
+
+        momento = self._reloj()
+        stan = await self._stan.siguiente()
+        contexto_variables = ContextoResolucion(stan=stan, momento=momento)
+        campos_resueltos, _ = resolver_campos_manuales(datos.campos_manuales, contexto_variables)
+        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
+        solicitud = armar_echo(datos, stan=stan, momento=momento, perfil=self._perfil)
+
+        return await self._ejecutar(
+            solicitud,
+            stan,
+            escenario_id=escenario_id,
+            escenario_nombre=escenario_nombre,
+            expectativas=expectativas,
+        )
+
+    async def ejecutar_compra_financiera(
+        self,
+        datos: DatosCompraFinanciera,
+        *,
+        escenario_id: str | None = None,
+        escenario_nombre: str | None = None,
+        expectativas: Expectativas | None = None,
+    ) -> ResultadoCompra:
+        """Arma, valida y ejecuta una compra financiera (0200, B4). Tercera
+        operacion real sobre `_ejecutar`: mismo patron exacto que
+        `ejecutar_compra` -busca tarjeta, resuelve variables dinamicas, arma
+        el mensaje, delega en el nucleo generico- porque una compra
+        financiera comparte con una compra el mismo concepto de dominio
+        (mueve fondos con una tarjeta elegida). La UNICA diferencia real es
+        que arma con `armar_compra_financiera` (MTI 0200) en vez de
+        `armar_compra` (MTI 0100); no se introduce ningun `if` nuevo en
+        `_ejecutar` ni en RN-1..RN-4 para lograrlo.
+        """
+        if expectativas is not None:
+            validar_expectativas(
+                expectativas, self._perfil, mti_de_respuesta(MTI_COMPRA_FINANCIERA)
+            )
+
+        tarjeta = await self._tarjetas.obtener(datos.card_id)
+        if tarjeta is None or not tarjeta.activa:
+            raise TarjetaDesconocida(f"no existe la tarjeta {datos.card_id!r}")
+
+        momento = self._reloj()
+        stan = await self._stan.siguiente()
+        contexto_variables = ContextoResolucion(monto=datos.monto, stan=stan, momento=momento)
+        campos_resueltos, _ = resolver_campos_manuales(datos.campos_manuales, contexto_variables)
+        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
+        solicitud = armar_compra_financiera(
+            datos,
+            tarjeta,
+            stan=stan,
+            momento=momento,
+            perfil=self._perfil,
+        )
+
+        return await self._ejecutar(
+            solicitud,
+            stan,
+            card_id=datos.card_id,
+            monto=datos.monto,
+            escenario_id=escenario_id,
+            escenario_nombre=escenario_nombre,
+            expectativas=expectativas,
+        )
+
+    async def _ejecutar(
+        self,
+        solicitud: MensajeIso,
+        stan: str,
+        *,
+        card_id: str | None = None,
+        monto: Decimal | None = None,
+        escenario_id: str | None = None,
+        escenario_nombre: str | None = None,
+        expectativas: Expectativas | None = None,
+    ) -> ResultadoCompra:
+        """Nucleo generico request->response: RN-4, codec, transporte,
+        RN-3/RN-1, registro. No conoce `DatosCompra`/`DatosEcho` ni como se
+        arma un mensaje -recibe `solicitud` ya armada por el llamador
+        (`ejecutar_compra` o `ejecutar_network_echo`)-. `card_id`/`monto` son
+        exclusivamente los datos de trazabilidad que persiste `Ejecucion`, no
+        participan en armar ni en validar nada aqui: `None` para una
+        operacion sin tarjeta ni monto (B2: echo), igual que ya admite
+        `Ejecucion.card_id`/`monto` (ver `domain/modelos.py`).
+        """
         # --- RN-4: si falta un obligatorio, no se codifica ni se envia ---
         validacion = validar_envio(solicitud, self._perfil)
         if not validacion:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.NO_ENVIADA,
                 motivos=validacion.motivos,
                 escenario_id=escenario_id,
@@ -190,7 +352,8 @@ class Orquestador:
             payload = self._codec.codificar(solicitud, self._perfil)
         except ErrorDeCodec as error:
             return await self._registrar(
-                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),),
+                solicitud, stan, card_id, monto, EstadoEjecucion.NO_ENVIADA,
+                motivos=(str(error),),
                 escenario_id=escenario_id, escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
             )
@@ -206,7 +369,8 @@ class Orquestador:
             # despues de conectar no llega por aqui: el transporte lo convierte en
             # FalloDeTransmision, porque entonces ya no se puede afirmar lo mismo.
             return await self._registrar(
-                solicitud, stan, datos, EstadoEjecucion.NO_ENVIADA, motivos=(str(error),),
+                solicitud, stan, card_id, monto, EstadoEjecucion.NO_ENVIADA,
+                motivos=(str(error),),
                 escenario_id=escenario_id, escenario_nombre=escenario_nombre,
                 expectativas=expectativas,
             )
@@ -217,7 +381,8 @@ class Orquestador:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.ERROR_CONEXION,
                 motivos=(respuesta_cruda.detalle,),
                 latencia_ms=latencia_ms,
@@ -231,7 +396,8 @@ class Orquestador:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.ERROR_TRANSMISION,
                 motivos=(respuesta_cruda.detalle,),
                 latencia_ms=latencia_ms,
@@ -246,7 +412,8 @@ class Orquestador:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.TIMEOUT,
                 motivos=(
                     f"sin respuesta en {respuesta_cruda.limite_segundos:g} s",
@@ -263,7 +430,8 @@ class Orquestador:
             return await self._registrar(
                 solicitud,
                 stan,
-                datos,
+                card_id,
+                monto,
                 EstadoEjecucion.INVALIDA,
                 motivos=(str(error),),
                 latencia_ms=latencia_ms,
@@ -279,7 +447,8 @@ class Orquestador:
         return await self._registrar(
             solicitud,
             stan,
-            datos,
+            card_id,
+            monto,
             estado,
             motivos=motivos,
             respuesta=interpretada,
@@ -293,7 +462,8 @@ class Orquestador:
         self,
         solicitud: MensajeIso,
         stan: str,
-        datos: DatosCompra,
+        card_id: str | None,
+        monto: Decimal | None,
         estado: EstadoEjecucion,
         *,
         motivos: tuple[str, ...] = (),
@@ -344,8 +514,8 @@ class Orquestador:
         )
 
         ejecucion = Ejecucion(
-            card_id=datos.card_id,
-            monto=datos.monto,
+            card_id=card_id,
+            monto=monto,
             # La moneda ya no es una propiedad de DatosCompra: es el campo 49
             # efectivamente armado (default del perfil o valor manual), la
             # misma fuente de verdad que ve el isoscopio.

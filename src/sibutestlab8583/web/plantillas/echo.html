@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import estado, senal, encabezado_pagina %}
+{% block titulo %}Echo de red · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+{{ encabezado_pagina(
+  'Echo de red',
+  'Construye un mensaje 0800 (Network Management), lo transmite por TCP a la conexión elegida e interpreta la respuesta 0810. Sin tarjeta ni monto: esta operación solo verifica que el destino responda. Cada intento queda registrado en el historial, igual que una compra.'
+) }}
+
+{% if aviso %}
+{{ estado(aviso) }}
+{% endif %}
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise los datos</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+{% if bloqueo_escenario and (bloqueo_escenario.inactivo or bloqueo_escenario.conexion_no_disponible or bloqueo_escenario.incompatibilidades) %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Este escenario necesita atención</h2>
+  <ul class="aviso__detalle">
+    {% if bloqueo_escenario.inactivo %}
+    <li>Este escenario está inactivo. Reactívelo para poder ejecutarlo, o guarde una copia.</li>
+    {% endif %}
+    {% if bloqueo_escenario.conexion_no_disponible %}
+    <li>La conexión usada por este escenario ya no está disponible. Seleccione otra conexión para continuar.</li>
+    {% endif %}
+    {% for problema in bloqueo_escenario.incompatibilidades %}
+    <li>Este escenario ya no es compatible con el perfil actual: {{ problema }}.</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" action="/echo" id="formulario-echo">
+  <input type="hidden" name="conexion_id" value="{{ conexion_actual.conexion_id if conexion_actual else '' }}">
+  <input type="hidden" name="escenario_id" value="{{ escenario_actual.escenario_id if escenario_actual else '' }}">
+  <input type="hidden" name="mti" value="{{ mti_echo }}">
+  <div class="compra-shell">
+    <aside class="compra-shell__aside">
+      <div class="conexion-barra">
+        {% if conexion_actual %}
+        <span class="chip chip--sintetica">Sin verificar</span>
+        <span class="conexion-barra__texto">
+          <strong>{{ conexion_actual.nombre }}</strong>
+          <span class="mono">{{ conexion_actual.host }}:{{ conexion_actual.puerto }}</span>
+        </span>
+        {% else %}
+        <span class="conexion-barra__texto">
+          Sin conexiones activas. <a href="/configuracion/conexiones">Administrar conexiones</a>.
+        </span>
+        {% endif %}
+
+        {% if conexiones|length > 1 %}
+        <details class="cambiar-conexion">
+          <summary>Cambiar</summary>
+          <div class="tarjetas">
+            {% for conexion in conexiones %}
+            <button type="submit" formaction="/echo" formnovalidate
+                    name="ir_a_conexion" value="{{ conexion.conexion_id }}"
+                    class="tarjeta tarjeta--boton{{ ' tarjeta--seleccionada' if conexion_actual and conexion.conexion_id == conexion_actual.conexion_id }}">
+              <span class="tarjeta__id">{{ conexion.nombre }}</span>
+              <span class="tarjeta__pan">{{ conexion.host }}:{{ conexion.puerto }}</span>
+            </button>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </div>
+
+      <section class="panel">
+        <div class="panel__cabecera">
+          <h2 class="panel__titulo">Código de gestión de red (DE70)</h2>
+          <span class="panel__nota">gobernado por el perfil</span>
+        </div>
+        <div class="panel__cuerpo">
+          <p class="grupo__sub">
+            Identifica el tipo de operación de gestión de red. El valor por defecto es una
+            convención de laboratorio de este perfil genérico (no una especificación oficial de
+            ninguna red) para un echo test.
+          </p>
+          <div class="campo campo--mono">
+            <label class="campo__rotulo" for="de70">DE70</label>
+            <input type="text" id="de70" name="de70" autocomplete="off"
+                   placeholder="{{ de70_default }}" value="{{ de70 }}">
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <details class="vista-previa" open>
+          <summary>
+            <span class="panel__titulo">Vista previa del mensaje</span>
+            {% if vista_previa %}<span class="panel__nota">{{ vista_previa.mti }}</span>{% endif %}
+          </summary>
+          <div class="panel__cuerpo">
+            <button type="submit" formaction="/echo" formnovalidate class="boton boton--sm">
+              Actualizar vista previa
+            </button>
+            {% if vista_previa %}
+            <div class="vista-previa__resumen">
+              <div>
+                <span class="vista-previa__rotulo">MTI</span>
+                <span class="mono">{{ vista_previa.mti }}</span>
+              </div>
+              {% if vista_previa.bitmap %}
+              <div>
+                <span class="vista-previa__rotulo">Bitmap</span>
+                <span class="mono">{{ vista_previa.bitmap }}</span>
+              </div>
+              {% endif %}
+              <div>
+                <span class="vista-previa__rotulo">Campos activos</span>
+                <span class="mono">{{ vista_previa.filas|map(attribute='numero')|join(', ') }}</span>
+              </div>
+            </div>
+            <div class="desplazable" tabindex="0" role="region" aria-label="Campos de la vista previa">
+              <table class="tabla">
+                <thead>
+                  <tr><th>DE</th><th>Nombre</th><th>Valor</th><th>Origen</th></tr>
+                </thead>
+                <tbody>
+                  {% for fila in vista_previa.filas %}
+                  <tr>
+                    <td><span class="campo-iso">{{ fila.numero }}</span></td>
+                    <td>{{ fila.descripcion }}</td>
+                    <td><span class="valor-iso">{{ fila.valor }}</span></td>
+                    <td>
+                      <span class="chip chip--qa">{{ fila.etiqueta_origen }}</span>
+                      {%- if not fila.es_valor_definitivo %}
+                      <span class="vista-previa__nota-campo">se generará al enviar</span>
+                      {%- endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="campo__pista">
+              El STAN y la fecha/hora mostrados son solo una forma válida de ejemplo: el valor
+              real se genera recién al ejecutar, nunca antes.
+            </p>
+            {% else %}
+            <p class="vacio">{{ vista_previa_no_disponible }}</p>
+            {% endif %}
+          </div>
+        </details>
+      </section>
+
+      <section class="panel">
+        <div class="panel__cuerpo acciones acciones--columna">
+          <button class="boton" type="submit" formaction="/echo/ejecutar" {{ 'disabled' if not puede_ejecutar }}>
+            {{ senal('transmision', 16) }}
+            Ejecutar echo
+          </button>
+          {% if not puede_ejecutar %}
+          <p class="campo__pista">Seleccione una conexión activa para poder ejecutar.</p>
+          {% endif %}
+        </div>
+      </section>
+    </aside>
+
+    <div class="compra-shell__principal">
+      <section class="panel">
+        <div class="panel__cabecera">
+          <h2 class="panel__titulo">Mensaje 0800</h2>
+          <span class="panel__nota">DE7/DE11 automáticos</span>
+        </div>
+        <div class="desplazable" tabindex="0" role="region" aria-label="Campos del mensaje 0800">
+          <table class="tabla">
+            <thead>
+              <tr><th>DE</th><th>Nombre</th><th>Valor</th><th>Origen</th></tr>
+            </thead>
+            <tbody>
+              {% for fila in filas_constructor %}
+              <tr>
+                <td><span class="campo-iso">{{ fila.numero }}</span></td>
+                <td>{{ fila.descripcion }}</td>
+                <td><span class="valor-iso">{{ fila.valor }}</span></td>
+                <td><span class="chip chip--qa">{{ fila.origen }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <section class="panel">
+    <details class="cambiar-conexion" {{ 'open' if estado_esperado_actual or filas_expectativas|selectattr('tipo')|list }}>
+      <summary>Expectativas (opcional)</summary>
+      <div class="panel__cuerpo">
+        <p class="grupo__sub">
+          Defina qué resultado espera de este echo. Al ejecutar, SibuTestLab compara lo recibido
+          contra lo indicado aquí e informa PASS o FAIL. Dejar todo en blanco significa sin
+          expectativas: la ejecución no se evalúa.
+        </p>
+        <div class="campo">
+          <label class="campo__rotulo" for="estado_esperado">Estado esperado</label>
+          <select id="estado_esperado" name="estado_esperado">
+            <option value="" {{ 'selected' if not estado_esperado_actual }}>No especificar</option>
+            {% for estado_valor in estados_ejecucion %}
+            <option value="{{ estado_valor.value }}" {{ 'selected' if estado_valor.value == estado_esperado_actual }}>
+              {{ avisos[estado_valor].etiqueta }}
+            </option>
+            {% endfor %}
+          </select>
+          <p class="campo__pista">
+            Compara contra el resultado semántico del echo (RN-1/RN-3), no contra un valor literal
+            del campo 39.
+          </p>
+        </div>
+        <div class="desplazable" tabindex="0" role="region" aria-label="Campos con expectativa">
+          <table class="tabla">
+            <thead>
+              <tr>
+                <th>DE</th>
+                <th>Nombre</th>
+                <th>Tipo de expectativa</th>
+                <th>Valor esperado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for fila in filas_expectativas %}
+              <tr>
+                <td><span class="campo-iso">{{ fila.numero }}</span></td>
+                <td>{{ fila.descripcion }}</td>
+                <td>
+                  <select name="tipo_esperado_{{ fila.numero }}">
+                    <option value="" {{ 'selected' if not fila.tipo }}>No especificar</option>
+                    <option value="igual" {{ 'selected' if fila.tipo == 'igual' }}>Igual a</option>
+                    <option value="presente" {{ 'selected' if fila.tipo == 'presente' }}>Presente</option>
+                    <option value="ausente" {{ 'selected' if fila.tipo == 'ausente' }}>Ausente</option>
+                  </select>
+                </td>
+                <td>
+                  <input type="text" name="valor_esperado_{{ fila.numero }}" class="campo-tabla"
+                         autocomplete="off" value="{{ fila.valor or '' }}">
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="campo__pista">
+          El valor esperado solo se usa cuando el tipo es "Igual a"; se ignora para "Presente" y
+          "Ausente".
+        </p>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel" id="guardar-como-escenario">
+    <div class="panel__cabecera">
+      <h2 class="panel__titulo">Guardar como escenario</h2>
+    </div>
+    <div class="panel__cuerpo">
+      <div class="campo">
+        <label class="campo__rotulo" for="nombre">Nombre del escenario</label>
+        <input type="text" id="nombre" name="nombre" autocomplete="off" value="{{ nombre_escenario }}">
+        <p class="campo__pista">
+          Congela los valores de esta pantalla -DE70 y conexión- para poder recuperarlos y
+          reejecutarlos después, sin tarjeta ni monto: esta operación nunca los necesita.
+        </p>
+      </div>
+      <div class="acciones">
+        {% if escenario_actual %}
+        <button class="boton" type="submit" formaction="/escenarios/{{ escenario_actual.escenario_id }}">
+          Guardar cambios
+        </button>
+        <button class="boton" type="submit" formaction="/escenarios">Guardar como copia</button>
+        {% else %}
+        <button class="boton" type="submit" formaction="/escenarios">Guardar como escenario</button>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+</form>
+{% endblock %}

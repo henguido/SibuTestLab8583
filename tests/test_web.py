@@ -40,7 +40,12 @@ from sibutestlab8583.domain.modelos import (
     ResultadoCompra,
     TarjetaPrueba,
 )
-from sibutestlab8583.profiles.generico import METADATOS_CAMPOS_0100, PERFIL_GENERICO
+from sibutestlab8583.profiles.generico import (
+    METADATOS_CAMPOS_0100,
+    METADATOS_CAMPOS_0200,
+    METADATOS_CAMPOS_0800,
+    PERFIL_GENERICO,
+)
 from sibutestlab8583.web.app import crear_app
 
 MOMENTO = datetime(2026, 8, 19, 12, 0, 0, tzinfo=timezone.utc)
@@ -203,7 +208,8 @@ class RepositorioEscenariosFalso:
                 "   nombre = excluded.nombre, activo = excluded.activo",
                 (
                     escenario.escenario_id, escenario.nombre, escenario.perfil, escenario.mti,
-                    escenario.card_id, escenario.conexion_id, str(escenario.monto),
+                    escenario.card_id, escenario.conexion_id,
+                    str(escenario.monto) if escenario.monto is not None else None,
                     json.dumps({"version": 1, "campos": dict(escenario.campos_manuales)}),
                     None, int(escenario.activo),
                     escenario.creado_en.isoformat(), escenario.actualizado_en.isoformat(),
@@ -267,6 +273,38 @@ class OrquestadorFalso:
             self._reflejar_ejecucion()
         return self._resultado
 
+    async def ejecutar_compra_financiera(
+        self, datos, *, escenario_id=None, escenario_nombre=None, expectativas=None
+    ):
+        """Mismo doble que `ejecutar_compra` (B4): las pruebas de compra
+        financiera reutilizan `OrquestadorFalso` en vez de duplicarlo."""
+        self.ultimos_datos = datos
+        self.ultimo_escenario_id = escenario_id
+        self.ultimo_escenario_nombre = escenario_nombre
+        self.ultimas_expectativas = expectativas
+        if self._error is not None:
+            raise self._error
+        if (
+            self._resultado is not None
+            and self._ruta_espejo is not None
+            and not self._ejecucion_reflejada
+        ):
+            self._reflejar_ejecucion()
+        return self._resultado
+
+    async def ejecutar_network_echo(
+        self, datos, *, escenario_id=None, escenario_nombre=None, expectativas=None
+    ):
+        """Mismo doble que `ejecutar_compra` (B2): las pruebas de echo
+        reutilizan `OrquestadorFalso` en vez de duplicarlo."""
+        self.ultimos_datos = datos
+        self.ultimo_escenario_id = escenario_id
+        self.ultimo_escenario_nombre = escenario_nombre
+        self.ultimas_expectativas = expectativas
+        if self._error is not None:
+            raise self._error
+        return self._resultado
+
     def _reflejar_ejecucion(self) -> None:
         import sqlite3
 
@@ -319,6 +357,8 @@ class ComposicionFalsa:
         self.descripciones_de_campos = {"2": "Número de tarjeta (PAN)", "4": "Monto"}
         self.perfil = PERFIL_GENERICO
         self.metadatos_de_campos_0100 = METADATOS_CAMPOS_0100
+        self.metadatos_de_campos_0800 = METADATOS_CAMPOS_0800
+        self.metadatos_de_campos_0200 = METADATOS_CAMPOS_0200
         self._codec_real = CodecIso8583()
         self._orquestador = OrquestadorFalso(resultado, error)
         self._repositorio_tarjetas = RepositorioTarjetasFalso(
@@ -401,6 +441,20 @@ class ComposicionFalsa:
         from sibutestlab8583.application.vista_previa import ServicioVistaPrevia
 
         return ServicioVistaPrevia(self._repositorio_tarjetas, self._codec_real, self.perfil)
+
+    @property
+    def vista_previa_echo(self):
+        from sibutestlab8583.application.vista_previa import ServicioVistaPreviaEcho
+
+        return ServicioVistaPreviaEcho(self._codec_real, self.perfil)
+
+    @property
+    def vista_previa_compra_financiera(self):
+        from sibutestlab8583.application.vista_previa import ServicioVistaPreviaCompraFinanciera
+
+        return ServicioVistaPreviaCompraFinanciera(
+            self._repositorio_tarjetas, self._codec_real, self.perfil
+        )
 
     async def orquestador(self, destino, *, tiempo_limite=None):
         #: Ultimo `DestinoTcp` y timeout con el que la web pidio un orquestador:

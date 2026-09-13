@@ -23,7 +23,15 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from ..domain.campos_iso import TIPO_ALFANUMERICO, TIPO_NUMERICO, MetadatoCampo
-from ..domain.modelos import MTI_COMPRA, MTI_RESPUESTA_COMPRA
+from ..domain.modelos import (
+    CAMPOS_SENSIBLES,
+    MTI_COMPRA,
+    MTI_COMPRA_FINANCIERA,
+    MTI_ECHO,
+    MTI_RESPUESTA_COMPRA,
+    MTI_RESPUESTA_COMPRA_FINANCIERA,
+    MTI_RESPUESTA_ECHO,
+)
 
 NOMBRE_PERFIL_GENERICO = "generico"
 
@@ -109,6 +117,15 @@ class PerfilDeMarca:
     especificacion: Mapping[str, Mapping[str, Any]]
     obligatorios_por_mti: Mapping[str, frozenset[str]]
     politica_por_mti: Mapping[str, PoliticaCamposMti] = field(default_factory=dict)
+    #: Campos que ESTE perfil declara sensibles, ademas del piso universal de
+    #: dominio (`domain.modelos.CAMPOS_SENSIBLES`: DE2/35/45, sensibles por
+    #: definicion del estandar, no por decision de marca). B3 (2026-09-13,
+    #: ARCH-001/SEC-001): pensado para el dia en que un perfil real declare
+    #: un campo propietario que tambien transporte datos de tarjeta -sin
+    #: necesitar ampliar el significado del piso universal para eso-. Hoy
+    #: vacio para el perfil generico: sus unicos campos de tarjeta (2) ya
+    #: estan cubiertos por el piso.
+    campos_sensibles: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "especificacion", MappingProxyType(dict(self.especificacion)))
@@ -131,6 +148,15 @@ class PerfilDeMarca:
         if mti not in self.politica_por_mti:
             raise ValueError(f"el perfil {self.nombre!r} no declara politica para el MTI {mti!r}")
         return self.politica_por_mti[mti]
+
+    def es_sensible(self, numero: str) -> bool:
+        """Autoridad declarativa de sensibilidad para quien SI tiene un
+        perfil real en mano (a diferencia de `MensajeIso.enmascarado()`, que
+        no lo recibe): el piso universal de dominio, unido a lo que este
+        perfil declare como propio. Nunca al reves -este perfil no puede
+        "des-declarar" un campo del piso universal-.
+        """
+        return numero in CAMPOS_SENSIBLES or numero in self.campos_sensibles
 
 
 def _fijo(largo: int, descripcion: str) -> dict[str, Any]:
@@ -160,6 +186,10 @@ ESPECIFICACION_GENERICA: dict[str, dict[str, Any]] = {
     "h": _fijo(0, "Sin cabecera"),
     "t": _fijo(4, "Tipo de mensaje (MTI)"),
     "p": _fijo(16, "Bitmap primario"),
+    #: Bitmap secundario: pyiso8583 lo exige declarado en la especificacion
+    #: en cuanto un mensaje usa algun campo 65-128 (aqui, DE70 para 0800/0810,
+    #: B2) - el propio bit 1 del bitmap primario senala su presencia.
+    "1": _fijo(16, "Bitmap secundario"),
     "2": _llvar(19, "Número de tarjeta (PAN)"),
     "3": _fijo(6, "Código de proceso"),
     "4": _fijo(12, "Monto de la transacción"),
@@ -179,6 +209,40 @@ ESPECIFICACION_GENERICA: dict[str, dict[str, Any]] = {
     "42": _fijo(15, "Identificador del comercio (Card Acceptor ID)"),
     "43": _fijo(40, "Nombre y ubicación del comercio (Card Acceptor Name/Location)"),
     "49": _fijo(3, "Código de moneda (ISO 4217 numérico)"),
+    #: DE70, agregado para el 0800/0810 (Network Management/Echo, B2). El
+    #: numero y la longitud (3 digitos) son del estandar ISO 8583 general
+    #: -no de ninguna marca-; el VALOR que este perfil usa para identificar
+    #: un echo (`VALOR_LABORATORIO_ECHO`, mas abajo) es una convencion propia
+    #: de laboratorio, documentada como tal, no una especificacion oficial.
+    "70": _fijo(3, "Código de información de gestión de red"),
+}
+
+#: Metadata de sensibilidad (ARCH-001/SEC-001, resuelto parcialmente en B2):
+#: que campos transporta este perfil que nunca deben persistirse ni mostrarse
+#: en claro. Separado de `METADATOS_CAMPOS_0100` a proposito -ese diccionario
+#: es "metadata de UI para campos editables"; este es un eje ortogonal que
+#: tambien cubre derivados (DE2 nunca se ofrece para editar a mano, pero SI
+#: es sensible)-. Es la fuente DECLARATIVA: `test_perfil_generico.py::
+#: test_todo_campo_declarado_sensible_tiene_autoridad_en_camposensibles`
+#: falla si algun dia se agrega aqui un campo que `domain.modelos.
+#: CAMPOS_SENSIBLES` no incluya -asi una futura ampliacion (Fase B2+, otro
+#: perfil, otro MTI con un campo de tarjeta bajo otro numero) no puede
+#: declarar sensibilidad aqui sin que la reja de enmascarado la aplique de
+#: verdad-.
+#:
+#: NO es todavia una migracion completa: `MensajeIso.enmascarado()` y el
+#: resto de los 6+ consumidores de `CAMPOS_SENSIBLES` (codec.py,
+#: expectativas.py, validacion.py, serializacion.py, presentacion.py) siguen
+#: leyendo la constante global de `domain/modelos.py`, no este diccionario -
+#: threading un `perfil` a traves de esas firmas es un cambio mayor,
+#: documentado como deuda explicita para B3 en docs/roadmap/SIBU_3.md-. Lo
+#: que SI cambia hoy: la constante global deja de ser la unica fuente de
+#: verdad no verificada; ahora tiene una prueba que la contrasta contra una
+#: declaracion explicita por campo.
+METADATOS_SENSIBLES: dict[str, MetadatoCampo] = {
+    "2": MetadatoCampo(
+        "2", "PAN", "Número de tarjeta (PAN)", TIPO_NUMERICO, False, 19, True,
+    ),
 }
 
 #: Metadata de UI/validacion de forma para los campos que este perfil conoce
@@ -232,6 +296,24 @@ METADATOS_CAMPOS_0100: dict[str, MetadatoCampo] = {
     ),
 }
 
+#: Metadata de UI/validacion de forma para el 0800 (Network Management/Echo,
+#: B2). Un unico campo editable: DE70. Deliberadamente NO copia
+#: METADATOS_CAMPOS_0100 -esta operacion no tiene tarjeta, monto, comercio ni
+#: terminal, y agregar esos campos aqui seria inventar informacion que el
+#: echo no usa.
+METADATOS_CAMPOS_0800: dict[str, MetadatoCampo] = {
+    "70": MetadatoCampo(
+        "70", "Network Management Information Code",
+        "Código de información de gestión de red",
+        TIPO_NUMERICO, True, 3, False,
+        ayuda=(
+            "Identifica el tipo de operación de gestión de red. El valor por "
+            "defecto es una convención de laboratorio de este perfil genérico "
+            "(no una especificación oficial de ninguna red) para un echo test."
+        ),
+    ),
+}
+
 # Obligatorios de la solicitud de compra: lo minimo para que el mensaje describa
 # una compra concreta (que tarjeta, cuanto, en que moneda, en que terminal, con
 # que trazabilidad).
@@ -275,14 +357,105 @@ _POLITICA_COMPRA = PoliticaCamposMti(
     },
 )
 
+#: Valor de laboratorio que este perfil usa en DE70 para identificar un echo
+#: test -NO una especificacion oficial de ISO 8583 ni de ninguna red real:
+#: distintas implementaciones documentan distintos valores para "echo" en
+#: gestion de red, y este proyecto no tiene autoridad para declarar uno como
+#: el correcto. Se elige un valor propio, claramente marcado como tal, igual
+#: criterio que ya aplica `CODIGO_PROCESO_COMPRA`/`MODO_CAPTURA_DEMOSTRACION`.
+VALOR_LABORATORIO_ECHO = "301"
+
+# Obligatorios del echo: los dos campos que todo intercambio 0800/0810 de
+# este laboratorio necesita para poder correlacionarse (RN-3), mas DE70 -que
+# identifica que tipo de operacion de red es esta-. Sin tarjeta, sin monto,
+# sin campos de comercio: ninguno de esos conceptos aplica a un echo.
+OBLIGATORIOS_0800 = frozenset({"7", "11", "70"})
+
+# Obligatorios de la respuesta: DE39 se incluye a proposito -ver docstring de
+# _POLITICA_ECHO- para que el echo reutilice RN-1/RN-3 sin ningun camino
+# especial en domain/validacion.py; el host siempre responde "00" (exito),
+# nunca un codigo de rechazo, en esta primera entrega de echo.
+OBLIGATORIOS_0810 = frozenset({"7", "11", "39", "70"})
+
+#: Politica de campos del echo (0800). Sin derivados (no hay tarjeta), DE7/11
+#: automaticos (igual que en compra: reloj y secuencia de STAN), DE70
+#: editable con un default de laboratorio -para que una persona pueda
+#: sobreescribirlo explicitamente (o usar una variable dinamica de Fase A
+#: sobre el, demostrando que el mecanismo es generico), sin que eso sea
+#: obligatorio-.
+_POLITICA_ECHO = PoliticaCamposMti(
+    automaticos=frozenset({"7", "11"}),
+    editables=frozenset({"70"}),
+    valores_por_defecto={"70": VALOR_LABORATORIO_ECHO},
+)
+
+# ------------------------------------------ Compra financiera (0200/0210, B4) --
+#
+# Dentro de este laboratorio: 0100 es una AUTORIZACION (verifica/reserva, no
+# mueve fondos por si sola); 0200 es una TRANSACCION FINANCIERA (mueve fondos
+# en el mismo mensaje). Es la distincion de dominio que ISO 8583 documenta en
+# general para "Authorization"/"Financial" -no una regla de Visa, Mastercard
+# ni de ninguna otra marca especifica-.
+#
+# Campo por campo, auditado contra `ESPECIFICACION_GENERICA` (no copiado de
+# 0100 sin revisar): una compra financiera describe exactamente el mismo
+# concepto de "que tarjeta, cuanto, en que moneda, en que terminal, con que
+# trazabilidad" que una compra -por eso el conjunto resultante coincide con
+# el de 0100-, pero se declara aqui como su PROPIA politica: si algun dia
+# difieren (por ejemplo, un campo propio de liquidacion que 0100 nunca
+# necesito), esta politica cambia sola, sin arrastrar a la otra.
+CODIGO_PROCESO_COMPRA_FINANCIERA = "000000"
+
+# Obligatorios de la solicitud financiera: mismo razonamiento que OBLIGATORIOS_0100.
+OBLIGATORIOS_0200 = frozenset({"2", "3", "4", "7", "11", "14", "22", "41", "49"})
+
+# Obligatorios de la respuesta: el codigo de respuesta mas los campos que deben
+# volver iguales para poder correlacionar (RN-3) -mismo razonamiento que OBLIGATORIOS_0110-.
+OBLIGATORIOS_0210 = frozenset({"3", "4", "7", "11", "39", "41"})
+
+#: Politica de campos de la compra financiera (0200). Misma forma que
+#: `_POLITICA_COMPRA` -DE2/DE14 derivados de la tarjeta, DE7/11/12/13
+#: automaticos-, porque la capa estructural de ambas operaciones es
+#: literalmente la misma funcion (`domain.armado.
+#: _campos_estructurales_transaccion_con_tarjeta`). DE38 tampoco es editable
+#: aqui, por el mismo motivo que en 0100: lo agrega el autorizador al
+#: aprobar, nunca lo declara el emisor en la solicitud.
+_POLITICA_COMPRA_FINANCIERA = PoliticaCamposMti(
+    derivados=frozenset({"2", "14"}),
+    automaticos=frozenset({"7", "11", "12", "13"}),
+    editables=frozenset({"3", "22", "37", "41", "49"}),
+    opcionales=frozenset({"18", "25", "32", "42", "43"}),
+    valores_por_defecto={
+        "3": CODIGO_PROCESO_COMPRA_FINANCIERA,
+        "22": MODO_CAPTURA_DEMOSTRACION,
+        "41": TERMINAL_DEMOSTRACION,
+        "49": "188",
+    },
+)
+
+#: Metadata de UI/validacion de forma para el 0200: identica a la de 0100
+#: porque el conjunto de campos editables/opcionales lo es (ver auditoria mas
+#: arriba) -reexportada bajo su propio nombre, no una nueva copia de
+#: cuarenta lineas, para que un manana en que difieran no obligue a decidir
+#: cual de las dos copias quedo desactualizada.
+METADATOS_CAMPOS_0200 = METADATOS_CAMPOS_0100
+
 PERFIL_GENERICO = PerfilDeMarca(
     nombre=NOMBRE_PERFIL_GENERICO,
     especificacion=ESPECIFICACION_GENERICA,
     obligatorios_por_mti={
         MTI_COMPRA: OBLIGATORIOS_0100,
         MTI_RESPUESTA_COMPRA: OBLIGATORIOS_0110,
+        MTI_ECHO: OBLIGATORIOS_0800,
+        MTI_RESPUESTA_ECHO: OBLIGATORIOS_0810,
+        MTI_COMPRA_FINANCIERA: OBLIGATORIOS_0200,
+        MTI_RESPUESTA_COMPRA_FINANCIERA: OBLIGATORIOS_0210,
     },
-    politica_por_mti={MTI_COMPRA: _POLITICA_COMPRA},
+    politica_por_mti={
+        MTI_COMPRA: _POLITICA_COMPRA,
+        MTI_ECHO: _POLITICA_ECHO,
+        MTI_COMPRA_FINANCIERA: _POLITICA_COMPRA_FINANCIERA,
+    },
 )
 
 

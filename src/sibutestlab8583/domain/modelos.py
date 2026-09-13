@@ -1,4 +1,6 @@
-"""Modelos del dominio para el recorrido de compra 0100/0110.
+"""Modelos del dominio para los recorridos Multi-MTI de este laboratorio:
+compra/autorizacion (0100/0110), echo de red (0800/0810) y compra financiera
+(0200/0210, B4).
 
 Existen para que no circulen diccionarios anonimos por la aplicacion. Son
 deliberadamente planos: no hay jerarquia de clases ni modelos para MTIs fuera del
@@ -19,8 +21,66 @@ from .enmascarado import enmascarar_campos, enmascarar_pan
 MTI_COMPRA = "0100"
 MTI_RESPUESTA_COMPRA = "0110"
 
+#: Network Management / Echo Test (B2, 2026-09-12): primera operacion distinta
+#: de compra. Sin tarjeta, sin monto -ver `DatosEcho`, `Ejecucion.card_id`
+#: nullable en `adapters/persistence/esquema.py`-. La respuesta se deriva con
+#: `domain.validacion.mti_de_respuesta("0800")`, nunca una segunda constante
+#: independiente calculada a mano.
+MTI_ECHO = "0800"
+MTI_RESPUESTA_ECHO = "0810"
+
+#: Transaccion financiera (B4, 2026-09-13): primera operacion Multi-MTI que
+#: confirma que `operacion` y `mti` son conceptos separados de verdad, no
+#: solo en el papel (B3 los dejo listos para esto). Dentro de este
+#: laboratorio, 0100 modela una AUTORIZACION (reserva/verificacion, sin mover
+#: fondos por si sola) y 0200 modela una TRANSACCION FINANCIERA (mueve fondos
+#: en el mismo mensaje) -es la distincion de dominio que ISO 8583 documenta en
+#: general para estas dos familias, no una regla de una marca especifica-.
+#: `OPERACION_COMPRA_FINANCIERA` es una intencion DISTINTA de
+#: `OPERACION_COMPRA`, aunque hoy ambas se deriven 1:1 de su MTI: el dia que
+#: 0200 deba representar mas de una intencion segun el codigo de proceso,
+#: quien arme el escenario elegira la operacion explicitamente en vez de
+#: derivarla de `OPERACION_POR_MTI`.
+MTI_COMPRA_FINANCIERA = "0200"
+MTI_RESPUESTA_COMPRA_FINANCIERA = "0210"
+
+#: Identificador de la INTENCION funcional de un escenario (B3, 2026-09-13),
+#: separado del MTI: hoy cada MTI implica exactamente una operacion, asi que
+#: `OPERACION_POR_MTI` alcanza para derivarlo sin ambiguedad. El campo existe
+#: por adelantado porque un MTI futuro (ej. 0200) SI podria representar mas
+#: de una operacion segun el codigo de proceso -en ese momento, quien arme el
+#: escenario decidira la operacion explicitamente en vez de derivarla de este
+#: mapa; el campo ya esta listo para cargarla-. No es un catalogo de negocio:
+#: son dos strings, y agregar uno tercero no es una migracion, es una linea.
+OPERACION_COMPRA = "purchase"
+OPERACION_ECHO = "network_echo"
+OPERACION_COMPRA_FINANCIERA = "financial_purchase"
+OPERACION_POR_MTI: Mapping[str, str] = {
+    MTI_COMPRA: OPERACION_COMPRA,
+    MTI_ECHO: OPERACION_ECHO,
+    MTI_COMPRA_FINANCIERA: OPERACION_COMPRA_FINANCIERA,
+}
+
 #: Campos ISO que transportan datos de tarjeta y nunca se persisten en claro.
-CAMPOS_SENSIBLES = frozenset({"2", "35"})
+#: Piso UNIVERSAL de dominio -protege estos tres numeros para CUALQUIER
+#: perfil, incluso los que `MensajeIso.enmascarado()`/`MensajeInterpretado.
+#: enmascarado()` (sin acceso a un perfil: son metodos de dataclass sin ese
+#: parametro) no pueden consultar-. DE2 (PAN), DE35 (Track 2) y DE45
+#: (Track 1) son sensibles POR DEFINICION del estandar ISO 8583, no por
+#: decision de un perfil -asi que protegerlos aqui, a nivel de dominio, es
+#: correcto incluso antes de que exista ningun perfil que los declare-.
+#:
+#: B3 (2026-09-13, ARCH-001/SEC-001): un perfil puede declarar sensibilidad
+#: ADICIONAL, especifica de si mismo, via `PerfilDeMarca.campos_sensibles`/
+#: `es_sensible()` (`profiles/generico.py`), consultado por los guardias que
+#: SI reciben un perfil real (`domain.expectativas.
+#: campos_permitidos_expectativa`, `domain.validacion.campos_de_correlacion`,
+#: `adapters.iso8583.codec._verificar_enmascarado_para_inspeccion`). Los que
+#: no lo reciben (este archivo, `application/serializacion.py`,
+#: `web/presentacion.py` -presentacion pura, la proteccion real ya ocurrio
+#: antes de llegar ahi-) siguen con este piso universal, que ya cubre los
+#: tres campos que hoy existen.
+CAMPOS_SENSIBLES = frozenset({"2", "35", "45"})
 
 #: El numero de trazabilidad (campo 11) tiene exactamente seis digitos.
 LARGO_STAN = 6
@@ -98,6 +158,47 @@ class DatosCompra:
     demás que un perfil declare editable para el MTI —moneda, terminal, código
     de proceso, campos opcionales— vive en `campos_manuales`: agregar un campo
     editable nuevo al perfil no debe obligar a agregar una propiedad aquí.
+    """
+
+    card_id: str
+    monto: Decimal
+    campos_manuales: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
+
+
+@dataclass(frozen=True)
+class DatosEcho:
+    """Lo que se completa para armar un Network Management / Echo Test (0800).
+
+    Sin `card_id` ni `monto`: no hay tarjeta ni importe involucrados en un
+    echo -a diferencia de `DatosCompra`, no tiene ningun campo de primera
+    clase con logica propia. `campos_manuales` sigue el mismo contrato
+    (unica puerta para fijar un valor editable, hoy solo DE70), para que el
+    mecanismo de variables dinamicas (Fase A) y el de escenarios funcionen
+    exactamente igual que con compra, sin un segundo camino.
+    """
+
+    campos_manuales: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
+
+
+@dataclass(frozen=True)
+class DatosCompraFinanciera:
+    """Lo que se completa para armar una compra financiera (0200, B4).
+
+    Mismos tres campos que `DatosCompra`, y a proposito: `card_id`/`monto`
+    tienen la misma logica propia (derivar DE2/DE14 de la tarjeta, formatear
+    DE4) para CUALQUIER operacion que mueva fondos con una tarjeta, sea
+    0100 o 0200 -por eso `domain/armado.py` comparte la capa estructural
+    entre ambas en vez de duplicarla-. Es un dataclass propio, no un alias de
+    `DatosCompra`, porque son la entrada de dos OPERACIONES distintas
+    (autorizacion vs. transaccion financiera, ver `OPERACION_COMPRA_FINANCIERA`):
+    confundirlas bajo el mismo tipo volveria a acoplar operacion con MTI,
+    exactamente lo que B4 existe para evitar.
     """
 
     card_id: str
@@ -191,6 +292,17 @@ class Escenario:
     estructural-, asi que nunca podria vivir junto a los campos que si
     gobierna esa politica.
 
+    `card_id`/`monto` son `None` para una operacion sin tarjeta ni monto (B3,
+    2026-09-13: Echo es la primera) -mismo criterio ya aplicado a
+    `Ejecucion` en B2-. `application.escenarios.ServicioEscenarios` decide,
+    a partir de que campos exige el perfil para ese MTI (`"2" in
+    perfil.obligatorios(mti)`, `"4" in ...`), si vale la pena exigirlos: este
+    dataclass no impone la regla, solo permite representarla sin un sentinel
+    inventado.
+
+    `operacion` es la intencion funcional (ver `OPERACION_POR_MTI`), separada
+    del MTI: hoy son 1:1, pero el campo ya existe para cuando dejen de serlo.
+
     `expectativas` es opcional: un escenario sin expectativas sigue siendo
     valido -simplemente no hay nada que evaluar, y eso no es lo mismo que
     "aprobado" (ver `domain.expectativas.evaluar_expectativas`).
@@ -200,9 +312,10 @@ class Escenario:
     nombre: str
     perfil: str
     mti: str
-    card_id: str
     conexion_id: str
-    monto: Decimal
+    card_id: str | None = None
+    monto: Decimal | None = None
+    operacion: str = OPERACION_COMPRA
     campos_manuales: Mapping[str, str] = field(default_factory=dict)
     expectativas: Expectativas | None = None
     activo: bool = True
@@ -211,11 +324,6 @@ class Escenario:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
-
-    def a_datos_compra(self) -> DatosCompra:
-        return DatosCompra(
-            card_id=self.card_id, monto=self.monto, campos_manuales=self.campos_manuales
-        )
 
 
 @dataclass(frozen=True)
@@ -470,18 +578,25 @@ class EstadoEjecucion(str, Enum):
 
 @dataclass
 class Ejecucion:
-    """Registro persistible de un intento de compra.
+    """Registro persistible de un intento de ejecucion (compra u otra operacion).
 
     Referencia la tarjeta por ``card_id``. No tiene campo para el PAN completo:
     los mensajes se guardan ya enmascarados.
+
+    ``card_id``/``monto``/``moneda`` son ``None`` para una operacion sin
+    tarjeta ni monto (B2, 2026-09-12: Network Management/Echo es la primera).
+    Movidos despues de ``stan``/``estado`` -que toda ejecucion tiene, sin
+    excepcion- porque un dataclass no admite un campo sin default despues de
+    uno con default. Ningun llamador construye `Ejecucion` posicionalmente
+    (todos usan keywords), asi que este reordenamiento no rompe nada.
     """
 
-    card_id: str
-    monto: Decimal
-    moneda: str
     stan: str
     estado: EstadoEjecucion
     mti_solicitud: str = MTI_COMPRA
+    card_id: str | None = None
+    monto: Decimal | None = None
+    moneda: str | None = None
     mti_respuesta: str | None = None
     codigo_respuesta: str | None = None
     destino_host: str | None = None

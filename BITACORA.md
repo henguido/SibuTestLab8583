@@ -2628,3 +2628,142 @@ C1 (infraestructura mínima de secuencias sobre escenarios 0100 existentes, que 
 diseño de secuencias no requiere ningún MTI nuevo).
 
 Sin cambios de código de producción en este bloque; solo el documento de roadmap.
+
+## 2026-09-12 · Autorización formal de evolución multi-MTI y arranque de B1
+
+El propietario autorizó formalmente ampliar el alcance funcional más allá de compra
+0100/0110 (registrado en `PROYECTO.md` sección 0.1 y en `CLAUDE.md`, sin reescribir el
+alcance académico original). Cerrado D0 (cobertura de `adapters/host_simulado/cli.py`,
+commit independiente) como tarea previa de bajo riesgo.
+
+Arrancada **Fase B, subfase B1 — núcleo genérico ISO8583**, en rama
+`feature/multi-mti-b1-core-generico`, con el mandato explícito de: cero cambio observable en
+compra 0100/0110, ningún MTI nuevo expuesto todavía, y verificar contra el código real (no
+contra el diseño previo) si `ClaveOperacion=(mti, prefijo_DE3)` sigue siendo la abstracción
+correcta.
+
+**B1.1 — Caracterización (sin cambio de código):** se investigó con 4 agentes de solo
+lectura (mapeo de acoplamientos a Compra, correlación RN-3, impacto en escenarios/suites,
+gobierno de sensibilidad ARCH-001/SEC-001) contra el código real, no contra el diseño de la
+jornada anterior. Hallazgos que cambian el plan original:
+
+- `ClaveOperacion=(mti, prefijo_DE3)` **no está justificado por el código real**: hoy el
+  código de proceso (`CODIGO_PROCESO_COMPRA`) es un valor por defecto de un campo editable
+  (DE3), no parte de ninguna clave de política. `PerfilDeMarca.politica(mti)` /
+  `PoliticaCamposMti` **ya son genéricos** (reciben `mti` como parámetro libre,
+  `politica_por_mti` ya es un mapa extensible) — no necesitan ningún cambio para B1.
+- `armar_compra` es el único lugar de `domain/armado.py` que fija `MTI_COMPRA`
+  internamente, a diferencia de sus funciones vecinas (`validar_campos_manuales`,
+  `valores_efectivos_editables`, etc., ya genéricas por `mti`). Pero su cuerpo (derivar
+  DE2/DE14 de la tarjeta, DE4 del monto) es legítimamente específico de compra — no se toca:
+  generalizarlo sería el antipatrón "mega builder" que el propietario pidió evitar
+  explícitamente.
+- El acoplamiento real y corregible está en `Orquestador.ejecutar_compra`: mezcla la parte
+  genérica request→response (RN-4, codec, transporte, RN-3/RN-1, registrar) con la parte
+  específica de compra (buscar tarjeta, resolver variables, `armar_compra`). `_registrar`
+  además recibe `datos: DatosCompra` completo solo para extraer `card_id`/`monto`.
+- `domain/validacion.py::_mti_de_respuesta` y `campos_de_correlacion` **ya son 100%
+  genéricos** (probado mentalmente contra 0200/0210 y 0800/0810: producen el resultado
+  correcto). No hace falta ninguna interfaz `EstrategiaCorrelacion` en B1 — sería
+  sobre-diseño sin un segundo caso real (sí haría falta para reversos, fuera de alcance).
+- El hardcode real de `MTI_RESPUESTA_COMPRA` (en vez de derivarlo) vive en
+  `orquestador.py:142`, `application/escenarios.py` (3 sitios, validación de expectativas) y
+  `web/app.py`. Solo el primero se corrige en B1 (vive en el wrapper de compra, bajo riesgo,
+  demuestra que la correlación no necesita una segunda constante independiente); los de
+  `escenarios.py`/`web/app.py` quedan documentados como prerequisito de B2, no se tocan
+  ahora (`ServicioEscenarios` ya recibe `mti` inyectable, pero valida expectativas contra el
+  literal en vez de derivarlo de `self._mti`).
+- `escenarios.py`/`ejecutor_escenarios.py`/`corredor_suites.py` **ya son agnósticos de MTI**:
+  ningún cambio de esquema, ninguna migración necesaria (columnas `mti`/`mti_solicitud`/
+  `mti_respuesta` ya son `TEXT` libre desde su creación).
+- `Escenario.a_datos_compra()` es código vestigial (nunca invocado; `ejecutor_escenarios.py`
+  reconstruye `DatosCompra` a mano) — se documenta, no se toca en B1 (fuera de alcance,
+  evitar scope creep).
+- ARCH-001/SEC-001 (gobierno de sensibilidad): confirmado que `CAMPOS_SENSIBLES` es la única
+  fuente operativa; `MetadatoCampo.sensible` existe pero está inerte (siempre `False`, ningún
+  guardia de seguridad lo lee). El riesgo NO empeora con B1 (los guardias ya son agnósticos
+  de MTI) y B1 no lo toca: se registra como condición de entrada explícita para B2 en
+  `docs/roadmap/SIBU_3.md`. No se agrega un test de sincronización todavía -sería cosmético
+  mientras `MetadatoCampo.sensible` no tenga ningún consumidor de seguridad real-.
+
+**Caracterización de compra 0100/0110 ya cubierta por la suite existente** (no se agregan
+tests duplicados): recorrido completo real (TCP+codec+SQLite) en
+`tests/test_integracion_end_to_end.py`; bitmap/RAW/preview en `tests/test_vista_previa.py`;
+variables en `tests/test_variables.py`; escenarios/suites/comparación en `tests/test_web.py`,
+`tests/test_web_suites.py`, `tests/test_comparacion_corridas.py`; RN-1..RN-4 en
+`tests/test_reglas_negocio.py`; seguridad end-to-end en `tests/test_seguridad_auditoria.py`.
+Estos son la línea base contra la que se demuestra que B1 no cambió nada observable.
+
+## 2026-09-13 · B2 — Echo de red (0800/0810), primer segundo flujo real
+
+Autorizado explícitamente avanzar a B2 con un alcance acotado: solo Network Management/Echo
+Test, sin sign-on/sign-off/key exchange/cutover/settlement, sin criptografía, sin tocar
+0200/0400/0420. Rama hija `feature/multi-mti-b2-network-management`, partiendo del HEAD de
+B1 (`715cc25`).
+
+**Decisión de diseño verificada contra código real, no contra el diseño previo de la jornada de
+agentes:** `ClaveOperacion=(mti, código_proceso)` (propuesto en la jornada anterior) sigue sin
+justificarse — `PerfilDeMarca.politica(mti)` ya alcanza para declarar la política de 0800 sin
+ningún eje nuevo. `armar_echo` (nuevo) comparte `_componer_campos_base` con `armar_compra`
+(capas 1+2: defaults + overrides validados), y solo agrega su propia capa 3 estructural
+(DE7/DE11) — ninguna copia el cuerpo de la otra, ninguna función genérica con banderas.
+
+**Perfil 0800:** DE70 (Network Management Information Code, 3 dígitos, estándar ISO 8583
+general) con valor de laboratorio `"301"` documentado explícitamente como convención propia,
+no oficial de ninguna red. DE7/DE11 automáticos (mismo criterio que compra). Obligatorios de
+la respuesta (0810) incluyen DE39 a propósito: el host siempre responde "00" en esta entrega
+(sin concepto de "echo rechazado" todavía), lo que permite reutilizar RN-1/RN-3 sin ningún
+camino especial en `domain/validacion.py`.
+
+**Hallazgo real, no anticipado por el diseño previo — persistencia:** `ejecuciones.card_id`/
+`monto`/`moneda` eran `NOT NULL` con FK a `tarjetas_prueba`; un echo (sin tarjeta) no podía
+persistirse con el mismo esquema sin una migración real. Se implementó
+`_migrar_ejecuciones_card_id_nullable` (reconstrucción de tabla, único camino que SQLite
+permite para quitar `NOT NULL`). Verificada contra fixtures Y contra la base de datos real de
+desarrollo (con 27 ejecuciones acumuladas): un primer intento reventó por una FK de
+`corrida_suite_items.ejecucion_id` no anticipada por ningún test hasta ese momento —
+corregido apagando `PRAGMA foreign_keys` solo durante el rebuild (con commit explícito antes,
+el pragma no se puede cambiar dentro de una transacción abierta), sin borrar ni recrear
+ninguna fila de ninguna tabla.
+
+**Verificación real en navegador** (no solo con la suite): servidor web + `sibu-host-demo`
+levantados de verdad, ejecución de un echo real por TCP contra el host. Encontró 4 bugs reales
+que ningún test anterior cubría (todos con test de regresión agregado después):
+1. `resultado.html` tenía "Isoscopio · solicitud 0100"/"...respuesta 0110" como literales
+   hardcodeados (`detalle.html` ya leía el MTI real; `resultado.html` no).
+2. La nota de "Monto" en el resumen concatenaba `'moneda ' + None` → "moneda None" visible.
+3. `historial.html` mostraba el texto "None" en las celdas Tarjeta/Monto para una ejecución
+   sin `card_id`/`monto`.
+4. El botón "Ejecutar echo" no llevaba `conexion_id` como campo oculto: siempre fallaba con
+   "seleccione una conexión" aunque hubiera una activa.
+
+**Web:** pantalla `/echo` propia (GET/POST/POST ejecutar), deliberadamente separada de "Nueva
+transacción" — un echo no tiene tarjeta, monto, comercio ni opcionales, y entrelazarlo con
+`compra.html`/`_formulario` hubiera significado condicionar buena parte de esa lógica por
+operación. Reutiliza sin duplicar: `filas_constructor`/`contexto_de_vista_previa` (ya
+genéricos), y `resultado.html` completo con `seccion` parametrizada (mismo isoscopio, misma
+comparación Request/Response, mismo Expected vs Actual que compra). El bloque "Reutilizar esta
+transacción" (`_reconstruir_desde_ejecucion`, hoy compra-específico) queda oculto para
+`seccion != "compra"` — deuda documentada para B3, no una funcionalidad rota escondida.
+
+**ARCH-001/SEC-001 (gobierno de sensibilidad):** resuelto PARCIALMENTE. Se agregó
+`profiles/generico.py::METADATOS_SENSIBLES` (declaración explícita por campo, hoy solo DE2) y
+una prueba que falla si un campo declarado sensible ahí faltara en `CAMPOS_SENSIBLES` — la
+metadata gana autoridad real y verificada, sin tocar ni debilitar ninguna guardia existente.
+La migración completa (que los 6+ consumidores de `CAMPOS_SENSIBLES` lean el perfil en vez de
+la constante global) requeriría cambiar la firma de `MensajeIso.enmascarado()` en código de
+seguridad crítico — deuda explícita para B3, documentada en el roadmap.
+
+**Deuda explícita para B3** (no implementado en B2, con justificación técnica, no omisión):
+escenarios/suites con Echo (`ServicioEscenarios`/`Escenario` también asumen `card_id`/`monto`
+obligatorios — requeriría otra migración de esquema del mismo tipo, proporcionalmente tanto
+trabajo como todo B2), `Escenario.a_datos_compra()` código vestigial (sin tocar, fuera de
+alcance), migración completa de sensibilidad perfil-driven.
+
+**Tests:** +26 reales (perfil 0800, builder, vista previa, E2E real TCP+host+codec+SQLite,
+web con 4 regresiones de bugs reales, autoridad de sensibilidad). Suite completa: 1157
+passed, 2 skipped (antes 1131 al cierre de B1). Cero cambio de comportamiento para compra,
+verificado en cada commit.
+
+Trabajo hecho en `feature/multi-mti-b2-network-management` (rama hija de
+`feature/multi-mti-b1-core-generico`), sin merge todavía a ninguna rama superior.

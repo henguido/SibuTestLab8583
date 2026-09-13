@@ -24,6 +24,9 @@ from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
+    OPERACION_COMPRA,
+    OPERACION_COMPRA_FINANCIERA,
+    OPERACION_ECHO,
     EstadoEjecucion,
     FiltroHistorial,
     MensajeInterpretado,
@@ -37,6 +40,34 @@ from ..domain.modelos import (
 VALORES_FILTRO_EVALUACION = frozenset({"", "pass", "fail", "sin_expectativas"})
 
 MONTO_MAXIMO = Decimal("9999999999.99")
+
+#: Rotulo humano por operacion, para el listado de escenarios (B3): la unica
+#: informacion nueva de alto valor que ese listado necesitaba para distinguir
+#: Compra de Echo de red a simple vista, sin rediseñar la pantalla. Un
+#: `operacion` que esta tabla no reconozca (no deberia ocurrir hoy, pero el
+#: modelo lo deja abierto a mas operaciones futuras) cae al propio valor: se
+#: ve un identificador tecnico en vez de una etiqueta amigable, nunca un error.
+ETIQUETAS_OPERACION: dict[str, str] = {
+    OPERACION_COMPRA: "Compra",
+    OPERACION_ECHO: "Echo de red",
+    OPERACION_COMPRA_FINANCIERA: "Compra financiera",
+}
+
+
+def etiqueta_operacion(operacion: str) -> str:
+    return ETIQUETAS_OPERACION.get(operacion, operacion)
+
+
+#: operacion -> ruta de la pantalla de constructor que la carga (B4, punto
+#: 25): la misma tabla que consulta la capa de rutas
+#: (`web.app._config_pantalla_de_operacion`), expuesta aqui para que las
+#: plantillas Jinja -que no importan `web.app`- puedan armar el enlace
+#: "Cargar" sin un `if`/`elif` propio por operacion.
+RUTA_PANTALLA_POR_OPERACION: dict[str, str] = {
+    OPERACION_COMPRA: "/",
+    OPERACION_ECHO: "/echo",
+    OPERACION_COMPRA_FINANCIERA: "/financiera",
+}
 
 
 @dataclass(frozen=True)
@@ -75,6 +106,8 @@ class Seccion:
 #: que un enlace ausente.
 SECCIONES: tuple[Seccion, ...] = (
     Seccion("compra", "/", "Nueva transacción"),
+    Seccion("echo", "/echo", "Echo de red"),
+    Seccion("financiera", "/financiera", "Compra financiera"),
     Seccion("escenarios", "/escenarios", "Escenarios"),
     Seccion("suites", "/suites", "Suites"),
     Seccion("historial", "/historial", "Historial"),
@@ -134,6 +167,8 @@ def ruta_activa(path: str, grupos: Sequence[GrupoNav]) -> str | None:
 GRUPOS_NAV: tuple[GrupoNav, ...] = (
     GrupoNav("Ejecución", (
         Seccion("compra", "/", "Nueva transacción"),
+        Seccion("echo", "/echo", "Echo de red"),
+        Seccion("financiera", "/financiera", "Compra financiera"),
         Seccion("historial", "/historial", "Historial"),
     )),
     GrupoNav("Automatización", (
@@ -713,6 +748,7 @@ def contexto_de_resultado(
     bitmap_respuesta: str | None = None,
     raw_solicitud: tuple[str, int] | None = None,
     raw_respuesta: tuple[str, int] | None = None,
+    seccion: str = "compra",
 ) -> dict:
     """Arma lo que la plantilla de resultado necesita.
 
@@ -721,11 +757,16 @@ def contexto_de_resultado(
 
     Los bitmaps se calculan afuera (`composicion.bitmap_hex`, que si conoce el
     codec) y llegan ya resueltos: esta funcion no importa `adapters.iso8583`.
+
+    `seccion` (B2, 2026-09-12) es que item de navegacion queda marcado -
+    "compra" por defecto para no romper el unico llamador anterior; la ruta
+    de echo pasa "echo"-. Esta funcion no sabe que operacion produjo
+    `resultado`: `filas_de_solicitud`/`filas_de_respuesta`/`evaluacion_de_ejecucion`
+    ya son genericas por campo, no por MTI.
     """
     return {
-        # El resultado es el desenlace de la pantalla de transaccion: la
-        # navegacion sigue marcando esa seccion, no ninguna otra.
-        "seccion": "compra",
+        "seccion": seccion,
+        "url_volver": "/" if seccion == "compra" else f"/{seccion}",
         "resultado": resultado,
         "aviso": aviso_de(resultado),
         "destino": destino,

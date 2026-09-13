@@ -84,14 +84,23 @@ CREATE TABLE IF NOT EXISTS destinos (
 -- expected_json es NULL a proposito -no '{}'-: un escenario sin expectativas
 -- no es lo mismo que uno con una expectativa vacia, y NULL deja esa distincion
 -- explicita en la propia fila en vez de depender de convencion.
+--
+-- card_id/monto son NULLABLE desde B3 (2026-09-13): una operacion sin
+-- tarjeta ni monto (Echo) no tiene forma de rellenarlos con un valor real -
+-- mismo criterio ya aplicado a `ejecuciones` en B2-. conexion_id sigue
+-- NOT NULL: toda operacion, con o sin tarjeta, se transmite a un destino.
+-- operacion (nueva) es la intencion funcional (ver domain.modelos.
+-- OPERACION_POR_MTI), redundante con `mti` hoy -exactamente un MTI por
+-- operacion-, pero ya lista para cuando un MTI futuro represente mas de una.
 CREATE TABLE IF NOT EXISTS escenarios (
     escenario_id   TEXT    PRIMARY KEY,
     nombre         TEXT    NOT NULL,
     perfil         TEXT    NOT NULL,
     mti            TEXT    NOT NULL DEFAULT '0100',
-    card_id        TEXT    NOT NULL REFERENCES tarjetas_prueba(card_id),
+    operacion      TEXT    NOT NULL DEFAULT 'purchase',
+    card_id        TEXT    REFERENCES tarjetas_prueba(card_id),
     conexion_id    TEXT    NOT NULL REFERENCES destinos(destino_id),
-    monto          TEXT    NOT NULL,
+    monto          TEXT,
     campos_json    TEXT    NOT NULL DEFAULT '{}',
     expected_json  TEXT,
     activo         INTEGER NOT NULL DEFAULT 1,
@@ -103,14 +112,23 @@ CREATE INDEX IF NOT EXISTS idx_escenarios_nombre ON escenarios(nombre);
 
 -- Sin columna de PAN a proposito: una ejecucion referencia la tarjeta por
 -- card_id y guarda los mensajes ya enmascarados.
+--
+-- card_id/monto/moneda son NULLABLE desde B2 (2026-09-12): una operacion sin
+-- tarjeta ni monto (ej. 0800 Network Management/Echo) no tiene forma de
+-- rellenarlos con un valor real, y un sentinel inventado ("", 0) seria un dato
+-- falso en el historial. NULL es honesto: "no aplica", no "vacio". La FK hacia
+-- tarjetas_prueba se mantiene -NULL la deja sin efecto automaticamente, es
+-- comportamiento estandar de SQL, no una relajacion de la garantia para las
+-- filas que SI tienen tarjeta-. Ver `_migrar_ejecuciones_card_id_nullable`
+-- para el camino de una base existente creada antes de este cambio.
 CREATE TABLE IF NOT EXISTS ejecuciones (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     creada_en               TEXT    NOT NULL,
-    card_id                 TEXT    NOT NULL REFERENCES tarjetas_prueba(card_id),
+    card_id                 TEXT    REFERENCES tarjetas_prueba(card_id),
     mti_solicitud           TEXT    NOT NULL,
     mti_respuesta           TEXT,
-    monto                   TEXT    NOT NULL,
-    moneda                  TEXT    NOT NULL,
+    monto                   TEXT,
+    moneda                  TEXT,
     stan                    TEXT    NOT NULL,
     destino_host            TEXT,
     destino_puerto          INTEGER,
@@ -331,9 +349,13 @@ COLUMNAS_AGREGADAS_EJECUCIONES_MOTIVO: tuple[tuple[str, str], ...] = (
     ("motivo_detalle", "TEXT"),
 )
 
-#: Lo mismo para `escenarios`: `expected_json` es posterior (Bloque 3).
+#: Lo mismo para `escenarios`: `expected_json` es posterior (Bloque 3);
+#: `operacion` es posterior (B3, 2026-09-13) -default 'purchase' porque toda
+#: fila anterior a B3 es, por definicion, una compra: es el unico MTI que
+#: `escenarios.py` sabia crear antes de B3-.
 COLUMNAS_AGREGADAS_ESCENARIOS: tuple[tuple[str, str], ...] = (
     ("expected_json", "TEXT"),
+    ("operacion", "TEXT NOT NULL DEFAULT 'purchase'"),
 )
 
 #: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
@@ -392,6 +414,178 @@ async def _migrar_ejecuciones(conexion: aiosqlite.Connection) -> tuple[str, ...]
     return await _migrar(conexion, "ejecuciones", COLUMNAS_AGREGADAS)
 
 
+#: Columnas de `ejecuciones`, en el orden exacto del DDL -usado para copiar
+#: fila por fila durante el rebuild de `_migrar_ejecuciones_card_id_nullable`,
+#: nunca para adivinar el orden con `SELECT *`.
+_COLUMNAS_EJECUCIONES = (
+    "id", "creada_en", "card_id", "mti_solicitud", "mti_respuesta", "monto",
+    "moneda", "stan", "destino_host", "destino_puerto", "estado",
+    "codigo_respuesta", "solicitud_enmascarada", "respuesta_enmascarada",
+    "solicitud_json", "respuesta_json", "latencia_ms", "escenario_id",
+    "escenario_nombre", "evaluacion_estado", "evaluacion_json", "motivo_detalle",
+)
+
+
+async def _migrar_ejecuciones_card_id_nullable(conexion: aiosqlite.Connection) -> bool:
+    """Relaja `card_id`/`monto`/`moneda` de `NOT NULL` a `NULL` en una base
+    creada ANTES de B2 (2026-09-12).
+
+    SQLite no admite `ALTER TABLE ... ALTER COLUMN` para quitar `NOT NULL`: el
+    unico camino estandar es reconstruir la tabla (crear con el esquema
+    nuevo, copiar todas las filas explicitamente por nombre de columna,
+    borrar la vieja, renombrar la nueva) - el mismo patron documentado en la
+    propia documentacion de SQLite para este tipo de cambio. Es **aditivo y
+    seguro**: solo AMPLIA que valores acepta la columna, ninguna fila
+    existente cambia de valor, y el DDL de mas arriba ya crea la tabla nueva
+    con el esquema correcto -esta funcion solo corre para una base existente
+    que todavia tenga la restriccion vieja-.
+
+    Idempotente por diseno: si `card_id` ya admite `NULL` (base nueva, o ya
+    migrada), no hace nada y devuelve `False`. El `DROP TABLE IF EXISTS
+    ejecuciones_nueva_b2` inicial existe porque un intento anterior
+    interrumpido a mitad de camino (verificado en la practica: una version
+    previa de esta funcion fallaba por la FK de abajo, dejando la tabla
+    temporal creada pero `ejecuciones` intacta) no debe bloquear el reintento
+    con "the table already exists" -limpiar el residuo es seguro porque esa
+    tabla temporal nunca es la fuente de verdad mientras no se haya
+    renombrado.
+
+    `corrida_suite_items.ejecucion_id` referencia `ejecuciones(id)`: mientras
+    existan filas de suites ya corridas, `DROP TABLE ejecuciones` viola esa
+    FK si `PRAGMA foreign_keys` esta ON durante el rebuild -aunque la tabla
+    reaparezca con el mismo nombre e ids un instante despues-. Se apaga el
+    chequeo solo durante esta operacion (nunca se borra ni se recrea ninguna
+    fila de otra tabla, asi que no hay ninguna referencia real que se
+    rompa) y se restaura antes de devolver el control. `PRAGMA foreign_keys`
+    no se puede cambiar dentro de una transaccion abierta, por eso el commit
+    explicito antes de tocarlo.
+    """
+    async with conexion.execute("PRAGMA table_info(ejecuciones)") as cursor:
+        columnas_info = await cursor.fetchall()
+    # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
+    notnull_card_id = next((fila[3] for fila in columnas_info if fila[1] == "card_id"), None)
+    if not notnull_card_id:
+        return False  # ya nullable (base nueva o ya migrada): nada que hacer
+
+    # Una base MUY anterior (de antes de que existieran mti_respuesta,
+    # destino_host/puerto, codigo_respuesta, etc.) puede no tener todavia
+    # alguna de estas columnas -esas migraciones nunca las agregaron porque
+    # nunca hizo falta para lo que probaban-. Copiar solo lo que existe de
+    # verdad evita "no such column"; lo que falte queda NULL en la tabla
+    # nueva, exactamente como quedaria si nunca se hubiera escrito.
+    existentes = {fila[1] for fila in columnas_info}
+    columnas_a_copiar = tuple(c for c in _COLUMNAS_EJECUCIONES if c in existentes)
+    columnas_sql = ", ".join(columnas_a_copiar)
+    await conexion.commit()
+    await conexion.execute("PRAGMA foreign_keys = OFF")
+    await conexion.executescript(
+        f"""
+        DROP TABLE IF EXISTS ejecuciones_nueva_b2;
+        CREATE TABLE ejecuciones_nueva_b2 (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            creada_en               TEXT    NOT NULL,
+            card_id                 TEXT    REFERENCES tarjetas_prueba(card_id),
+            mti_solicitud           TEXT    NOT NULL,
+            mti_respuesta           TEXT,
+            monto                   TEXT,
+            moneda                  TEXT,
+            stan                    TEXT    NOT NULL,
+            destino_host            TEXT,
+            destino_puerto          INTEGER,
+            estado                  TEXT    NOT NULL,
+            codigo_respuesta        TEXT,
+            solicitud_enmascarada   TEXT,
+            respuesta_enmascarada   TEXT,
+            solicitud_json          TEXT,
+            respuesta_json          TEXT,
+            latencia_ms             INTEGER,
+            escenario_id            TEXT    REFERENCES escenarios(escenario_id),
+            escenario_nombre        TEXT,
+            evaluacion_estado       TEXT,
+            evaluacion_json         TEXT,
+            motivo_detalle          TEXT
+        );
+        INSERT INTO ejecuciones_nueva_b2 ({columnas_sql})
+            SELECT {columnas_sql} FROM ejecuciones;
+        DROP TABLE ejecuciones;
+        ALTER TABLE ejecuciones_nueva_b2 RENAME TO ejecuciones;
+        CREATE INDEX IF NOT EXISTS idx_ejecuciones_creada_en ON ejecuciones(creada_en);
+        CREATE INDEX IF NOT EXISTS idx_ejecuciones_card_id   ON ejecuciones(card_id);
+        """
+    )
+    await conexion.commit()
+    await conexion.execute("PRAGMA foreign_keys = ON")
+    return True
+
+
+#: Columnas de `escenarios`, en el orden exacto del DDL -mismo proposito que
+#: `_COLUMNAS_EJECUCIONES`: copiar por nombre explicito, nunca con `SELECT *`.
+_COLUMNAS_ESCENARIOS = (
+    "escenario_id", "nombre", "perfil", "mti", "operacion", "card_id",
+    "conexion_id", "monto", "campos_json", "expected_json", "activo",
+    "creado_en", "actualizado_en",
+)
+
+
+async def _migrar_escenarios_card_id_nullable(conexion: aiosqlite.Connection) -> bool:
+    """Relaja `escenarios.card_id`/`monto` de `NOT NULL` a `NULL` en una base
+    creada ANTES de B3 (2026-09-13) -mismo patron y mismo motivo que
+    `_migrar_ejecuciones_card_id_nullable` (B2): una operacion sin tarjeta ni
+    monto (Echo) no puede guardarse como escenario con el esquema viejo.
+
+    Debe correr DESPUES de que `operacion` ya exista (agregada por
+    `COLUMNAS_AGREGADAS_ESCENARIOS` en `_migrar`, antes de esta llamada en
+    `inicializar`), por la misma razon que `_migrar_ejecuciones_card_id_nullable`
+    corre al final: copiar por nombre de columna exige que la columna ya
+    exista.
+
+    `ejecuciones.escenario_id` y `suite_escenarios.escenario_id` referencian
+    `escenarios(escenario_id)`: se apaga `PRAGMA foreign_keys` durante el
+    rebuild por el mismo motivo documentado ahi (dropear la tabla mientras
+    esas filas la referencian violaria la FK aunque reaparezca con el mismo
+    nombre e ids un instante despues).
+    """
+    async with conexion.execute("PRAGMA table_info(escenarios)") as cursor:
+        columnas_info = await cursor.fetchall()
+    notnull_card_id = next((fila[3] for fila in columnas_info if fila[1] == "card_id"), None)
+    if not notnull_card_id:
+        return False  # ya nullable (base nueva o ya migrada): nada que hacer
+
+    existentes = {fila[1] for fila in columnas_info}
+    columnas_a_copiar = tuple(c for c in _COLUMNAS_ESCENARIOS if c in existentes)
+    columnas_sql = ", ".join(columnas_a_copiar)
+    await conexion.commit()
+    await conexion.execute("PRAGMA foreign_keys = OFF")
+    await conexion.executescript(
+        f"""
+        DROP TABLE IF EXISTS escenarios_nueva_b3;
+        CREATE TABLE escenarios_nueva_b3 (
+            escenario_id   TEXT    PRIMARY KEY,
+            nombre         TEXT    NOT NULL,
+            perfil         TEXT    NOT NULL,
+            mti            TEXT    NOT NULL DEFAULT '0100',
+            operacion      TEXT    NOT NULL DEFAULT 'purchase',
+            card_id        TEXT    REFERENCES tarjetas_prueba(card_id),
+            conexion_id    TEXT    NOT NULL REFERENCES destinos(destino_id),
+            monto          TEXT,
+            campos_json    TEXT    NOT NULL DEFAULT '{{}}',
+            expected_json  TEXT,
+            activo         INTEGER NOT NULL DEFAULT 1,
+            creado_en      TEXT    NOT NULL,
+            actualizado_en TEXT    NOT NULL
+        );
+        INSERT INTO escenarios_nueva_b3 ({columnas_sql})
+            SELECT {columnas_sql} FROM escenarios;
+        DROP TABLE escenarios;
+        ALTER TABLE escenarios_nueva_b3 RENAME TO escenarios;
+        CREATE INDEX IF NOT EXISTS idx_escenarios_nombre ON escenarios(nombre);
+        """
+    )
+    await conexion.commit()
+    await conexion.execute("PRAGMA foreign_keys = ON")
+    return True
+
+
 async def _sembrar_destinos(conexion: aiosqlite.Connection) -> None:
     await conexion.execute(
         "INSERT OR IGNORE INTO destinos (destino_id, nombre, host, puerto, activo, creado_en)"
@@ -425,6 +619,13 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await _migrar(conexion, "escenarios", COLUMNAS_AGREGADAS_ESCENARIOS)
         await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
         await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)
+        # Corre AL FINAL de las migraciones de columnas: reconstruye la tabla
+        # completa (ver docstring), asi que necesita que todas las columnas
+        # modernas ya existan -si una base historica todavia no tenia
+        # mti_respuesta/escenario_id/etc., esas migraciones ya corrieron arriba.
+        await _migrar_ejecuciones_card_id_nullable(conexion)
+        # Mismo motivo: necesita que "operacion" ya exista (linea 619).
+        await _migrar_escenarios_card_id_nullable(conexion)
         await _sembrar_secuencias(conexion)
         await _sembrar_catalogo(conexion, CATALOGO_GENERICO)
         await _sembrar_destinos(conexion)

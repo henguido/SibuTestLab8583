@@ -60,7 +60,7 @@ from decimal import Decimal
 from typing import Mapping
 
 from .armado import formatear_monto
-from .errores import ExpresionMalformada, VariableDesconocida
+from .errores import ExpresionMalformada, VariableDesconocida, VariableNoDisponible
 
 _PATRON_EXPRESION = re.compile(r"^\{\{\s*([a-z][a-z0-9_]*)\s*\}\}$")
 
@@ -71,11 +71,16 @@ class ContextoResolucion:
     proposito: agregar una variable nueva exige agregar un campo aqui y su
     resolutor en `_VARIABLES_BUILTIN`, nunca un acceso generico "leer
     cualquier atributo".
+
+    `monto` es `None` para una operacion sin importe (B2, 2026-09-12: echo
+    de red) -a diferencia de `stan`/`momento`, que toda operacion tiene sin
+    excepcion-. `{{amount}}` revienta con `VariableNoDisponible` si se usa
+    donde no hay monto, en vez de resolver a un valor inventado.
     """
 
-    monto: Decimal
     stan: str
     momento: datetime
+    monto: Decimal | None = None
 
 
 #: Variables cuyo valor depende del STAN o del momento de ESTA ejecucion
@@ -87,8 +92,16 @@ VARIABLES_NO_REPRODUCIBLES = frozenset(
     {"stan", "transmission_datetime", "local_time", "local_date"}
 )
 
+def _amount(ctx: ContextoResolucion) -> str:
+    if ctx.monto is None:
+        raise VariableNoDisponible(
+            "la variable 'amount' no está disponible: esta operación no tiene monto"
+        )
+    return formatear_monto(ctx.monto)
+
+
 _VARIABLES_BUILTIN = {
-    "amount": lambda ctx: formatear_monto(ctx.monto),
+    "amount": _amount,
     "stan": lambda ctx: ctx.stan,
     "transmission_datetime": lambda ctx: ctx.momento.strftime("%m%d%H%M%S"),
     "local_time": lambda ctx: ctx.momento.strftime("%H%M%S"),

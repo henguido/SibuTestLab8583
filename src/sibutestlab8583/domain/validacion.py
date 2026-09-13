@@ -16,7 +16,7 @@ Reparto de las reglas:
 from __future__ import annotations
 
 from .catalogo import CatalogoDeRespuestas
-from .modelos import CAMPOS_SENSIBLES, EstadoEjecucion, MensajeIso, ResultadoValidacion
+from .modelos import EstadoEjecucion, MensajeIso, ResultadoValidacion
 
 #: Campo ISO que transporta el codigo de respuesta. Lo interpreta el catalogo.
 CAMPO_CODIGO_RESPUESTA = "39"
@@ -53,12 +53,16 @@ def campos_de_correlacion(perfil, mti_respuesta: str) -> frozenset[str]:
 
     Se derivan del perfil, no se inventan: son los obligatorios de la respuesta
     menos el codigo de respuesta, que por definicion lo origina el autorizador y
-    no viaja en la solicitud, y menos los campos sensibles (mismo criterio que
-    `domain/expectativas.py::campos_permitidos_expectativa`): su valor nunca
-    debe interpolarse en un motivo de texto libre, que se persiste sin pasar
-    por `.enmascarado()` -ver `_discrepancias_de_correlacion`-.
+    no viaja en la solicitud, y menos los campos sensibles -`perfil.es_sensible()`,
+    mismo criterio que `domain/expectativas.py::campos_permitidos_expectativa`,
+    B3 2026-09-13-: su valor nunca debe interpolarse en un motivo de texto
+    libre, que se persiste sin pasar por `.enmascarado()` -ver
+    `_discrepancias_de_correlacion`-.
     """
-    return perfil.obligatorios(mti_respuesta) - {CAMPO_CODIGO_RESPUESTA} - CAMPOS_SENSIBLES
+    return frozenset(
+        n for n in perfil.obligatorios(mti_respuesta)
+        if n != CAMPO_CODIGO_RESPUESTA and not perfil.es_sensible(n)
+    )
 
 
 def evaluar_respuesta(
@@ -93,7 +97,7 @@ def _discrepancias_de_correlacion(
     correlacion vuelvan identicos.
     """
     motivos: list[str] = []
-    mti_esperado = _mti_de_respuesta(envio.mti)
+    mti_esperado = mti_de_respuesta(envio.mti)
 
     if respuesta.mti != mti_esperado:
         motivos.append(f"MTI inesperado: se esperaba {mti_esperado} y llegó {respuesta.mti}")
@@ -138,6 +142,17 @@ def _interpretar_codigo(
     return EstadoEjecucion.RECHAZADA, (f"{codigo}: {catalogo.descripcion(codigo)}",)
 
 
-def _mti_de_respuesta(mti_solicitud: str) -> str:
-    """En ISO 8583 la respuesta a un 0x00 es su 0x10 correspondiente."""
+def mti_de_respuesta(mti_solicitud: str) -> str:
+    """En ISO 8583 la respuesta a un 0x00 es su 0x10 correspondiente.
+
+    Publica (sin guion bajo) a partir de B1: ademas de usarla este modulo
+    para RN-3, `application/orquestador.py` la usa para derivar el MTI de
+    respuesta esperado en vez de asumir el literal de compra -es la misma
+    regla generica de ISO 8583, no una segunda definicion-. Verificada
+    genericamente para 0200/0210, 0400/0410 y 0800/0810 ademas de 0100/0110
+    (jornada de agentes, 2026-09-12): el tercer digito 0->1 es correcto para
+    cualquier MTI de solicitud/respuesta sincrono; los reversos con
+    correlacion cruzada (0420/0430) son un caso distinto, fuera de esta
+    funcion.
+    """
     return mti_solicitud[:2] + "1" + mti_solicitud[3:]
