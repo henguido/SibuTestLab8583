@@ -564,7 +564,7 @@ bug real: el rebuild legado `_migrar_ejecuciones_card_id_nullable` (para bases a
 tenía una lista de columnas y un DDL de tabla temporal hardcodeados que no incluían la columna
 nueva, así que en una base suficientemente vieja el rebuild borraba silenciosamente lo que la
 migración de B6 acababa de agregar — corregido antes de integrar. Aplicada además contra la base
-real de desarrollo (no solo fixtures): backup `sibutestlab8583.db.bak-preB6-20260913140615`,
+real de desarrollo (no solo fixtures): backup `sibutestlab8583.db.bak-preB6-20260913-140615`,
 62 filas antes y después, `PRAGMA foreign_key_check` vacío, migración re-ejecutada una segunda vez
 para confirmar idempotencia.
 

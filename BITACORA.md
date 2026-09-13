@@ -2808,7 +2808,7 @@ qué es seguro heredar de una ejecución) antes de diseñar nada. Rama
 **Decisión central:** `Ejecucion.ejecucion_origen_id` (autorreferencial, nullable, 1→N
 derivadas) en vez de correlacionar por STAN/RRN — el propio RN-3 ya demuestra que esos campos no
 son una identidad estable. Migración aditiva, aplicada tanto a fixtures como a la base real de
-desarrollo (backup `sibutestlab8583.db.bak-preB6-20260913140615`, 62 filas antes/después,
+desarrollo (backup `sibutestlab8583.db.bak-preB6-20260913-140615`, 62 filas antes/después,
 `PRAGMA foreign_key_check` vacío, re-ejecutada para confirmar idempotencia). Se encontró y
 corrigió un bug real: el rebuild legado de B2 (`_migrar_ejecuciones_card_id_nullable`) tenía un
 DDL hardcodeado que, contra una base suficientemente vieja, borraba silenciosamente la columna
