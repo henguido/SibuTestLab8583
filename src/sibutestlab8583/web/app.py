@@ -18,6 +18,7 @@ servidor valida todo lo que llega, exista o no JavaScript en el cliente.
 
 from __future__ import annotations
 
+import functools
 import json
 from pathlib import Path
 from typing import Callable
@@ -86,6 +87,13 @@ from ..domain.modelos import (
     MensajeIso,
 )
 from . import presentacion
+from .operaciones import (
+    OPERACIONES_CON_TARJETA,
+    OPERACION_AUTORIZACION,
+    OPERACION_FINANCIERA,
+    OperacionIso,
+    operacion_por_mti,
+)
 
 RAIZ_WEB = Path(__file__).parent
 PLANTILLAS = Jinja2Templates(directory=str(RAIZ_WEB / "plantillas"))
@@ -121,8 +129,8 @@ async def pantalla_compra(
     request: Request,
     # Query, no Form: son enlaces sueltos (historial, escenarios), no el envio
     # de un formulario. Cambiar de conexion sin perder lo escrito usa un
-    # mecanismo aparte -ver `cambiar_conexion`, POST- precisamente para que
-    # los valores del constructor no viajen en la URL.
+    # mecanismo aparte -ver `_cambiar_conexion_operacion`, POST- precisamente
+    # para que los valores del constructor no viajen en la URL.
     conexion_id: str | None = Query(None),
     escenario_id: str | None = Query(None),
     # Presente cuando se llega desde "Editar y volver a ejecutar" o "Guardar
@@ -133,26 +141,9 @@ async def pantalla_compra(
     ejecucion_id: str | None = Query(None),
     composicion: Composicion = Depends(obtener_composicion),
 ):
-    try:
-        enviado, conexion_id_resuelta, error_carga = await _resolver_reutilizacion_de_ejecucion(
-            composicion, ejecucion_id, escenario_id
-        )
-    except _EjecucionNoReutilizable:
-        return await _formulario(
-            request, composicion,
-            error="La ejecución que se quiere reutilizar no existe o ya no está disponible.",
-            estado_http=404,
-        )
-    if conexion_id_resuelta is not None:
-        conexion_id = conexion_id_resuelta
-
-    return await _formulario(
-        request,
-        composicion,
-        conexion_id=conexion_id,
-        escenario_id=escenario_id,
-        enviado=enviado,
-        error=error_carga,
+    return await _pantalla_operacion(
+        request, composicion, OPERACION_AUTORIZACION,
+        conexion_id=conexion_id, escenario_id=escenario_id, ejecucion_id=ejecucion_id,
     )
 
 
@@ -164,65 +155,11 @@ async def cambiar_conexion(
     """Cambia la conexion elegida en el constructor SIN perder lo que ya
     estaba escrito -tarjeta, monto, campos editables, expectativas, nombre
     del escenario- y SIN ejecutar ninguna transaccion ni guardar ningun
-    escenario: solo vuelve a renderizar `compra.html` con el estado enviado y
-    la conexion nueva. Es el destino del boton "Cambiar" de la barra de
-    conexion, que vive dentro del mismo `<form>` del constructor con
-    `formaction="/"` (metodo POST, heredado del formulario) y
-    `formnovalidate` -asi un `monto` vacio o invalido (campo `required`) no
-    bloquea el cambio de conexion, que es justamente el proposito de este
-    mecanismo-.
-
-    POST y no GET a proposito: por-diseno un envio POST no queda en la URL
-    ni en el historial del navegador, y los frameworks de servidor (incluido
-    Uvicorn) no registran el cuerpo de la peticion en el log de acceso -solo
-    metodo y ruta-. Antes de este cambio, el mismo mecanismo iba por GET con
-    `formmethod="get"`, y el monto/los campos/el nombre del escenario
-    quedaban en la querystring, visibles en el historial del navegador y en
-    los logs de acceso por defecto del servidor (nunca el PAN: los unicos
-    campos que se leen son los editables segun el perfil -3, 22, 37, 41,
-    49-, estructuralmente excluidos de ser sensibles). Este endpoint corrige
-    esa exposicion sin introducir sesion ni almacenamiento en el navegador:
-    el propio POST, mas `_formulario`, alcanzan.
-
-    `ir_a_conexion` es el nombre propio del boton -deliberadamente distinto
-    de `conexion_id`, el campo oculto del mismo formulario que lleva el
-    valor VIEJO- para que el destino real de la navegacion sea siempre el
-    que la persona eligio, nunca el que ya estaba.
+    escenario. Ver `_cambiar_conexion_operacion` (comun a cualquier
+    operacion con tarjeta, B5) para el detalle del mecanismo POST/"+ Agregar
+    campo"/"Quitar".
     """
-    formulario_bruto = await request.form()
-    enviado = _leer_enviado(formulario_bruto, composicion.perfil)
-    ir_a_conexion = (formulario_bruto.get("ir_a_conexion", "") or "").strip() or None
-    escenario_id = (formulario_bruto.get("escenario_id", "") or "").strip() or None
-
-    # "+ Agregar campo"/"Quitar" tambien resuelven por este mismo POST -mismo
-    # criterio que "Cambiar conexion": todo el formulario viaja en el cuerpo,
-    # se reconstruye la pantalla con el estado actualizado, y no se ejecuta
-    # ninguna transaccion. Solo tocan que filas se MUESTRAN; el perfil sigue
-    # siendo quien decide que numeros son validos -ver `_leer_opcionales_activos`-.
-    politica = composicion.perfil.politica(MTI_COMPRA)
-    opcionales_activos = set(enviado["opcionales_activos"])
-    # `candidato_opcional` (el <select>) viaja siempre que se somete el
-    # formulario, pulse el usuario el boton que pulse: por eso el disparador
-    # real es la presencia del propio boton "agregar_opcional" -solo aporta
-    # su name=value cuando ES el que se pulso-, nunca el valor del select por
-    # si solo.
-    if "agregar_opcional" in formulario_bruto:
-        candidato = (formulario_bruto.get("candidato_opcional", "") or "").strip()
-        if candidato in politica.opcionales:
-            opcionales_activos.add(candidato)
-    quitar = (formulario_bruto.get("quitar_opcional", "") or "").strip()
-    if quitar:
-        opcionales_activos.discard(quitar)
-        enviado["campos_manuales"].pop(quitar, None)
-    enviado["opcionales_activos"] = frozenset(opcionales_activos)
-
-    return await _formulario(
-        request,
-        composicion,
-        conexion_id=ir_a_conexion,
-        escenario_id=escenario_id,
-        enviado=enviado,
-    )
+    return await _cambiar_conexion_operacion(request, composicion, OPERACION_AUTORIZACION)
 
 
 @enrutador.post("/compra", response_class=HTMLResponse)
@@ -242,92 +179,9 @@ async def ejecutar_compra(
     escenario_id: str = Form(""),
     composicion: Composicion = Depends(obtener_composicion),
 ):
-    # Los campos manuales, las expectativas y el nombre del escenario se leen
-    # del mismo formulario -se hayan guardado o no en ningun escenario-:
-    # "Ejecutar transacción" siempre evalua contra lo que esta escrito en la
-    # pantalla en ese momento, igual que ya hace con card_id/monto -no contra
-    # lo ultimo guardado-. Se calculan antes del try/except para que, si algo
-    # falla, el formulario se vuelva a mostrar con lo que la persona escribio,
-    # no en blanco.
-    formulario_bruto = await request.form()
-    enviado = _leer_enviado(formulario_bruto, composicion.perfil)
-    campos_manuales = enviado["campos_manuales"]
-    expectativas = enviado["expectativas"]
-
-    # --- entrada del usuario: errores controlados, nunca un 500 ---
-    try:
-        datos, destino, tiempo_limite = await _interpretar_formulario(
-            composicion, card_id, monto, conexion_id, campos_manuales
-        )
-        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil)
-        if expectativas is not None:
-            validar_expectativas(expectativas, composicion.perfil, MTI_RESPUESTA_COMPRA)
-    except ValueError as error:
-        return await _formulario(
-            request, composicion, escenario_id=escenario_id or None,
-            error=str(error), enviado=enviado, estado_http=400,
-        )
-
-    # El escenario asociado (si lo hay) se resuelve aqui, no antes: si ya no
-    # existe, la ejecucion sigue adelante sin trazabilidad en vez de fallar
-    # por una referencia que quedo vieja. Si esta inactivo, "no se reejecuta"
-    # tambien aplica cuando la ejecucion pasa por el constructor, no solo en
-    # la reejecucion directa.
-    id_escenario_asociado: str | None = None
-    nombre_escenario_asociado: str | None = None
-    if escenario_id:
-        escenario_asociado = await composicion.administracion_escenarios.obtener(escenario_id)
-        if escenario_asociado is not None:
-            if not escenario_asociado.activo:
-                return await _formulario(
-                    request, composicion, escenario_id=escenario_id,
-                    error="Este escenario está inactivo. Reactívelo para poder ejecutarlo, "
-                    "o guarde una copia.",
-                    enviado=enviado, estado_http=400,
-                )
-            id_escenario_asociado = escenario_asociado.escenario_id
-            nombre_escenario_asociado = escenario_asociado.nombre
-
-    # --- el recorrido lo hace el orquestador, no esta capa ---
-    try:
-        orquestador = await composicion.orquestador(destino, tiempo_limite=tiempo_limite)
-        resultado = await orquestador.ejecutar_compra(
-            datos, escenario_id=id_escenario_asociado, escenario_nombre=nombre_escenario_asociado,
-            expectativas=expectativas,
-        )
-    except TarjetaDesconocida:
-        return await _formulario(
-            request,
-            composicion,
-            escenario_id=escenario_id or None,
-            error=f"No existe la tarjeta {card_id!r} en el catálogo, o está inactiva.",
-            enviado=enviado,
-            estado_http=400,
-        )
-    except ErrorDelSimulador as error:
-        # Fallo de infraestructura: no es un rechazo del autorizador y no debe
-        # presentarse como tal. Tampoco se muestra la excepcion.
-        return await _formulario(
-            request, composicion, escenario_id=escenario_id or None,
-            aviso=presentacion.aviso_de_error(error), enviado=enviado,
-        )
-
-    return PLANTILLAS.TemplateResponse(
-        request=request,
-        name="resultado.html",
-        context=presentacion.contexto_de_resultado(
-            resultado, destino, composicion.descripciones_de_campos,
-            bitmap_solicitud=composicion.bitmap_hex(resultado.solicitud),
-            bitmap_respuesta=(
-                composicion.bitmap_hex(resultado.respuesta.como_mensaje())
-                if resultado.respuesta else None
-            ),
-            raw_solicitud=composicion.raw_hex_seguro(resultado.solicitud),
-            raw_respuesta=(
-                composicion.raw_hex_seguro(resultado.respuesta.como_mensaje())
-                if resultado.respuesta else None
-            ),
-        ),
+    return await _ejecutar_operacion(
+        request, composicion, OPERACION_AUTORIZACION,
+        card_id=card_id, monto=monto, conexion_id=conexion_id, escenario_id=escenario_id,
     )
 
 
@@ -616,24 +470,16 @@ async def _formulario_echo(
 
 # ------------------------------------------------- Compra financiera (B4) --
 #
-# Tercera operacion real. Pantalla propia -no reutiliza `compra.html`/
-# `_formulario`- porque unificar ambas pantallas bajo una sola gobernada por
-# operacion/perfil (punto 16 de B4) hubiera significado tocar una plantilla
-# grande y ya muy probada (443 lineas, "+ Agregar campo" incluido) para un
-# beneficio que hoy no esta claramente medido: se DOCUMENTA como deuda para
-# B5 (ver reporte de cierre de B4, seccion L), no se descarta. Lo que SI se
-# comparte, sin excepcion, es la capa de aplicacion: `_leer_enviado`/
-# `_leer_opcionales_activos`/`_leer_expectativas` (generalizadas con `mti`/
-# `mti_respuesta` en vez de duplicarse), `presentacion.filas_constructor`,
-# `presentacion.contexto_de_vista_previa`, `presentacion.filas_expectativas`,
-# `ServicioVistaPreviaCompraFinanciera` (mismo builder real que la ejecucion).
-#
-# DEUDA EXPLICITA de esta pantalla (documentada, no un olvido): a diferencia
-# de compra.html, esta plantilla NO ofrece "+ Agregar campo" para los
-# opcionales de la politica 0200 (18/25/32/42/43) -se pueden guardar via
-# escenario/CLI/suite iaual, solo no hay boton en esta pantalla para agregarlos
-# a mano-. Justificado por el punto 16: una plantilla pequena temporal es
-# aceptable mientras no sea rentable un rediseno mayor.
+# Tercera operacion real, y la que motivo B5: `/` y `/financiera` compartian
+# ~90% del mismo formulario (tarjeta, monto, conexion, preview, expectativas,
+# guardar escenario), con solo el MTI/textos/rutas de ejecucion realmente
+# distintos. B5 extrae eso a un unico renderizador (`_pantalla_operacion`/
+# `_cambiar_conexion_operacion`/`_ejecutar_operacion`, mas abajo) parametrizado
+# por `OperacionIso` (web/operaciones.py) y una unica plantilla
+# (`editor_transaccion.html`) -las rutas siguen existiendo, cada una solo le
+# pasa SU `OperacionIso` al renderizador comun. Agregar una tercera operacion
+# con tarjeta es agregar una entrada a `OPERACIONES_CON_TARJETA`, no copiar
+# esta seccion.
 
 
 @enrutador.get("/financiera", response_class=HTMLResponse)
@@ -645,21 +491,9 @@ async def pantalla_compra_financiera(
     ejecucion_id: str | None = Query(None),
     composicion: Composicion = Depends(obtener_composicion),
 ):
-    try:
-        enviado, conexion_id_resuelta, error_carga = await _resolver_reutilizacion_de_ejecucion(
-            composicion, ejecucion_id, escenario_id
-        )
-    except _EjecucionNoReutilizable:
-        return await _formulario_financiera(
-            request, composicion,
-            error="La ejecución que se quiere reutilizar no existe o ya no está disponible.",
-            estado_http=404,
-        )
-    if conexion_id_resuelta is not None:
-        conexion_id = conexion_id_resuelta
-    return await _formulario_financiera(
-        request, composicion, conexion_id=conexion_id, escenario_id=escenario_id,
-        enviado=enviado, error=error_carga,
+    return await _pantalla_operacion(
+        request, composicion, OPERACION_FINANCIERA,
+        conexion_id=conexion_id, escenario_id=escenario_id, ejecucion_id=ejecucion_id,
     )
 
 
@@ -669,17 +503,8 @@ async def cambiar_conexion_financiera(
     composicion: Composicion = Depends(obtener_composicion),
 ):
     """Cambia la conexion o actualiza la vista previa sin ejecutar nada -mismo
-    mecanismo que `cambiar_conexion` para compra."""
-    formulario_bruto = await request.form()
-    ir_a_conexion = (formulario_bruto.get("ir_a_conexion", "") or "").strip() or None
-    escenario_id = (formulario_bruto.get("escenario_id", "") or "").strip() or None
-    enviado = _leer_enviado(
-        formulario_bruto, composicion.perfil,
-        mti=MTI_COMPRA_FINANCIERA, mti_respuesta=MTI_RESPUESTA_COMPRA_FINANCIERA,
-    )
-    return await _formulario_financiera(
-        request, composicion, conexion_id=ir_a_conexion, escenario_id=escenario_id, enviado=enviado,
-    )
+    mecanismo que `cambiar_conexion` para compra (`_cambiar_conexion_operacion`)."""
+    return await _cambiar_conexion_operacion(request, composicion, OPERACION_FINANCIERA)
 
 
 @enrutador.post("/financiera/ejecutar", response_class=HTMLResponse)
@@ -691,39 +516,140 @@ async def ejecutar_compra_financiera(
     escenario_id: str = Form(""),
     composicion: Composicion = Depends(obtener_composicion),
 ):
+    return await _ejecutar_operacion(
+        request, composicion, OPERACION_FINANCIERA,
+        card_id=card_id, monto=monto, conexion_id=conexion_id, escenario_id=escenario_id,
+    )
+
+
+async def _pantalla_operacion(
+    request: Request,
+    composicion: Composicion,
+    operacion: OperacionIso,
+    *,
+    conexion_id: str | None,
+    escenario_id: str | None,
+    ejecucion_id: str | None,
+):
+    """GET comun a cualquier operacion con tarjeta (B5): resuelve
+    `?ejecucion_id=` (reutilizar una ejecucion pasada) igual que ya hacia
+    cada pantalla por separado, y delega el render en `_formulario_operacion`.
+    """
+    try:
+        enviado, conexion_id_resuelta, error_carga = await _resolver_reutilizacion_de_ejecucion(
+            composicion, ejecucion_id, escenario_id
+        )
+    except _EjecucionNoReutilizable:
+        return await _formulario_operacion(
+            request, composicion, operacion,
+            error="La ejecución que se quiere reutilizar no existe o ya no está disponible.",
+            estado_http=404,
+        )
+    if conexion_id_resuelta is not None:
+        conexion_id = conexion_id_resuelta
+
+    return await _formulario_operacion(
+        request, composicion, operacion,
+        conexion_id=conexion_id, escenario_id=escenario_id, enviado=enviado, error=error_carga,
+    )
+
+
+async def _cambiar_conexion_operacion(request: Request, composicion: Composicion, operacion: OperacionIso):
+    """POST comun a cualquier operacion con tarjeta (B5): cambia la conexion,
+    actualiza la vista previa, o agrega/quita un campo opcional -todo sin
+    ejecutar la operacion ni guardar ningun escenario. Es el destino de
+    `formaction="{{ operacion.ruta }}"` en `editor_transaccion.html`.
+
+    POST y no GET a proposito -mismo motivo documentado originalmente para
+    compra-: por diseño un envio POST no queda en la URL ni en el historial
+    del navegador, y los frameworks de servidor no registran el cuerpo de la
+    peticion en el log de acceso -solo metodo y ruta-.
+    """
     formulario_bruto = await request.form()
     enviado = _leer_enviado(
-        formulario_bruto, composicion.perfil,
-        mti=MTI_COMPRA_FINANCIERA, mti_respuesta=MTI_RESPUESTA_COMPRA_FINANCIERA,
+        formulario_bruto, composicion.perfil, mti=operacion.mti, mti_respuesta=operacion.mti_respuesta
+    )
+    ir_a_conexion = (formulario_bruto.get("ir_a_conexion", "") or "").strip() or None
+    escenario_id = (formulario_bruto.get("escenario_id", "") or "").strip() or None
+
+    # "+ Agregar campo"/"Quitar" tambien resuelven por este mismo POST -mismo
+    # criterio que "Cambiar conexion": todo el formulario viaja en el cuerpo,
+    # se reconstruye la pantalla con el estado actualizado, y no se ejecuta
+    # ninguna transaccion. Solo tocan que filas se MUESTRAN; el perfil sigue
+    # siendo quien decide que numeros son validos -ver `_leer_opcionales_activos`-.
+    politica = composicion.perfil.politica(operacion.mti)
+    opcionales_activos = set(enviado["opcionales_activos"])
+    # `candidato_opcional` (el <select>) viaja siempre que se somete el
+    # formulario, pulse el usuario el boton que pulse: por eso el disparador
+    # real es la presencia del propio boton "agregar_opcional" -solo aporta
+    # su name=value cuando ES el que se pulso-, nunca el valor del select por
+    # si solo.
+    if "agregar_opcional" in formulario_bruto:
+        candidato = (formulario_bruto.get("candidato_opcional", "") or "").strip()
+        if candidato in politica.opcionales:
+            opcionales_activos.add(candidato)
+    quitar = (formulario_bruto.get("quitar_opcional", "") or "").strip()
+    if quitar:
+        opcionales_activos.discard(quitar)
+        enviado["campos_manuales"].pop(quitar, None)
+    enviado["opcionales_activos"] = frozenset(opcionales_activos)
+
+    return await _formulario_operacion(
+        request, composicion, operacion,
+        conexion_id=ir_a_conexion, escenario_id=escenario_id, enviado=enviado,
+    )
+
+
+async def _ejecutar_operacion(
+    request: Request,
+    composicion: Composicion,
+    operacion: OperacionIso,
+    *,
+    card_id: str,
+    monto: str,
+    conexion_id: str,
+    escenario_id: str,
+):
+    """POST que SI ejecuta una operacion con tarjeta (B5): mismo recorrido
+    para Autorizacion y Compra financiera -leer el formulario, interpretar,
+    resolver el escenario asociado si lo hay, delegar en el metodo de
+    `Orquestador` que `operacion.metodo_orquestador` nombra-. El orquestador
+    sigue siendo quien arma el mensaje y aplica RN-1..RN-4; esta funcion solo
+    orquesta la peticion HTTP.
+    """
+    formulario_bruto = await request.form()
+    enviado = _leer_enviado(
+        formulario_bruto, composicion.perfil, mti=operacion.mti, mti_respuesta=operacion.mti_respuesta
     )
     campos_manuales = enviado["campos_manuales"]
     expectativas = enviado["expectativas"]
 
     try:
-        datos, destino, tiempo_limite = await _interpretar_formulario_financiera(
-            composicion, card_id, monto, conexion_id, campos_manuales
+        datos, destino, tiempo_limite = await _interpretar_formulario_operacion(
+            composicion, operacion, card_id, monto, conexion_id, campos_manuales
         )
-        expectativas = _leer_expectativas(
-            formulario_bruto, composicion.perfil, MTI_RESPUESTA_COMPRA_FINANCIERA
-        )
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil, operacion.mti_respuesta)
         if expectativas is not None:
-            validar_expectativas(
-                expectativas, composicion.perfil, MTI_RESPUESTA_COMPRA_FINANCIERA
-            )
+            validar_expectativas(expectativas, composicion.perfil, operacion.mti_respuesta)
     except ValueError as error:
-        return await _formulario_financiera(
-            request, composicion, escenario_id=escenario_id or None,
+        return await _formulario_operacion(
+            request, composicion, operacion, escenario_id=escenario_id or None,
             error=str(error), enviado=enviado, estado_http=400,
         )
 
+    # El escenario asociado (si lo hay) se resuelve aqui, no antes: si ya no
+    # existe, la ejecucion sigue adelante sin trazabilidad en vez de fallar
+    # por una referencia que quedo vieja. Si esta inactivo, "no se reejecuta"
+    # tambien aplica cuando la ejecucion pasa por el constructor, no solo en
+    # la reejecucion directa.
     id_escenario_asociado: str | None = None
     nombre_escenario_asociado: str | None = None
     if escenario_id:
         escenario_asociado = await composicion.administracion_escenarios.obtener(escenario_id)
         if escenario_asociado is not None:
             if not escenario_asociado.activo:
-                return await _formulario_financiera(
-                    request, composicion, escenario_id=escenario_id,
+                return await _formulario_operacion(
+                    request, composicion, operacion, escenario_id=escenario_id,
                     error="Este escenario está inactivo. Reactívelo para poder ejecutarlo, "
                     "o guarde una copia.",
                     enviado=enviado, estado_http=400,
@@ -731,21 +657,25 @@ async def ejecutar_compra_financiera(
             id_escenario_asociado = escenario_asociado.escenario_id
             nombre_escenario_asociado = escenario_asociado.nombre
 
+    # --- el recorrido lo hace el orquestador, no esta capa ---
     try:
         orquestador = await composicion.orquestador(destino, tiempo_limite=tiempo_limite)
-        resultado = await orquestador.ejecutar_compra_financiera(
+        metodo = getattr(orquestador, operacion.metodo_orquestador)
+        resultado = await metodo(
             datos, escenario_id=id_escenario_asociado, escenario_nombre=nombre_escenario_asociado,
             expectativas=expectativas,
         )
     except TarjetaDesconocida:
-        return await _formulario_financiera(
-            request, composicion, escenario_id=escenario_id or None,
+        return await _formulario_operacion(
+            request, composicion, operacion, escenario_id=escenario_id or None,
             error=f"No existe la tarjeta {card_id!r} en el catálogo, o está inactiva.",
             enviado=enviado, estado_http=400,
         )
     except ErrorDelSimulador as error:
-        return await _formulario_financiera(
-            request, composicion, escenario_id=escenario_id or None,
+        # Fallo de infraestructura: no es un rechazo del autorizador y no debe
+        # presentarse como tal. Tampoco se muestra la excepcion.
+        return await _formulario_operacion(
+            request, composicion, operacion, escenario_id=escenario_id or None,
             aviso=presentacion.aviso_de_error(error), enviado=enviado,
         )
 
@@ -764,14 +694,15 @@ async def ejecutar_compra_financiera(
                 composicion.raw_hex_seguro(resultado.respuesta.como_mensaje())
                 if resultado.respuesta else None
             ),
-            seccion="financiera",
+            seccion=operacion.seccion,
         ),
     )
 
 
-async def _formulario_financiera(
+async def _formulario_operacion(
     request: Request,
     composicion: Composicion,
+    operacion: OperacionIso,
     *,
     conexion_id: str | None = None,
     escenario_id: str | None = None,
@@ -780,10 +711,23 @@ async def _formulario_financiera(
     enviado: dict | None = None,
     estado_http: int = 200,
 ):
-    """Renderiza la pantalla de compra financiera, opcionalmente con un
-    aviso o un error. Mismo principio que `_formulario`/`_formulario_echo`:
-    nunca sustituir en silencio una tarjeta/conexion pedida explicitamente, y
-    admite cargar un escenario guardado con el mismo diagnostico.
+    """Renderiza el editor de una operacion con tarjeta (B5): unico
+    renderizador para Autorizacion (0100) y Compra financiera (0200) -antes
+    de B5, `_formulario`/`_formulario_financiera` eran casi el mismo cuerpo
+    con el MTI/plantilla cambiados a mano.
+
+    Ni la conexion ni el escenario cargado viven en una sesion ni en una
+    cookie: llegan por query string en el GET normal (`?conexion_id=`,
+    `?escenario_id=`), o por el propio `enviado` cuando se re-renderiza tras
+    un error de un POST.
+
+    REGLA DE NO SUSTITUCION SILENCIOSA: si se pidio una tarjeta o una conexion
+    especificas (por query, por `enviado`, o por venir de un escenario) y esa
+    tarjeta/conexion no esta entre las activas, NO se reemplaza por la primera
+    disponible -eso cambiaria la intencion sin que nadie lo haya pedido-. Se
+    deja sin resolver y se bloquea el boton de ejecucion hasta que alguien
+    elija otra a mano. Solo cuando NO se pidio ninguna en particular se
+    preselecciona la primera activa, igual que siempre.
     """
     conexiones = await composicion.administracion_conexiones.listar_activas()
     tarjetas = await composicion.consultas.tarjetas()
@@ -798,12 +742,15 @@ async def _formulario_financiera(
                 escenario_actual
             )
 
-    politica_financiera = composicion.perfil.politica(MTI_COMPRA_FINANCIERA)
+    politica = composicion.perfil.politica(operacion.mti)
 
     if enviado:
         card_id = enviado.get("card_id", "")
         monto = enviado.get("monto", "")
         campos_manuales_enviados = enviado.get("campos_manuales", {})
+        opcionales_activos = enviado.get("opcionales_activos") or frozenset(
+            n for n in campos_manuales_enviados if politica.origen(n) == "opcional"
+        )
         conexion_id_solicitada = (
             conexion_id if conexion_id is not None else enviado.get("conexion_id")
         )
@@ -817,6 +764,9 @@ async def _formulario_financiera(
         card_id = escenario_actual.card_id
         monto = str(escenario_actual.monto)
         campos_manuales_enviados = dict(escenario_actual.campos_manuales)
+        opcionales_activos = frozenset(
+            n for n in campos_manuales_enviados if politica.origen(n) == "opcional"
+        )
         conexion_id_solicitada = (
             conexion_id if conexion_id is not None else escenario_actual.conexion_id
         )
@@ -826,10 +776,12 @@ async def _formulario_financiera(
         card_id = ""
         monto = ""
         campos_manuales_enviados = {}
+        opcionales_activos = frozenset()
         conexion_id_solicitada = conexion_id
         nombre_escenario = ""
         expectativas_actuales = None
 
+    # --- conexion: nunca se sustituye en silencio una pedida explicitamente ---
     conexion_no_disponible = False
     if conexion_id_solicitada:
         conexion_actual = next(
@@ -840,6 +792,7 @@ async def _formulario_financiera(
     else:
         conexion_actual = conexiones[0] if conexiones else None
 
+    # --- tarjeta: mismo principio; el radio simplemente no queda marcado ---
     tarjeta_no_disponible = bool(card_id) and not any(t.card_id == card_id for t in tarjetas)
 
     bloqueo_escenario = None
@@ -869,15 +822,16 @@ async def _formulario_financiera(
 
     vista_previa, vista_previa_no_disponible = await _construir_vista_previa(
         composicion, card_id, monto, campos_manuales_enviados,
-        servicio_vista_previa=composicion.vista_previa_compra_financiera,
-        fabrica_datos=DatosCompraFinanciera,
+        servicio_vista_previa=getattr(composicion, operacion.atributo_vista_previa),
+        fabrica_datos=operacion.datos_cls,
     )
 
     return PLANTILLAS.TemplateResponse(
         request=request,
-        name="financiera.html",
+        name="editor_transaccion.html",
         context={
-            "seccion": "financiera",
+            "operacion": operacion,
+            "seccion": operacion.seccion,
             "tarjetas": tarjetas,
             "conexiones": conexiones,
             "conexion_actual": conexion_actual,
@@ -887,8 +841,14 @@ async def _formulario_financiera(
             "monto": monto,
             "card_id": card_id,
             "filas_constructor": presentacion.filas_constructor(
-                composicion.perfil, MTI_COMPRA_FINANCIERA, composicion.descripciones_de_campos,
+                composicion.perfil, operacion.mti, composicion.descripciones_de_campos,
+                opcionales_activos,
             ),
+            "campos_opcionales_disponibles": presentacion.campos_opcionales_disponibles(
+                composicion.perfil, operacion.mti, composicion.descripciones_de_campos,
+                opcionales_activos,
+            ),
+            "opcionales_activos_csv": ",".join(sorted(opcionales_activos, key=int)),
             "campos_manuales": campos_manuales_enviados,
             "error": error,
             "aviso": aviso,
@@ -896,12 +856,11 @@ async def _formulario_financiera(
             "nombre_escenario": nombre_escenario,
             "bloqueo_escenario": bloqueo_escenario,
             "puede_ejecutar": puede_ejecutar,
-            "mti_financiera": MTI_COMPRA_FINANCIERA,
             "estados_ejecucion": list(EstadoEjecucion),
             "avisos": presentacion.AVISOS,
             "estado_esperado_actual": estado_esperado_actual,
             "filas_expectativas": presentacion.filas_expectativas(
-                composicion.perfil, MTI_RESPUESTA_COMPRA_FINANCIERA, composicion.descripciones_de_campos,
+                composicion.perfil, operacion.mti_respuesta, composicion.descripciones_de_campos,
                 campos_esperados,
             ),
             "vista_previa": presentacion.contexto_de_vista_previa(
@@ -911,6 +870,41 @@ async def _formulario_financiera(
         },
         status_code=estado_http,
     )
+
+
+async def _interpretar_formulario_operacion(
+    composicion: Composicion,
+    operacion: OperacionIso,
+    card_id: str,
+    monto: str,
+    conexion_id: str,
+    campos_manuales: dict[str, str],
+):
+    """Convierte el formulario en objetos del dominio para cualquier
+    operacion con tarjeta (B5). Lanza `ValueError` util. Mismas reglas de
+    entrada para Autorizacion y Compra financiera -ambas exigen tarjeta y
+    monto-; lo unico que cambia por operacion es el tipo de `DatosX` que se
+    construye (`operacion.datos_cls`) y la metadata de forma que valida los
+    opcionales (`operacion.atributo_metadatos_campos`).
+    """
+    if not card_id.strip():
+        raise ValueError("Seleccione una tarjeta de prueba.")
+    validar_forma_de_opcionales(
+        campos_manuales, composicion.perfil, operacion.mti,
+        getattr(composicion, operacion.atributo_metadatos_campos),
+    )
+    datos = operacion.datos_cls(
+        card_id=card_id.strip(),
+        monto=presentacion.validar_monto(monto),
+        campos_manuales=campos_manuales,
+    )
+
+    conexion = await composicion.administracion_conexiones.obtener_activa(conexion_id)
+    if conexion is None:
+        raise ValueError("Seleccione una conexión activa, o verifique que siga disponible.")
+
+    destino = DestinoTcp(host=conexion.host, puerto=conexion.puerto)
+    return datos, destino, conexion.timeout
 
 
 @enrutador.get("/historial", response_class=HTMLResponse)
@@ -1519,27 +1513,22 @@ async def escenario_crear(
         return RedirectResponse(f"/echo?escenario_id={creado.escenario_id}", status_code=303)
 
     # Operaciones "con tarjeta" (comparten forma con compra: card_id + monto +
-    # campos editables/opcionales, via `_leer_enviado` parametrizado). B4:
-    # tabla MTI -> (mti_respuesta, pantalla que la renderiza), nunca un
-    # `if mti == ... elif mti == ...` que crezca por operacion. Se arma aqui
-    # -no a nivel de modulo- porque referencia `_formulario`/`_formulario_financiera`,
-    # que se definen mas abajo en este archivo; a esta altura (tiempo de
-    # llamada, no de definicion) ambas ya existen.
-    operaciones_con_tarjeta = {
-        MTI_COMPRA: (MTI_RESPUESTA_COMPRA, "/", _formulario),
-        MTI_COMPRA_FINANCIERA: (MTI_RESPUESTA_COMPRA_FINANCIERA, "/financiera", _formulario_financiera),
-    }
-    config = operaciones_con_tarjeta.get(mti)
-    if config is None:
+    # campos editables/opcionales, via `_leer_enviado` parametrizado). B5:
+    # `operacion_por_mti` consulta el registro declarativo unico
+    # (`web.operaciones.OPERACIONES_CON_TARJETA`), nunca un
+    # `if mti == ... elif mti == ...` que crezca por operacion.
+    operacion = operacion_por_mti(mti)
+    if operacion is None:
         raise ValueError(f"operación no soportada para guardar un escenario: {mti!r}")
-    mti_respuesta, ruta_pantalla, renderizador = config
 
     formulario_bruto = await request.form()
-    enviado = _leer_enviado(formulario_bruto, composicion.perfil, mti=mti, mti_respuesta=mti_respuesta)
+    enviado = _leer_enviado(
+        formulario_bruto, composicion.perfil, mti=mti, mti_respuesta=operacion.mti_respuesta
+    )
     campos_manuales = enviado["campos_manuales"]
     try:
         monto_decimal = presentacion.validar_monto(monto)
-        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil, mti_respuesta)
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil, operacion.mti_respuesta)
         creado = await composicion.administracion_escenarios.crear(
             DatosNuevoEscenario(
                 nombre=nombre,
@@ -1552,10 +1541,10 @@ async def escenario_crear(
             )
         )
     except ValueError as error:
-        return await renderizador(
-            request, composicion, error=str(error), enviado=enviado, estado_http=400
+        return await _formulario_operacion(
+            request, composicion, operacion, error=str(error), enviado=enviado, estado_http=400
         )
-    return RedirectResponse(f"{ruta_pantalla}?escenario_id={creado.escenario_id}", status_code=303)
+    return RedirectResponse(f"{operacion.ruta}?escenario_id={creado.escenario_id}", status_code=303)
 
 
 @enrutador.post("/escenarios/{escenario_id}", response_class=HTMLResponse)
@@ -1603,24 +1592,20 @@ async def escenario_actualizar(
             )
         return RedirectResponse(f"/echo?escenario_id={escenario_id}", status_code=303)
 
-    # Mismo criterio que `escenario_crear`: tabla MTI -> (mti_respuesta, ruta,
-    # renderizador) para las operaciones "con tarjeta", armada a tiempo de
-    # llamada para poder referenciar `_formulario`/`_formulario_financiera`.
-    operaciones_con_tarjeta = {
-        MTI_COMPRA: (MTI_RESPUESTA_COMPRA, "/", _formulario),
-        MTI_COMPRA_FINANCIERA: (MTI_RESPUESTA_COMPRA_FINANCIERA, "/financiera", _formulario_financiera),
-    }
-    config = operaciones_con_tarjeta.get(existente.mti)
-    if config is None:
+    # Mismo criterio que `escenario_crear` (B5): el registro declarativo
+    # unico (`operacion_por_mti`) para las operaciones "con tarjeta".
+    operacion = operacion_por_mti(existente.mti)
+    if operacion is None:
         raise ValueError(f"operación no soportada para actualizar un escenario: {existente.mti!r}")
-    mti_respuesta, ruta_pantalla, renderizador = config
 
     formulario_bruto = await request.form()
-    enviado = _leer_enviado(formulario_bruto, composicion.perfil, mti=existente.mti, mti_respuesta=mti_respuesta)
+    enviado = _leer_enviado(
+        formulario_bruto, composicion.perfil, mti=existente.mti, mti_respuesta=operacion.mti_respuesta
+    )
     campos_manuales = enviado["campos_manuales"]
     try:
         monto_decimal = presentacion.validar_monto(monto)
-        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil, mti_respuesta)
+        expectativas = _leer_expectativas(formulario_bruto, composicion.perfil, operacion.mti_respuesta)
         await composicion.administracion_escenarios.actualizar(
             escenario_id,
             DatosEdicionEscenario(
@@ -1635,11 +1620,11 @@ async def escenario_actualizar(
     except EscenarioNoEncontrado:
         return _escenario_no_encontrado(request)
     except ValueError as error:
-        return await renderizador(
-            request, composicion, escenario_id=escenario_id,
+        return await _formulario_operacion(
+            request, composicion, operacion, escenario_id=escenario_id,
             error=str(error), enviado=enviado, estado_http=400,
         )
-    return RedirectResponse(f"{ruta_pantalla}?escenario_id={escenario_id}", status_code=303)
+    return RedirectResponse(f"{operacion.ruta}?escenario_id={escenario_id}", status_code=303)
 
 
 @enrutador.post("/escenarios/{escenario_id}/estado", response_class=HTMLResponse)
@@ -1664,20 +1649,25 @@ async def escenario_estado(
 def _config_pantalla_de_operacion(mti: str) -> tuple[str, Callable, str]:
     """(ruta_pantalla, renderizador, etiqueta_seccion) para el MTI de un
     escenario -unica fuente de "a que pantalla se carga/redirige/renderiza el
-    resultado de esta operacion" (B4, punto 25): la consultan
-    `escenario_duplicar`, `escenario_ejecutar` y `_reconstruir_desde_ejecucion`,
-    ninguno la duplica ni la reemplaza por un `if mti == ... elif ...` propio.
-    Se define como funcion (no un dict de modulo) porque referencia
-    `_formulario`/`_formulario_echo`/`_formulario_financiera`, definidas mas
-    abajo en este archivo: al momento en que esta funcion se LLAMA (nunca al
-    definirse), el modulo ya esta completamente cargado.
+    resultado de esta operacion" (B4 punto 25; B5: las operaciones con
+    tarjeta ahora vienen del registro declarativo unico,
+    `web.operaciones.OPERACIONES_CON_TARJETA`, en vez de una tabla propia-.
+    La consultan `escenario_duplicar`, `escenario_ejecutar` y
+    `_reconstruir_desde_ejecucion`, ninguno la duplica ni la reemplaza por un
+    `if mti == ... elif ...` propio.
+
+    Se define como funcion (no un dict de modulo) porque el renderizador de
+    echo (`_formulario_echo`) se define mas abajo en este archivo: al momento
+    en que esta funcion se LLAMA (nunca al definirse), el modulo ya esta
+    completamente cargado.
     """
-    configuraciones: dict[str, tuple[str, Callable, str]] = {
-        MTI_COMPRA: ("/", _formulario, "compra"),
-        MTI_ECHO: ("/echo", _formulario_echo, "echo"),
-        MTI_COMPRA_FINANCIERA: ("/financiera", _formulario_financiera, "financiera"),
-    }
-    return configuraciones[mti]
+    operacion = operacion_por_mti(mti)
+    if operacion is not None:
+        renderizador = functools.partial(_formulario_operacion, operacion=operacion)
+        return operacion.ruta, renderizador, operacion.seccion
+    if mti == MTI_ECHO:
+        return "/echo", _formulario_echo, "echo"
+    raise ValueError(f"operación no soportada para esta pantalla: {mti!r}")
 
 
 @enrutador.post("/escenarios/{escenario_id}/duplicar", response_class=HTMLResponse)
@@ -2502,9 +2492,14 @@ def _enviado_echo_desde_ejecucion(
 #: vez de un `if mti == ... elif ...` que creciera por operacion). Un MTI que
 #: no este aqui simplemente no puede reutilizarse desde el historial todavia
 #: -`_reconstruir_desde_ejecucion` devuelve `None`, nunca un intento a medias.
+#:
+#: B5: las entradas "con tarjeta" (compra, compra financiera, y cualquier
+#: operacion futura que se agregue a `OPERACIONES_CON_TARJETA`) se derivan
+#: del registro declarativo -nunca se listan aqui una por una-; Echo se
+#: agrega aparte porque no es una operacion con tarjeta (no vive en ese
+#: registro, ver docstring de `web/operaciones.py`).
 _RECONSTRUCCION_POR_MTI: dict[str, tuple[bool, Callable]] = {
-    MTI_COMPRA: (True, _enviado_con_tarjeta_desde_ejecucion),
-    MTI_COMPRA_FINANCIERA: (True, _enviado_con_tarjeta_desde_ejecucion),
+    **{op.mti: (True, _enviado_con_tarjeta_desde_ejecucion) for op in OPERACIONES_CON_TARJETA},
     MTI_ECHO: (False, _enviado_echo_desde_ejecucion),
 }
 
@@ -2647,239 +2642,6 @@ async def _resolver_reutilizacion_de_ejecucion(
     return reconstruido
 
 
-async def _interpretar_formulario(
-    composicion: Composicion,
-    card_id: str,
-    monto: str,
-    conexion_id: str,
-    campos_manuales: dict[str, str],
-) -> tuple[DatosCompra, DestinoTcp, float]:
-    """Convierte el formulario en objetos del dominio. Lanza `ValueError` util.
-
-    El formulario nunca trae host, puerto ni timeout: transporta unicamente
-    `conexion_id`. El servidor vuelve a buscar host/puerto/timeout en la
-    conexion administrada, y solo si esta activa - un `conexion_id` que no
-    exista, este desactivado, o haya sido manipulado a mano, se rechaza igual
-    que un `card_id` de una tarjeta inactiva.
-    """
-    if not card_id.strip():
-        raise ValueError("Seleccione una tarjeta de prueba.")
-    validar_forma_de_opcionales(
-        campos_manuales, composicion.perfil, MTI_COMPRA, composicion.metadatos_de_campos_0100
-    )
-    datos = DatosCompra(
-        card_id=card_id.strip(),
-        monto=presentacion.validar_monto(monto),
-        campos_manuales=campos_manuales,
-    )
-
-    conexion = await composicion.administracion_conexiones.obtener_activa(conexion_id)
-    if conexion is None:
-        raise ValueError("Seleccione una conexión activa, o verifique que siga disponible.")
-
-    destino = DestinoTcp(host=conexion.host, puerto=conexion.puerto)
-    return datos, destino, conexion.timeout
-
-
-async def _interpretar_formulario_financiera(
-    composicion: Composicion,
-    card_id: str,
-    monto: str,
-    conexion_id: str,
-    campos_manuales: dict[str, str],
-) -> tuple[DatosCompraFinanciera, DestinoTcp, float]:
-    """Version de `_interpretar_formulario` para compra financiera (0200,
-    B4): mismas reglas de entrada -- una compra financiera vuelve a exigir
-    tarjeta y monto, a diferencia de echo-, solo que arma `DatosCompraFinanciera`
-    en vez de `DatosCompra`.
-    """
-    if not card_id.strip():
-        raise ValueError("Seleccione una tarjeta de prueba.")
-    validar_forma_de_opcionales(
-        campos_manuales, composicion.perfil, MTI_COMPRA_FINANCIERA,
-        composicion.metadatos_de_campos_0200,
-    )
-    datos = DatosCompraFinanciera(
-        card_id=card_id.strip(),
-        monto=presentacion.validar_monto(monto),
-        campos_manuales=campos_manuales,
-    )
-
-    conexion = await composicion.administracion_conexiones.obtener_activa(conexion_id)
-    if conexion is None:
-        raise ValueError("Seleccione una conexión activa, o verifique que siga disponible.")
-
-    destino = DestinoTcp(host=conexion.host, puerto=conexion.puerto)
-    return datos, destino, conexion.timeout
-
-
-async def _formulario(
-    request: Request,
-    composicion: Composicion,
-    *,
-    conexion_id: str | None = None,
-    escenario_id: str | None = None,
-    error: str | None = None,
-    aviso=None,
-    enviado: dict | None = None,
-    estado_http: int = 200,
-):
-    """Renderiza la pantalla de compra, opcionalmente con un aviso o un error.
-
-    Ni la conexion ni el escenario cargado viven en una sesion ni en una
-    cookie: llegan por query string en el GET normal (`?conexion_id=`,
-    `?escenario_id=`), o por el propio `enviado` cuando se re-renderiza tras
-    un error de un POST.
-
-    REGLA DE NO SUSTITUCION SILENCIOSA: si se pidio una tarjeta o una conexion
-    especificas (por query, por `enviado`, o por venir de un escenario) y esa
-    tarjeta/conexion no esta entre las activas, NO se reemplaza por la primera
-    disponible -eso cambiaria la intencion sin que nadie lo haya pedido-. Se
-    deja sin resolver y se bloquea "Ejecutar transacción" hasta que alguien
-    elija otra a mano. Solo cuando NO se pidio ninguna en particular se
-    preselecciona la primera activa, igual que siempre.
-    """
-    conexiones = await composicion.administracion_conexiones.listar_activas()
-    tarjetas = await composicion.consultas.tarjetas()
-    enviado = enviado or {}
-
-    escenario_actual = None
-    diagnostico = None
-    if escenario_id:
-        escenario_actual = await composicion.administracion_escenarios.obtener(escenario_id)
-        if escenario_actual is not None:
-            diagnostico = await composicion.administracion_escenarios.diagnosticar(
-                escenario_actual
-            )
-
-    politica_compra = composicion.perfil.politica(MTI_COMPRA)
-
-    if enviado:
-        card_id = enviado.get("card_id", "")
-        monto = enviado.get("monto", "")
-        campos_manuales_enviados = enviado.get("campos_manuales", {})
-        opcionales_activos = enviado.get("opcionales_activos") or frozenset(
-            n for n in campos_manuales_enviados if politica_compra.origen(n) == "opcional"
-        )
-        conexion_id_solicitada = (
-            conexion_id if conexion_id is not None else enviado.get("conexion_id")
-        )
-        nombre_escenario = enviado.get(
-            "nombre_escenario", escenario_actual.nombre if escenario_actual else ""
-        )
-        expectativas_actuales = enviado.get(
-            "expectativas", escenario_actual.expectativas if escenario_actual else None
-        )
-    elif escenario_actual is not None:
-        card_id = escenario_actual.card_id
-        monto = str(escenario_actual.monto)
-        campos_manuales_enviados = dict(escenario_actual.campos_manuales)
-        opcionales_activos = frozenset(
-            n for n in campos_manuales_enviados if politica_compra.origen(n) == "opcional"
-        )
-        conexion_id_solicitada = (
-            conexion_id if conexion_id is not None else escenario_actual.conexion_id
-        )
-        nombre_escenario = escenario_actual.nombre
-        expectativas_actuales = escenario_actual.expectativas
-    else:
-        card_id = ""
-        monto = ""
-        campos_manuales_enviados = {}
-        opcionales_activos = frozenset()
-        conexion_id_solicitada = conexion_id
-        nombre_escenario = ""
-        expectativas_actuales = None
-
-    # --- conexion: nunca se sustituye en silencio una pedida explicitamente ---
-    conexion_no_disponible = False
-    if conexion_id_solicitada:
-        conexion_actual = next(
-            (c for c in conexiones if c.conexion_id == conexion_id_solicitada), None
-        )
-        if conexion_actual is None:
-            conexion_no_disponible = True
-    else:
-        conexion_actual = conexiones[0] if conexiones else None
-
-    # --- tarjeta: mismo principio; el radio simplemente no queda marcado ---
-    tarjeta_no_disponible = bool(card_id) and not any(t.card_id == card_id for t in tarjetas)
-
-    bloqueo_escenario = None
-    if escenario_actual is not None:
-        bloqueo_escenario = {
-            "inactivo": not escenario_actual.activo,
-            "tarjeta_no_disponible": tarjeta_no_disponible,
-            "conexion_no_disponible": conexion_no_disponible,
-            "incompatibilidades": diagnostico.incompatibilidades if diagnostico else (),
-        }
-
-    puede_ejecutar = (
-        conexion_actual is not None
-        and not tarjeta_no_disponible
-        and not (
-            bloqueo_escenario
-            and (
-                bloqueo_escenario["inactivo"]
-                or bloqueo_escenario["incompatibilidades"]
-            )
-        )
-    )
-
-    campos_esperados = expectativas_actuales.campos if expectativas_actuales else {}
-    estado_esperado_actual = (
-        expectativas_actuales.estado.value
-        if expectativas_actuales and expectativas_actuales.estado
-        else ""
-    )
-
-    vista_previa, vista_previa_no_disponible = await _construir_vista_previa(
-        composicion, card_id, monto, campos_manuales_enviados
-    )
-
-    return PLANTILLAS.TemplateResponse(
-        request=request,
-        name="compra.html",
-        context={
-            "seccion": "compra",
-            "tarjetas": tarjetas,
-            "conexiones": conexiones,
-            "conexion_actual": conexion_actual,
-            "conexion_id": (
-                conexion_actual.conexion_id if conexion_actual else (conexion_id_solicitada or "")
-            ),
-            "monto": monto,
-            "card_id": card_id,
-            "filas_constructor": presentacion.filas_constructor(
-                composicion.perfil, MTI_COMPRA, composicion.descripciones_de_campos,
-                opcionales_activos,
-            ),
-            "campos_opcionales_disponibles": presentacion.campos_opcionales_disponibles(
-                composicion.perfil, MTI_COMPRA, composicion.descripciones_de_campos,
-                opcionales_activos,
-            ),
-            "opcionales_activos_csv": ",".join(sorted(opcionales_activos, key=int)),
-            "campos_manuales": campos_manuales_enviados,
-            "error": error,
-            "aviso": aviso,
-            "escenario_actual": escenario_actual,
-            "nombre_escenario": nombre_escenario,
-            "bloqueo_escenario": bloqueo_escenario,
-            "puede_ejecutar": puede_ejecutar,
-            "estados_ejecucion": list(EstadoEjecucion),
-            "avisos": presentacion.AVISOS,
-            "estado_esperado_actual": estado_esperado_actual,
-            "filas_expectativas": presentacion.filas_expectativas(
-                composicion.perfil, MTI_RESPUESTA_COMPRA, composicion.descripciones_de_campos,
-                campos_esperados,
-            ),
-            "vista_previa": presentacion.contexto_de_vista_previa(
-                vista_previa, composicion.descripciones_de_campos
-            ) if vista_previa else None,
-            "vista_previa_no_disponible": vista_previa_no_disponible,
-        },
-        status_code=estado_http,
-    )
 
 
 async def _construir_vista_previa(

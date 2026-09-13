@@ -119,28 +119,35 @@ def _vista_previa_de_mensaje(
     return VistaPreviaMensaje(mti=mti, bitmap=bitmap, campos=campos)
 
 
-class ServicioVistaPrevia:
-    """Arma la vista previa reusando el mismo `armar_compra` y el mismo codec
-    que la ejecucion real -nunca una segunda implementacion del builder-.
+class ServicioVistaPreviaTransaccionTarjeta:
+    """Vista previa comun a CUALQUIER operacion que mueva fondos con una
+    tarjeta elegida del catalogo (B5): parametrizada por el builder
+    (`armar_fn`) de esa operacion, nunca por una bandera `tipo`. Antes de B5
+    existian `ServicioVistaPrevia` (compra) y `ServicioVistaPreviaCompraFinanciera`
+    (compra financiera) con el cuerpo de `construir()` duplicado salvo por
+    esa unica linea -que builder llamar-; ahora son wrappers de compatibilidad
+    sobre esta clase (ver mas abajo), no una segunda implementacion.
     """
 
     def __init__(
         self,
+        armar_fn,
         repositorio_tarjetas: RepositorioTarjetas,
         codec,
         perfil,
         *,
         reloj: Callable[[], datetime] | None = None,
     ) -> None:
+        self._armar = armar_fn
         self._tarjetas = repositorio_tarjetas
         self._codec = codec
         self._perfil = perfil
         self._reloj = reloj or (lambda: datetime.now(timezone.utc))
 
-    async def construir(self, datos: DatosCompra) -> VistaPreviaMensaje:
+    async def construir(self, datos) -> VistaPreviaMensaje:
         """Puede lanzar `TarjetaNoDisponibleParaVistaPrevia` o
-        `ErrorDeCamposManuales` -mismos motivos por los que `/compra`
-        rechazaria el envio real-: el llamador (la ruta web) ya sabe traducir
+        `ErrorDeCamposManuales` -mismos motivos por los que la ejecucion real
+        rechazaria el envio-: el llamador (la ruta web) ya sabe traducir
         ambos a un mensaje de entrada, y no hace falta duplicar esa traduccion
         aqui.
         """
@@ -160,17 +167,19 @@ class ServicioVistaPrevia:
         )
         datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
 
-        mensaje = armar_compra(
+        mensaje = self._armar(
             datos, tarjeta, stan=STAN_MARCADOR, momento=momento, perfil=self._perfil
         )
         return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, no_reproducibles)
 
 
-class ServicioVistaPreviaCompraFinanciera:
-    """Vista previa del 0200 (compra financiera, B4): mismo principio que
-    `ServicioVistaPrevia`, reusando `armar_compra_financiera` -nunca una
-    segunda implementacion del builder-. Vuelve a buscar tarjeta, igual que
-    compra: a diferencia de echo, esta operacion si tiene ese concepto.
+class ServicioVistaPrevia(ServicioVistaPreviaTransaccionTarjeta):
+    """Wrapper de compatibilidad: vista previa del 0100 (Autorización).
+
+    Conserva el nombre/firma publicos de antes de B5 -codigo y pruebas
+    existentes que lo instancian con `(repositorio_tarjetas, codec, perfil)`
+    siguen funcionando sin cambios-, pero delega en
+    `ServicioVistaPreviaTransaccionTarjeta` en vez de duplicar `construir()`.
     """
 
     def __init__(
@@ -181,27 +190,22 @@ class ServicioVistaPreviaCompraFinanciera:
         *,
         reloj: Callable[[], datetime] | None = None,
     ) -> None:
-        self._tarjetas = repositorio_tarjetas
-        self._codec = codec
-        self._perfil = perfil
-        self._reloj = reloj or (lambda: datetime.now(timezone.utc))
+        super().__init__(armar_compra, repositorio_tarjetas, codec, perfil, reloj=reloj)
 
-    async def construir(self, datos: DatosCompraFinanciera) -> VistaPreviaMensaje:
-        tarjeta = await self._tarjetas.obtener(datos.card_id)
-        if tarjeta is None or not tarjeta.activa:
-            raise TarjetaNoDisponibleParaVistaPrevia(datos.card_id)
 
-        momento = self._reloj()
-        contexto_variables = ContextoResolucion(monto=datos.monto, stan=STAN_MARCADOR, momento=momento)
-        campos_resueltos, no_reproducibles = resolver_campos_manuales(
-            datos.campos_manuales, contexto_variables
-        )
-        datos = dataclasses.replace(datos, campos_manuales=campos_resueltos)
+class ServicioVistaPreviaCompraFinanciera(ServicioVistaPreviaTransaccionTarjeta):
+    """Wrapper de compatibilidad: vista previa del 0200 (compra financiera,
+    B4). Mismo criterio que `ServicioVistaPrevia`."""
 
-        mensaje = armar_compra_financiera(
-            datos, tarjeta, stan=STAN_MARCADOR, momento=momento, perfil=self._perfil
-        )
-        return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, no_reproducibles)
+    def __init__(
+        self,
+        repositorio_tarjetas: RepositorioTarjetas,
+        codec,
+        perfil,
+        *,
+        reloj: Callable[[], datetime] | None = None,
+    ) -> None:
+        super().__init__(armar_compra_financiera, repositorio_tarjetas, codec, perfil, reloj=reloj)
 
 
 class ServicioVistaPreviaEcho:
