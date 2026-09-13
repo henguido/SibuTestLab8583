@@ -40,7 +40,25 @@ OPERACION_ECHO = "network_echo"
 OPERACION_POR_MTI: Mapping[str, str] = {MTI_COMPRA: OPERACION_COMPRA, MTI_ECHO: OPERACION_ECHO}
 
 #: Campos ISO que transportan datos de tarjeta y nunca se persisten en claro.
-CAMPOS_SENSIBLES = frozenset({"2", "35"})
+#: Piso UNIVERSAL de dominio -protege estos tres numeros para CUALQUIER
+#: perfil, incluso los que `MensajeIso.enmascarado()`/`MensajeInterpretado.
+#: enmascarado()` (sin acceso a un perfil: son metodos de dataclass sin ese
+#: parametro) no pueden consultar-. DE2 (PAN), DE35 (Track 2) y DE45
+#: (Track 1) son sensibles POR DEFINICION del estandar ISO 8583, no por
+#: decision de un perfil -asi que protegerlos aqui, a nivel de dominio, es
+#: correcto incluso antes de que exista ningun perfil que los declare-.
+#:
+#: B3 (2026-09-13, ARCH-001/SEC-001): un perfil puede declarar sensibilidad
+#: ADICIONAL, especifica de si mismo, via `PerfilDeMarca.campos_sensibles`/
+#: `es_sensible()` (`profiles/generico.py`), consultado por los guardias que
+#: SI reciben un perfil real (`domain.expectativas.
+#: campos_permitidos_expectativa`, `domain.validacion.campos_de_correlacion`,
+#: `adapters.iso8583.codec._verificar_enmascarado_para_inspeccion`). Los que
+#: no lo reciben (este archivo, `application/serializacion.py`,
+#: `web/presentacion.py` -presentacion pura, la proteccion real ya ocurrio
+#: antes de llegar ahi-) siguen con este piso universal, que ya cubre los
+#: tres campos que hoy existen.
+CAMPOS_SENSIBLES = frozenset({"2", "35", "45"})
 
 #: El numero de trazabilidad (campo 11) tiene exactamente seis digitos.
 LARGO_STAN = 6

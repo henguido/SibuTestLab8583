@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import Mapping
 
 from .modelos import (
-    CAMPOS_SENSIBLES,
     DiscrepanciaExpectativa,
     EstadoEjecucion,
     EstadoEvaluacion,
@@ -50,12 +49,16 @@ def campos_permitidos_expectativa(perfil, mti: str) -> frozenset[str]:
     modela un conjunto de campos opcionales por MTI aparte de los
     obligatorios, y restringir a `obligatorios()` dejaria fuera cualquier
     campo opcional legitimo que un switch real pudiera devolver-. Se excluyen
-    siempre los campos sensibles, sin excepcion, y nada si el perfil no
-    soporta el MTI.
+    siempre los campos sensibles -`perfil.es_sensible()`, B3 2026-09-13: el
+    piso universal de dominio mas lo que este perfil declare propio, nunca
+    una lista aparte que pudiera desincronizarse-, sin excepcion, y nada si
+    el perfil no soporta el MTI.
     """
     if not perfil.soporta(mti):
         return frozenset()
-    return frozenset(n for n in perfil.especificacion if n.isdigit()) - CAMPOS_SENSIBLES
+    return frozenset(
+        n for n in perfil.especificacion if n.isdigit() and not perfil.es_sensible(n)
+    )
 
 
 def validar_expectativas(expectativas: Expectativas, perfil, mti_respuesta: str) -> None:

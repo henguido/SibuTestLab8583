@@ -23,7 +23,13 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from ..domain.campos_iso import TIPO_ALFANUMERICO, TIPO_NUMERICO, MetadatoCampo
-from ..domain.modelos import MTI_COMPRA, MTI_ECHO, MTI_RESPUESTA_COMPRA, MTI_RESPUESTA_ECHO
+from ..domain.modelos import (
+    CAMPOS_SENSIBLES,
+    MTI_COMPRA,
+    MTI_ECHO,
+    MTI_RESPUESTA_COMPRA,
+    MTI_RESPUESTA_ECHO,
+)
 
 NOMBRE_PERFIL_GENERICO = "generico"
 
@@ -109,6 +115,15 @@ class PerfilDeMarca:
     especificacion: Mapping[str, Mapping[str, Any]]
     obligatorios_por_mti: Mapping[str, frozenset[str]]
     politica_por_mti: Mapping[str, PoliticaCamposMti] = field(default_factory=dict)
+    #: Campos que ESTE perfil declara sensibles, ademas del piso universal de
+    #: dominio (`domain.modelos.CAMPOS_SENSIBLES`: DE2/35/45, sensibles por
+    #: definicion del estandar, no por decision de marca). B3 (2026-09-13,
+    #: ARCH-001/SEC-001): pensado para el dia en que un perfil real declare
+    #: un campo propietario que tambien transporte datos de tarjeta -sin
+    #: necesitar ampliar el significado del piso universal para eso-. Hoy
+    #: vacio para el perfil generico: sus unicos campos de tarjeta (2) ya
+    #: estan cubiertos por el piso.
+    campos_sensibles: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "especificacion", MappingProxyType(dict(self.especificacion)))
@@ -131,6 +146,15 @@ class PerfilDeMarca:
         if mti not in self.politica_por_mti:
             raise ValueError(f"el perfil {self.nombre!r} no declara politica para el MTI {mti!r}")
         return self.politica_por_mti[mti]
+
+    def es_sensible(self, numero: str) -> bool:
+        """Autoridad declarativa de sensibilidad para quien SI tiene un
+        perfil real en mano (a diferencia de `MensajeIso.enmascarado()`, que
+        no lo recibe): el piso universal de dominio, unido a lo que este
+        perfil declare como propio. Nunca al reves -este perfil no puede
+        "des-declarar" un campo del piso universal-.
+        """
+        return numero in CAMPOS_SENSIBLES or numero in self.campos_sensibles
 
 
 def _fijo(largo: int, descripcion: str) -> dict[str, Any]:

@@ -12,13 +12,26 @@ Limites que este modulo respeta:
 
 from __future__ import annotations
 
+import re
+
 import iso8583
 
 from ...domain.errores import ErrorDeCodificacion, ErrorDeDecodificacion
-from ...domain.modelos import CAMPOS_SENSIBLES, CampoInterpretado, MensajeInterpretado, MensajeIso
+from ...domain.modelos import CampoInterpretado, MensajeInterpretado, MensajeIso
 
 #: Claves que pyiso8583 usa para el MTI y los bitmaps, no para campos de datos.
 CLAVES_ESTRUCTURALES = frozenset({"h", "t", "p", "1"})
+
+#: Una secuencia de 12 a 19 digitos consecutivos "parece" un PAN -mismo largo
+#: y mismo criterio que ya usa el guardian de PAN de todo el repositorio
+#: (`tests/test_datos_sinteticos.py::PATRON_PAN`)-. B3 (2026-09-13): un
+#: `.isdigit()` sobre el campo COMPLETO -el criterio anterior- detecta un DE2
+#: sin enmascarar (solo digitos), pero NO detecta un Track 1/2 sin enmascarar
+#: (`"{PAN}=YYMM..."`/`"B{PAN}^NOMBRE^..."`: el PAN va embebido junto a
+#: separadores no numericos, asi que el campo completo nunca es "puro
+#: digito"). Buscar el patron como SUBCADENA, no exigir que sea el campo
+#: entero, cierra ese hueco sin debilitar la deteccion de DE2.
+_PATRON_PARECE_PAN = re.compile(r"[0-9]{12,19}")
 
 
 class MensajeSinEnmascararError(AssertionError):
@@ -32,7 +45,7 @@ class MensajeSinEnmascararError(AssertionError):
     """
 
 
-def _verificar_enmascarado_para_inspeccion(mensaje: MensajeIso) -> None:
+def _verificar_enmascarado_para_inspeccion(mensaje: MensajeIso, perfil) -> None:
     """Ultima barrera antes de re-codificar para bitmap/RAW: por diseno,
     `bitmap_hex`/`raw_hex_seguro` SOLO deben recibir un mensaje ya
     `enmascarado()` -ver sus docstrings-. Esta funcion no confia en que quien
@@ -40,10 +53,16 @@ def _verificar_enmascarado_para_inspeccion(mensaje: MensajeIso) -> None:
     (nunca empieza con el caracter de mascara), revienta aqui, antes de
     codificar nada, en vez de producir un RAW/HEX o un bitmap sobre datos
     reales de tarjeta.
+
+    `perfil.es_sensible(numero)` (B3, 2026-09-13: ARCH-001/SEC-001) protege
+    el piso universal de dominio (`CAMPOS_SENSIBLES`: DE2/35/45) MAS lo que
+    este perfil declare propio -nunca menos-: itera TODOS los campos del
+    mensaje, no solo una lista fija, asi que cualquier campo que el perfil
+    activo considere sensible queda cubierto, sea o no uno de los tres
+    universales.
     """
-    for numero in CAMPOS_SENSIBLES:
-        valor = mensaje.campos.get(numero)
-        if valor and valor.isdigit():
+    for numero, valor in mensaje.campos.items():
+        if perfil.es_sensible(numero) and valor and _PATRON_PARECE_PAN.search(valor):
             raise MensajeSinEnmascararError(
                 f"el campo {numero} llego sin enmascarar a bitmap_hex/raw_hex_seguro"
             )
@@ -86,7 +105,7 @@ class CodecIso8583:
         del llamador: `_verificar_enmascarado_para_inspeccion` revienta antes
         de codificar si un campo sensible todavia parece un numero real.
         """
-        _verificar_enmascarado_para_inspeccion(mensaje)
+        _verificar_enmascarado_para_inspeccion(mensaje, perfil)
         documento = {"t": mensaje.mti, **dict(mensaje.campos)}
         try:
             crudo, codificado = iso8583.encode(documento, perfil.especificacion)
