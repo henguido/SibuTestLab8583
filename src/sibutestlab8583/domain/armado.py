@@ -1,4 +1,5 @@
-"""Construccion de mensajes ISO 8583: compra (0100) y echo (0800).
+"""Construccion de mensajes ISO 8583: compra/autorizacion (0100), echo (0800)
+y compra financiera (0200, B4).
 
 Funciones puras: reciben los datos y devuelven el mensaje. El STAN y el
 momento se inyectan en lugar de generarse aqui, para que las pruebas sean
@@ -14,18 +15,22 @@ estructurales— gana siempre, sin excepcion, aunque la validacion previa
 tuviera un defecto: es la defensa en profundidad de que ningun campo derivado
 o automatico pueda terminar siendo el que el usuario escribio.
 
-COMPOSICION, NO DUPLICACION (B2, 2026-09-12)
+COMPOSICION, NO DUPLICACION (B2, 2026-09-12; ampliado B4, 2026-09-13)
 ====================================
 `_componer_campos_base` es lo genuinamente comun entre operaciones -las
 capas 1 y 2 (defaults del perfil + overrides del usuario), validadas contra
-la politica del MTI-. Cada operacion (`armar_compra`, `armar_echo`) le agrega
-SOLO su propia capa 3 estructural, que es lo unico que de verdad difiere
-entre una compra (deriva DE2/DE4/DE7/DE11-13/DE14 de tarjeta+monto+stan+
-momento) y un echo (deriva solo DE7/DE11 de stan+momento, sin tarjeta ni
-monto). Ninguna de las dos funciones copia el cuerpo de la otra, y ninguna es
-una funcion generica con banderas tipo `armar(tipo, ...)`: ver
-`docs/roadmap/SIBU_3.md`, seccion de Fase B, para por que se eligio esta
-forma y no `ClaveOperacion` ni un "mega builder".
+la politica del MTI-. Cada operacion (`armar_compra`, `armar_echo`,
+`armar_compra_financiera`) le agrega SOLO su propia capa 3 estructural.
+
+B4 confirmo que la capa 3 de compra (0100) y compra financiera (0200) es
+IDENTICA -ambas derivan DE2/DE4/DE7/DE11-13/DE14 de tarjeta+monto+stan+
+momento, porque ambas mueven fondos con una tarjeta elegida-, asi que esa
+capa se extrajo a `_campos_estructurales_transaccion_con_tarjeta` en vez de
+duplicarse una tercera vez; echo (sin tarjeta ni monto, solo DE7/DE11) sigue
+sin compartirla porque genuinamente deriva de datos distintos. Ninguna de
+las tres funciones `armar_*` es una funcion generica con banderas tipo
+`armar(tipo, ...)`: ver `docs/roadmap/SIBU_3.md`, seccion de Fase B, para por
+que se eligio esta forma y no `ClaveOperacion` ni un "mega builder".
 """
 
 from __future__ import annotations
@@ -36,7 +41,16 @@ from typing import Mapping
 
 from .campos_iso import MetadatoCampo
 from .errores import CampoConFormaInvalida, CampoNoPermitido, CampoProtegido
-from .modelos import MTI_COMPRA, MTI_ECHO, DatosCompra, DatosEcho, MensajeIso, TarjetaPrueba
+from .modelos import (
+    MTI_COMPRA,
+    MTI_COMPRA_FINANCIERA,
+    MTI_ECHO,
+    DatosCompra,
+    DatosCompraFinanciera,
+    DatosEcho,
+    MensajeIso,
+    TarjetaPrueba,
+)
 
 #: Un monto ISO viaja en unidades minimas, sin separador decimal, en 12 digitos.
 LARGO_CAMPO_MONTO = 12
@@ -160,6 +174,34 @@ def _componer_campos_base(
     return campos
 
 
+def _campos_estructurales_transaccion_con_tarjeta(
+    tarjeta: TarjetaPrueba, monto: Decimal, *, stan: str, momento: datetime
+) -> dict[str, str]:
+    """Capa 3 -estructural- comun a CUALQUIER operacion que mueva fondos con
+    una tarjeta elegida del catalogo: compra/autorizacion (0100) y compra
+    financiera (0200, B4) derivan EXACTAMENTE los mismos siete campos de los
+    mismos cuatro datos (tarjeta, monto, stan, momento) -no es una
+    coincidencia de redaccion, es el mismo concepto de dominio bajo dos MTI
+    distintos-. Lo que SI difiere entre ambas operaciones es unicamente el
+    MTI con el que se envuelve el resultado: eso lo decide cada `armar_*`,
+    nunca esta funcion.
+
+    Extraida en B4 recien cuando 0200 confirmo la duplicacion real -B2 ya
+    habia mostrado con echo que compartir de mas (una funcion con banderas)
+    es peor que un pequeno duplicado; esto es lo opuesto: un duplicado real,
+    verificado, que ya no se justifica mantener dos veces-.
+    """
+    return {
+        "2": tarjeta.pan,
+        "4": formatear_monto(monto),
+        "7": momento.strftime("%m%d%H%M%S"),
+        "11": stan,
+        "12": momento.strftime("%H%M%S"),
+        "13": momento.strftime("%m%d"),
+        "14": tarjeta.expiracion,
+    }
+
+
 def armar_compra(
     datos: DatosCompra,
     tarjeta: TarjetaPrueba,
@@ -181,17 +223,36 @@ def armar_compra(
     """
     campos = _componer_campos_base(datos.campos_manuales, perfil, MTI_COMPRA)
     campos.update(
-        {
-            "2": tarjeta.pan,
-            "4": formatear_monto(datos.monto),
-            "7": momento.strftime("%m%d%H%M%S"),
-            "11": stan,
-            "12": momento.strftime("%H%M%S"),
-            "13": momento.strftime("%m%d"),
-            "14": tarjeta.expiracion,
-        }
+        _campos_estructurales_transaccion_con_tarjeta(
+            tarjeta, datos.monto, stan=stan, momento=momento
+        )
     )
     return MensajeIso(mti=MTI_COMPRA, campos=campos)
+
+
+def armar_compra_financiera(
+    datos: DatosCompraFinanciera,
+    tarjeta: TarjetaPrueba,
+    *,
+    stan: str,
+    momento: datetime,
+    perfil,
+) -> MensajeIso:
+    """Arma el 0200 (compra financiera, B4) con el mismo patron de tres capas
+    que `armar_compra` -capa 3 compartida vía
+    `_campos_estructurales_transaccion_con_tarjeta`, capas 1+2 y el MTI final
+    son lo unico propio de esta operacion-.
+
+    No valida RN-4: igual que `armar_compra`/`armar_echo`, esa regla corre
+    inmediatamente despues.
+    """
+    campos = _componer_campos_base(datos.campos_manuales, perfil, MTI_COMPRA_FINANCIERA)
+    campos.update(
+        _campos_estructurales_transaccion_con_tarjeta(
+            tarjeta, datos.monto, stan=stan, momento=momento
+        )
+    )
+    return MensajeIso(mti=MTI_COMPRA_FINANCIERA, campos=campos)
 
 
 def armar_echo(

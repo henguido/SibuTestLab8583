@@ -26,8 +26,10 @@ from ..domain.campos_iso import TIPO_ALFANUMERICO, TIPO_NUMERICO, MetadatoCampo
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
     MTI_COMPRA,
+    MTI_COMPRA_FINANCIERA,
     MTI_ECHO,
     MTI_RESPUESTA_COMPRA,
+    MTI_RESPUESTA_COMPRA_FINANCIERA,
     MTI_RESPUESTA_ECHO,
 )
 
@@ -387,6 +389,57 @@ _POLITICA_ECHO = PoliticaCamposMti(
     valores_por_defecto={"70": VALOR_LABORATORIO_ECHO},
 )
 
+# ------------------------------------------ Compra financiera (0200/0210, B4) --
+#
+# Dentro de este laboratorio: 0100 es una AUTORIZACION (verifica/reserva, no
+# mueve fondos por si sola); 0200 es una TRANSACCION FINANCIERA (mueve fondos
+# en el mismo mensaje). Es la distincion de dominio que ISO 8583 documenta en
+# general para "Authorization"/"Financial" -no una regla de Visa, Mastercard
+# ni de ninguna otra marca especifica-.
+#
+# Campo por campo, auditado contra `ESPECIFICACION_GENERICA` (no copiado de
+# 0100 sin revisar): una compra financiera describe exactamente el mismo
+# concepto de "que tarjeta, cuanto, en que moneda, en que terminal, con que
+# trazabilidad" que una compra -por eso el conjunto resultante coincide con
+# el de 0100-, pero se declara aqui como su PROPIA politica: si algun dia
+# difieren (por ejemplo, un campo propio de liquidacion que 0100 nunca
+# necesito), esta politica cambia sola, sin arrastrar a la otra.
+CODIGO_PROCESO_COMPRA_FINANCIERA = "000000"
+
+# Obligatorios de la solicitud financiera: mismo razonamiento que OBLIGATORIOS_0100.
+OBLIGATORIOS_0200 = frozenset({"2", "3", "4", "7", "11", "14", "22", "41", "49"})
+
+# Obligatorios de la respuesta: el codigo de respuesta mas los campos que deben
+# volver iguales para poder correlacionar (RN-3) -mismo razonamiento que OBLIGATORIOS_0110-.
+OBLIGATORIOS_0210 = frozenset({"3", "4", "7", "11", "39", "41"})
+
+#: Politica de campos de la compra financiera (0200). Misma forma que
+#: `_POLITICA_COMPRA` -DE2/DE14 derivados de la tarjeta, DE7/11/12/13
+#: automaticos-, porque la capa estructural de ambas operaciones es
+#: literalmente la misma funcion (`domain.armado.
+#: _campos_estructurales_transaccion_con_tarjeta`). DE38 tampoco es editable
+#: aqui, por el mismo motivo que en 0100: lo agrega el autorizador al
+#: aprobar, nunca lo declara el emisor en la solicitud.
+_POLITICA_COMPRA_FINANCIERA = PoliticaCamposMti(
+    derivados=frozenset({"2", "14"}),
+    automaticos=frozenset({"7", "11", "12", "13"}),
+    editables=frozenset({"3", "22", "37", "41", "49"}),
+    opcionales=frozenset({"18", "25", "32", "42", "43"}),
+    valores_por_defecto={
+        "3": CODIGO_PROCESO_COMPRA_FINANCIERA,
+        "22": MODO_CAPTURA_DEMOSTRACION,
+        "41": TERMINAL_DEMOSTRACION,
+        "49": "188",
+    },
+)
+
+#: Metadata de UI/validacion de forma para el 0200: identica a la de 0100
+#: porque el conjunto de campos editables/opcionales lo es (ver auditoria mas
+#: arriba) -reexportada bajo su propio nombre, no una nueva copia de
+#: cuarenta lineas, para que un manana en que difieran no obligue a decidir
+#: cual de las dos copias quedo desactualizada.
+METADATOS_CAMPOS_0200 = METADATOS_CAMPOS_0100
+
 PERFIL_GENERICO = PerfilDeMarca(
     nombre=NOMBRE_PERFIL_GENERICO,
     especificacion=ESPECIFICACION_GENERICA,
@@ -395,8 +448,14 @@ PERFIL_GENERICO = PerfilDeMarca(
         MTI_RESPUESTA_COMPRA: OBLIGATORIOS_0110,
         MTI_ECHO: OBLIGATORIOS_0800,
         MTI_RESPUESTA_ECHO: OBLIGATORIOS_0810,
+        MTI_COMPRA_FINANCIERA: OBLIGATORIOS_0200,
+        MTI_RESPUESTA_COMPRA_FINANCIERA: OBLIGATORIOS_0210,
     },
-    politica_por_mti={MTI_COMPRA: _POLITICA_COMPRA, MTI_ECHO: _POLITICA_ECHO},
+    politica_por_mti={
+        MTI_COMPRA: _POLITICA_COMPRA,
+        MTI_ECHO: _POLITICA_ECHO,
+        MTI_COMPRA_FINANCIERA: _POLITICA_COMPRA_FINANCIERA,
+    },
 )
 
 

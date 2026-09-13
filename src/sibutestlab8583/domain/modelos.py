@@ -1,4 +1,6 @@
-"""Modelos del dominio para el recorrido de compra 0100/0110.
+"""Modelos del dominio para los recorridos Multi-MTI de este laboratorio:
+compra/autorizacion (0100/0110), echo de red (0800/0810) y compra financiera
+(0200/0210, B4).
 
 Existen para que no circulen diccionarios anonimos por la aplicacion. Son
 deliberadamente planos: no hay jerarquia de clases ni modelos para MTIs fuera del
@@ -27,6 +29,21 @@ MTI_RESPUESTA_COMPRA = "0110"
 MTI_ECHO = "0800"
 MTI_RESPUESTA_ECHO = "0810"
 
+#: Transaccion financiera (B4, 2026-09-13): primera operacion Multi-MTI que
+#: confirma que `operacion` y `mti` son conceptos separados de verdad, no
+#: solo en el papel (B3 los dejo listos para esto). Dentro de este
+#: laboratorio, 0100 modela una AUTORIZACION (reserva/verificacion, sin mover
+#: fondos por si sola) y 0200 modela una TRANSACCION FINANCIERA (mueve fondos
+#: en el mismo mensaje) -es la distincion de dominio que ISO 8583 documenta en
+#: general para estas dos familias, no una regla de una marca especifica-.
+#: `OPERACION_COMPRA_FINANCIERA` es una intencion DISTINTA de
+#: `OPERACION_COMPRA`, aunque hoy ambas se deriven 1:1 de su MTI: el dia que
+#: 0200 deba representar mas de una intencion segun el codigo de proceso,
+#: quien arme el escenario elegira la operacion explicitamente en vez de
+#: derivarla de `OPERACION_POR_MTI`.
+MTI_COMPRA_FINANCIERA = "0200"
+MTI_RESPUESTA_COMPRA_FINANCIERA = "0210"
+
 #: Identificador de la INTENCION funcional de un escenario (B3, 2026-09-13),
 #: separado del MTI: hoy cada MTI implica exactamente una operacion, asi que
 #: `OPERACION_POR_MTI` alcanza para derivarlo sin ambiguedad. El campo existe
@@ -37,7 +54,12 @@ MTI_RESPUESTA_ECHO = "0810"
 #: son dos strings, y agregar uno tercero no es una migracion, es una linea.
 OPERACION_COMPRA = "purchase"
 OPERACION_ECHO = "network_echo"
-OPERACION_POR_MTI: Mapping[str, str] = {MTI_COMPRA: OPERACION_COMPRA, MTI_ECHO: OPERACION_ECHO}
+OPERACION_COMPRA_FINANCIERA = "financial_purchase"
+OPERACION_POR_MTI: Mapping[str, str] = {
+    MTI_COMPRA: OPERACION_COMPRA,
+    MTI_ECHO: OPERACION_ECHO,
+    MTI_COMPRA_FINANCIERA: OPERACION_COMPRA_FINANCIERA,
+}
 
 #: Campos ISO que transportan datos de tarjeta y nunca se persisten en claro.
 #: Piso UNIVERSAL de dominio -protege estos tres numeros para CUALQUIER
@@ -158,6 +180,29 @@ class DatosEcho:
     exactamente igual que con compra, sin un segundo camino.
     """
 
+    campos_manuales: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "campos_manuales", MappingProxyType(dict(self.campos_manuales)))
+
+
+@dataclass(frozen=True)
+class DatosCompraFinanciera:
+    """Lo que se completa para armar una compra financiera (0200, B4).
+
+    Mismos tres campos que `DatosCompra`, y a proposito: `card_id`/`monto`
+    tienen la misma logica propia (derivar DE2/DE14 de la tarjeta, formatear
+    DE4) para CUALQUIER operacion que mueva fondos con una tarjeta, sea
+    0100 o 0200 -por eso `domain/armado.py` comparte la capa estructural
+    entre ambas en vez de duplicarla-. Es un dataclass propio, no un alias de
+    `DatosCompra`, porque son la entrada de dos OPERACIONES distintas
+    (autorizacion vs. transaccion financiera, ver `OPERACION_COMPRA_FINANCIERA`):
+    confundirlas bajo el mismo tipo volveria a acoplar operacion con MTI,
+    exactamente lo que B4 existe para evitar.
+    """
+
+    card_id: str
+    monto: Decimal
     campos_manuales: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
