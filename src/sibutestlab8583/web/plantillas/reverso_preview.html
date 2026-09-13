@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import encabezado_pagina, senal %}
+{% block titulo %}Reverso financiero · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/historial">Historial</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <a href="/historial/{{ ejecucion_origen_id }}">Ejecución #{{ ejecucion_origen_id }}</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">Reverso</span>
+</nav>
+
+{{ encabezado_pagina(
+  'Reverso financiero',
+  'Construye un mensaje 0400 (reverso), derivado de la ejecución #' ~ ejecucion_origen_id ~
+  ': los datos de la transacción original -monto, terminal, referencia- se copian del snapshot ya
+  registrado, sin que pueda editarlos aquí. Revise antes de ejecutar.'
+) }}
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Derivado de la ejecución</h2>
+    <span class="panel__nota">solo lectura</span>
+  </div>
+  <div class="panel__cuerpo">
+    <div class="metricas">
+      <div class="metrica">
+        <span class="metrica__rotulo">Original</span>
+        <span class="metrica__valor">
+          <a href="/historial/{{ ejecucion_origen_id }}">Ejecución #{{ ejecucion_origen_id }}</a>
+        </span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">MTI original</span>
+        <span class="metrica__valor mono">{{ ejecucion_origen.mti_solicitud }} → {{ ejecucion_origen.mti_respuesta }}</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Monto original</span>
+        <span class="metrica__valor mono">{{ ejecucion_origen.monto }}</span>
+        {% if ejecucion_origen.moneda %}<span class="metrica__nota">moneda {{ ejecucion_origen.moneda }}</span>{% endif %}
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">STAN original</span>
+        <span class="metrica__valor mono">{{ ejecucion_origen.stan }}</span>
+        <span class="metrica__nota">campo 11 de la 0200 -distinto del STAN de este reverso-</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">RRN</span>
+        {% if rrn_original %}
+        <span class="metrica__valor mono">{{ rrn_original }}</span>
+        {% else %}
+        <span class="metrica__valor metrica__valor--vacio" aria-label="sin dato">&mdash;</span>
+        <span class="metrica__nota">la 0200 original no incluyó campo 37</span>
+        {% endif %}
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Código de autorización</span>
+        {% if codigo_autorizacion_original %}
+        <span class="metrica__valor mono">{{ codigo_autorizacion_original }}</span>
+        {% else %}
+        <span class="metrica__valor metrica__valor--vacio" aria-label="sin dato">&mdash;</span>
+        {% endif %}
+      </div>
+      <div class="metrica">
+        <span class="metrica__rotulo">Tarjeta</span>
+        <span class="metrica__valor mono">{{ ejecucion_origen.card_id }}</span>
+        <span class="metrica__nota">identificador de catálogo -nunca el PAN- (el terminal de la 0200 original aparece en la tabla de campos, más abajo)</span>
+      </div>
+    </div>
+    <p class="campo__pista">
+      Todos los datos de este panel provienen del snapshot ya persistido de la ejecución
+      original: si el escenario que la originó se editara después, este reverso no cambiaría.
+    </p>
+  </div>
+</section>
+
+<form method="post" action="/historial/{{ ejecucion_origen_id }}/reverso/ejecutar">
+  <section class="panel">
+    <details class="vista-previa" open>
+      <summary>
+        <span class="panel__titulo">Vista previa del mensaje</span>
+        <span class="panel__nota">{{ mti }}</span>
+      </summary>
+      <div class="panel__cuerpo">
+        <div class="vista-previa__resumen">
+          <div>
+            <span class="vista-previa__rotulo">MTI</span>
+            <span class="mono">{{ mti }}</span>
+          </div>
+          {% if bitmap %}
+          <div>
+            <span class="vista-previa__rotulo">Bitmap</span>
+            <span class="mono">{{ bitmap }}</span>
+          </div>
+          {% endif %}
+          <div>
+            <span class="vista-previa__rotulo">Campos activos</span>
+            <span class="mono">{{ filas|map(attribute='numero')|join(', ') }}</span>
+          </div>
+        </div>
+        <div class="desplazable" tabindex="0" role="region" aria-label="Campos de la vista previa">
+          <table class="tabla">
+            <thead>
+              <tr><th>DE</th><th>Nombre</th><th>Valor</th><th>Origen</th></tr>
+            </thead>
+            <tbody>
+              {% for fila in filas %}
+              <tr>
+                <td><span class="campo-iso">{{ fila.numero }}</span></td>
+                <td>{{ fila.descripcion }}</td>
+                <td><span class="valor-iso">{{ fila.valor }}</span></td>
+                <td>
+                  <span class="chip chip--qa">{{ fila.etiqueta_origen }}</span>
+                  {%- if not fila.es_valor_definitivo %}
+                  <span class="vista-previa__nota-campo">se generará al enviar</span>
+                  {%- endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if raw %}
+        <div class="panel__cuerpo bitmap">
+          <span class="bitmap__rotulo">RAW/HEX</span>
+          <span class="mono bitmap__hex bitmap__hex--raw">{{ raw.hex }}</span>
+          <span class="bitmap__nota">{{ raw.longitud_bytes }} bytes</span>
+        </div>
+        <p class="raw__aviso">
+          {{ senal('invalida', 13) }}
+          Representación reconstruida y segura a partir de los campos ya enmascarados -no son los
+          bytes exactamente transmitidos-. Nunca se calcula ni se guarda un RAW con el PAN completo.
+        </p>
+        {% endif %}
+        <p class="campo__pista">
+          El STAN y la fecha/hora mostrados son solo una forma válida de ejemplo: el valor real
+          se genera recién al ejecutar, y nunca es el mismo STAN de la 0200 original.
+        </p>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel">
+    <div class="panel__cuerpo acciones acciones--columna">
+      <button class="boton" type="submit">
+        {{ senal('transmision', 16) }}
+        Ejecutar reverso
+      </button>
+      <p class="campo__pista">
+        Se transmite al mismo destino que recibió la 0200 original
+        ({{ ejecucion_origen.destino_host }}:{{ ejecucion_origen.destino_puerto }}).
+      </p>
+    </div>
+  </section>
+</form>
+
+<a class="volver" href="/historial/{{ ejecucion_origen_id }}">&larr; Volver a la ejecución original</a>
+{% endblock %}

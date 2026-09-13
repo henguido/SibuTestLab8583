@@ -62,7 +62,12 @@ from ..application.tarjetas import (
 from ..composicion import Composicion, Configuracion
 from ..domain.armado import validar_forma_de_opcionales
 from ..domain.elegibilidad_reverso import puede_generar_operacion_derivada
-from ..domain.errores import ErrorDeCamposManuales, ErrorDelSimulador
+from ..domain.errores import (
+    EjecucionOrigenNoElegible,
+    EjecucionOrigenNoEncontrada,
+    ErrorDeCamposManuales,
+    ErrorDelSimulador,
+)
 from ..domain.expectativas import (
     campos_permitidos_expectativa,
     expectativas_desde_dict,
@@ -81,6 +86,7 @@ from ..domain.modelos import (
     DatosCompra,
     DatosCompraFinanciera,
     DatosEcho,
+    DatosReversoFinanciero,
     DestinoTcp,
     EstadoEjecucion,
     ExpectativaCampo,
@@ -991,8 +997,8 @@ async def detalle_ejecucion(
     mensaje_respuesta = _reconstruir_mensaje_persistido(
         detalle.ejecucion.mti_respuesta, detalle.respuesta
     )
-    # B6: modelo de operacion derivada -indicador pasivo y navegacion, sin
-    # 0400/0410 implementado todavia (ver domain/elegibilidad_reverso.py).
+    # B6: modelo de operacion derivada (indicador + navegacion). B7 conecta
+    # el indicador a una accion real: "Crear reverso" (ver rutas debajo).
     derivadas = await composicion.consultas.derivadas_de(numero)
     elegible_para_derivada = puede_generar_operacion_derivada(detalle.ejecucion)
     return PLANTILLAS.TemplateResponse(
@@ -1007,6 +1013,148 @@ async def detalle_ejecucion(
             derivadas=derivadas,
             elegible_para_derivada=elegible_para_derivada,
         ),
+    )
+
+
+@enrutador.get("/historial/{id_ejecucion}/reverso", response_class=HTMLResponse)
+async def reverso_preview(
+    request: Request,
+    id_ejecucion: str,
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """Vista previa del reverso financiero (0400, B7): la persona ve QUÉ se
+    va a enviar antes de ejecutar -nunca se ejecuta directamente desde el
+    detalle historico (B7, punto 3)-.
+
+    La elegibilidad se revalida aqui (via `ServicioVistaPreviaReversoFinanciero`
+    -> `referencia_origen_elegible`, B6/B7): un id inexistente o no elegible
+    nunca llega a construir un mensaje, sin importar si alguien llega a esta
+    URL sin haber pasado por el boton "Crear reverso" del detalle.
+    """
+    try:
+        numero = int(id_ejecucion)
+    except ValueError:
+        return _no_encontrado(request)
+
+    try:
+        vista = await composicion.vista_previa_reverso_financiero.construir(numero)
+    except EjecucionOrigenNoEncontrada:
+        return _no_encontrado(request)
+    except EjecucionOrigenNoElegible:
+        return _no_encontrado(
+            request,
+            titulo="Esta ejecución no admite un reverso",
+            detalle=(
+                "Solo una compra financiera (0200) aprobada puede originar un reverso "
+                "en este laboratorio."
+            ),
+        )
+
+    # Ya se sabe que `numero` es elegible (la linea de arriba no revento):
+    # `detalle_ejecucion` aqui es solo para mostrar los datos ORIGINALES en
+    # el panel "Derivado de" (B7, punto 4) -RRN incluido, "segun disponibilidad"-,
+    # nunca para decidir nada de negocio otra vez.
+    detalle_origen = await composicion.consultas.detalle_ejecucion(numero)
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="reverso_preview.html",
+        context={
+            "seccion": "historial",
+            "ejecucion_origen_id": numero,
+            "ejecucion_origen": detalle_origen.ejecucion,
+            "rrn_original": detalle_origen.solicitud.valor("37"),
+            "codigo_autorizacion_original": detalle_origen.respuesta.valor("38"),
+            **presentacion.contexto_de_vista_previa(vista, composicion.descripciones_de_campos),
+        },
+    )
+
+
+@enrutador.post("/historial/{id_ejecucion}/reverso/ejecutar", response_class=HTMLResponse)
+async def reverso_ejecutar(
+    request: Request,
+    id_ejecucion: str,
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """POST que SI ejecuta el reverso financiero (0400, B7).
+
+    El destino de transporte es el MISMO host/puerto al que fue la 0200
+    original (`Ejecucion.destino_host`/`destino_puerto`, ya persistidos):
+    un reverso viaja adonde viajó la transacción que reversa, nunca a una
+    conexión que la persona elija en este formulario -no hay ningún campo
+    de conexión en esta pantalla, a propósito (B7, punto 5).
+
+    La elegibilidad del origen se revalida DE NUEVO dentro del orquestador
+    (`Orquestador.ejecutar_reverso_financiero` -> `referencia_origen_elegible`):
+    esta ruta no confía en que la vista previa ya la haya comprobado, para
+    que un POST directo (sin pasar por el preview) no pueda saltarse la
+    regla (B7, puntos 15/16).
+    """
+    try:
+        numero = int(id_ejecucion)
+    except ValueError:
+        return _no_encontrado(request)
+
+    detalle_origen = await composicion.consultas.detalle_ejecucion(numero)
+    if detalle_origen is None or not detalle_origen.ejecucion.destino_host:
+        return _no_encontrado(request)
+
+    destino = DestinoTcp(
+        host=detalle_origen.ejecucion.destino_host,
+        puerto=detalle_origen.ejecucion.destino_puerto,
+    )
+
+    try:
+        orquestador = await composicion.orquestador(destino)
+        resultado = await orquestador.ejecutar_reverso_financiero(
+            DatosReversoFinanciero(ejecucion_origen_id=numero)
+        )
+    except (EjecucionOrigenNoEncontrada, EjecucionOrigenNoElegible):
+        return _no_encontrado(
+            request,
+            titulo="Esta ejecución no admite un reverso",
+            detalle=(
+                "Solo una compra financiera (0200) aprobada puede originar un reverso "
+                "en este laboratorio."
+            ),
+        )
+    except ErrorDelSimulador as error:
+        # Fallo de infraestructura: no es un rechazo del autorizador y no
+        # debe presentarse como tal, ni mostrar la excepcion.
+        return PLANTILLAS.TemplateResponse(
+            request=request,
+            name="no_encontrado.html",
+            context={
+                "seccion": "historial",
+                "titulo": "No se pudo ejecutar el reverso",
+                "detalle": presentacion.aviso_de_error(error).detalle,
+                "ruta_vuelta": f"/historial/{numero}",
+                "texto_vuelta": "Volver a la ejecución original",
+            },
+            status_code=502,
+        )
+
+    contexto_resultado = presentacion.contexto_de_resultado(
+        resultado, destino, composicion.descripciones_de_campos,
+        bitmap_solicitud=composicion.bitmap_hex(resultado.solicitud),
+        bitmap_respuesta=(
+            composicion.bitmap_hex(resultado.respuesta.como_mensaje())
+            if resultado.respuesta else None
+        ),
+        raw_solicitud=composicion.raw_hex_seguro(resultado.solicitud),
+        raw_respuesta=(
+            composicion.raw_hex_seguro(resultado.respuesta.como_mensaje())
+            if resultado.respuesta else None
+        ),
+        seccion="reverso",
+    )
+    # `seccion="reverso"` no es una pantalla de constructor -no hay "/reverso"-,
+    # asi que "reutilizar esta transaccion" ya queda oculto (`rutas_por_seccion`
+    # en resultado.html no reconoce "reverso"); el unico ajuste que hace falta
+    # es "volver" hacia la ejecucion ORIGEN, no hacia una pantalla de nueva
+    # transaccion (B7, punto 17).
+    contexto_resultado["url_volver"] = f"/historial/{numero}"
+    return PLANTILLAS.TemplateResponse(
+        request=request, name="resultado.html", context=contexto_resultado,
     )
 
 
@@ -2288,15 +2436,26 @@ def _corrida_no_encontrada(request: Request):
     )
 
 
-def _no_encontrado(request: Request):
-    """404 con HTML del producto, nunca el JSON por defecto de FastAPI."""
+def _no_encontrado(
+    request: Request,
+    *,
+    titulo: str = "Ejecución no encontrada",
+    detalle: str = "La ejecución solicitada no existe o ya no está disponible.",
+):
+    """404 con HTML del producto, nunca el JSON por defecto de FastAPI.
+
+    `titulo`/`detalle` son personalizables (B7): la misma pantalla sirve
+    tanto para "no existe" como para "existe, pero no es elegible para
+    generar una operación derivada" -dos motivos distintos, misma forma de
+    presentarlos, sin inventar una segunda plantilla de error.
+    """
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="no_encontrado.html",
         context={
             "seccion": "historial",
-            "titulo": "Ejecución no encontrada",
-            "detalle": "La ejecución solicitada no existe o ya no está disponible.",
+            "titulo": titulo,
+            "detalle": detalle,
             "ruta_vuelta": "/historial",
             "texto_vuelta": "Volver al historial",
         },

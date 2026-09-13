@@ -44,19 +44,21 @@
   </div>
 </section>
 
-{# B6: modelo de operacion derivada -todavia sin 0400/0410 implementado-.
-   El indicador es deliberadamente pasivo (un chip, no un boton que finja
-   ejecutar algo que no existe): "elegible" describe una propiedad de esta
-   ejecucion (0200 aprobada, ver domain/elegibilidad_reverso.py), no una
-   accion disponible. #}
+{# B6/B7: modelo de operacion derivada. "Elegible para reverso" describe una
+   propiedad de esta ejecucion (0200 aprobada, ver
+   domain/elegibilidad_reverso.py); "Crear reverso" (B7) es la unica accion
+   que aparece junto al chip, y NUNCA ejecuta directamente -lleva a una
+   pantalla de vista previa (B7, punto 3): la persona ve que se va a enviar
+   antes de confirmar. #}
 {% if elegible_para_derivada or derivadas %}
 <section class="panel">
   <div class="panel__cabecera">
     <h2 class="panel__titulo">Operaciones derivadas</h2>
     {% if elegible_para_derivada %}
-    <span class="chip chip--qa" title="Cumple la regla de elegibilidad para un futuro reverso (0400/0410, todavía no implementado)">
+    <span class="chip chip--qa" title="Cumple la regla de elegibilidad para un reverso (0400/0410)">
       Elegible para reverso
     </span>
+    <a class="boton boton--sm" href="/historial/{{ ejecucion.id }}/reverso">Crear reverso</a>
     {% endif %}
   </div>
   <div class="panel__cuerpo">
