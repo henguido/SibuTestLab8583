@@ -79,6 +79,55 @@ class VariableNoDisponible(ErrorDeVariableDinamica):
     `{{amount}}` en una operacion sin monto, como un echo de red)."""
 
 
+class ExpresionDePasoMalformada(ErrorDeVariableDinamica):
+    """`{{step...}}` no calza la gramatica de una referencia de paso -mismo
+    principio que `ExpresionMalformada`, C2: no se adivina la intencion de
+    una referencia a medio escribir."""
+
+
+class PasoDeSecuenciaDesconocido(ErrorDeVariableDinamica):
+    """El `paso_id` referenciado no existe en esta secuencia. Se valida al
+    guardar la definicion (punto 10 del checkpoint C2) -nunca en ejecucion,
+    si se puede evitar-."""
+
+
+class ReferenciaDePasoHaciaAdelante(ErrorDeVariableDinamica):
+    """Un paso referencia a otro paso que no es estrictamente ANTERIOR (por
+    `orden`) -incluida una referencia a si mismo-. Las variables entre pasos
+    solo pueden resolverse cuando el paso origen ya termino; C2 sigue siendo
+    una secuencia lineal, asi que "anterior" se valida comparando `orden",
+    sin necesitar un grafo de dependencias."""
+
+
+class PasoDeSecuenciaNoEjecutado(ErrorDeVariableDinamica):
+    """El paso origen referenciado no produjo ninguna ejecucion en ESTA
+    corrida (nunca corrio, o `EjecutorDeSecuencia` no le asigno un
+    `ejecucion_id` -ver `application.ejecutor_secuencia`). Nunca se
+    devuelve `None` en silencio: una referencia a un paso sin resultado es
+    un error de precondicion, no un dato ausente."""
+
+
+class CampoDeEjecucionSensible(ErrorDeVariableDinamica):
+    """El campo ISO referenciado (`{{step.X.response.deNN}}`) es sensible
+    -`domain.modelos.CAMPOS_SENSIBLES` o `perfil.es_sensible()`-. Rechazado
+    SIEMPRE, sin importar si el campo esta presente o no en el mensaje: la
+    autoridad de sensibilidad ya consolidada (B3/B6/B7) nunca se duplica ni
+    se relaja para este mecanismo."""
+
+
+class CampoDeEjecucionNoDisponible(ErrorDeVariableDinamica):
+    """El campo ISO referenciado es valido y no sensible, pero el mensaje
+    (solicitud o respuesta) del paso origen no lo trae. Nunca se resuelve a
+    cadena vacia."""
+
+
+class MetadataDeEjecucionDesconocida(ErrorDeVariableDinamica):
+    """El namespace/campo de metadata referenciado (algo distinto de
+    `request`/`response`/`execution_id`) no existe. Cubre tambien un
+    numero de campo ISO que el perfil activo no declara en absoluto -nunca
+    se asume un tipo o forma para un campo desconocido."""
+
+
 class ErrorDeOperacionDerivada(ErrorDelSimulador, ValueError):
     """Raiz de errores al construir una operacion derivada (reverso, B7).
 

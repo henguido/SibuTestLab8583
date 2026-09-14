@@ -474,6 +474,21 @@ COLUMNAS_AGREGADAS_ESCENARIOS: tuple[tuple[str, str], ...] = (
     ("operacion", "TEXT NOT NULL DEFAULT 'purchase'"),
 )
 
+#: C2 (2026-09-14): `paso_id` -identificador estable de paso, distinto de
+#: `orden`- es posterior a C1, que nunca lo necesito. Aditiva y nullable:
+#: una secuencia guardada antes de C2 simplemente no tiene id estable en
+#: sus pasos hasta que se vuelva a guardar (`ServicioSecuencias` lo genera
+#: si falta, ver domain/modelos.py::PasoSecuencia).
+COLUMNAS_AGREGADAS_SECUENCIA_TRANSACCIONAL_PASOS: tuple[tuple[str, str], ...] = (
+    ("paso_id", "TEXT"),
+)
+
+#: Lo mismo para `corrida_secuencia_pasos`: copia historica del `paso_id`
+#: vigente al presembrar el paso (mismo criterio que `escenario_nombre`).
+COLUMNAS_AGREGADAS_CORRIDA_SECUENCIA_PASOS: tuple[tuple[str, str], ...] = (
+    ("paso_id", "TEXT"),
+)
+
 #: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
 #: (titular en adelante) son posteriores a bases ya creadas por un clon
 #: anterior de este repositorio.
@@ -738,6 +753,13 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await _migrar(conexion, "escenarios", COLUMNAS_AGREGADAS_ESCENARIOS)
         await _migrar(conexion, "tarjetas_prueba", COLUMNAS_AGREGADAS_TARJETAS)
         await _migrar(conexion, "destinos", COLUMNAS_AGREGADAS_DESTINOS)
+        await _migrar(
+            conexion, "secuencia_transaccional_pasos",
+            COLUMNAS_AGREGADAS_SECUENCIA_TRANSACCIONAL_PASOS,
+        )
+        await _migrar(
+            conexion, "corrida_secuencia_pasos", COLUMNAS_AGREGADAS_CORRIDA_SECUENCIA_PASOS
+        )
         # Corre AL FINAL de las migraciones de columnas: reconstruye la tabla
         # completa (ver docstring), asi que necesita que todas las columnas
         # modernas ya existan -si una base historica todavia no tenia

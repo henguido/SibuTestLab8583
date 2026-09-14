@@ -907,6 +907,18 @@ class PasoSecuencia:
     `expectativas` solo aplica a un paso derivado: uno independiente ya trae
     las suyas en el escenario referenciado, y duplicarlas aqui crearia dos
     fuentes de la misma expectativa que podrian desincronizarse.
+
+    `paso_id` (C2, 2026-09-14): identificador ESTABLE del paso, elegido por
+    quien define la secuencia (p. ej. "purchase"/"reversal"), DISTINTO de
+    `orden`. Existe para que una referencia entre pasos
+    (`{{step.<paso_id>...}}`, ver `application/variables_secuencia.py`) no
+    quede apuntando al paso incorrecto si la secuencia se reordena en el
+    futuro -`orden` sigue siendo la autoridad de PRECEDENCIA temporal (un
+    paso solo puede referenciar a otro con `orden` estrictamente menor),
+    pero nunca la LLAVE de referencia-. Opcional con default `None` -y no
+    obligatorio- para no romper la definicion de C1 (que nunca lo
+    necesito): `ServicioSecuencias` genera uno estable (`paso{orden}`) si
+    falta, nunca lo deja vacio en lo que persiste.
     """
 
     orden: int
@@ -914,6 +926,7 @@ class PasoSecuencia:
     escenario_id: str | None = None
     origen_paso_orden: int | None = None
     expectativas: Expectativas | None = None
+    paso_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.origen_tipo == ORIGEN_PASO_INDEPENDIENTE:
@@ -1024,6 +1037,10 @@ class PasoCorridaSecuencia:
     registrada, mismo principio que `escenario_nombre` en `ItemCorridaSuite`-.
     `ejecucion_id` es `None` cuando el paso quedo `BLOQUEADO`: nunca se llego
     a generar ninguna ejecucion para el.
+
+    `paso_id` (C2): copia del identificador estable del paso en la
+    definicion al momento de correr -mismo criterio de copia que
+    `escenario_nombre`-.
     """
 
     corrida_id: int
@@ -1036,3 +1053,4 @@ class PasoCorridaSecuencia:
     ejecucion_id: int | None = None
     detalle: str | None = None
     evaluacion_json: str | None = None
+    paso_id: str | None = None

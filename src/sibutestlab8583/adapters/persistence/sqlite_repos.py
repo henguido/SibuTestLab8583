@@ -750,8 +750,7 @@ class RepositorioSecuenciasSQLite(_RepositorioSQLite):
     ) -> tuple[PasoSecuencia, ...]:
         conexion.row_factory = aiosqlite.Row
         async with conexion.execute(
-            "SELECT orden, origen_tipo, escenario_id, origen_paso_orden, expectativas_json"
-            " FROM secuencia_transaccional_pasos WHERE secuencia_id = ? ORDER BY orden",
+            "SELECT * FROM secuencia_transaccional_pasos WHERE secuencia_id = ? ORDER BY orden",
             (secuencia_id,),
         ) as cursor:
             filas = await cursor.fetchall()
@@ -786,8 +785,8 @@ class RepositorioSecuenciasSQLite(_RepositorioSQLite):
                 await conexion.executemany(
                     "INSERT INTO secuencia_transaccional_pasos"
                     " (secuencia_id, orden, origen_tipo, escenario_id, origen_paso_orden,"
-                    "  expectativas_json)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    "  expectativas_json, paso_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     [
                         (
                             secuencia.secuencia_id,
@@ -800,6 +799,7 @@ class RepositorioSecuenciasSQLite(_RepositorioSQLite):
                                 if paso.expectativas
                                 else None
                             ),
+                            paso.paso_id,
                         )
                         for paso in secuencia.pasos
                     ],
@@ -844,8 +844,8 @@ class RepositorioCorridasSecuenciaSQLite(_RepositorioSQLite):
             await conexion.executemany(
                 "INSERT INTO corrida_secuencia_pasos"
                 " (corrida_id, orden, escenario_id, escenario_nombre, origen_tipo,"
-                "  origen_paso_orden, resultado, ejecucion_id, detalle, evaluacion_json)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  origen_paso_orden, resultado, ejecucion_id, detalle, evaluacion_json, paso_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         corrida_id,
@@ -858,6 +858,7 @@ class RepositorioCorridasSecuenciaSQLite(_RepositorioSQLite):
                         paso.ejecucion_id,
                         paso.detalle,
                         paso.evaluacion_json,
+                        paso.paso_id,
                     )
                     for paso in pasos
                 ],
@@ -973,6 +974,7 @@ def _a_paso_secuencia(fila: aiosqlite.Row) -> PasoSecuencia:
         expectativas=(
             expectativas_desde_dict(json.loads(expectativas_json)) if expectativas_json else None
         ),
+        paso_id=_opcional(fila, "paso_id"),
     )
 
 
@@ -1011,6 +1013,7 @@ def _a_paso_corrida_secuencia(fila: aiosqlite.Row) -> PasoCorridaSecuencia:
         ejecucion_id=fila["ejecucion_id"],
         detalle=fila["detalle"],
         evaluacion_json=fila["evaluacion_json"],
+        paso_id=_opcional(fila, "paso_id"),
     )
 
 
