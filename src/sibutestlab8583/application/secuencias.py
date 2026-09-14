@@ -29,6 +29,7 @@ from ..domain.modelos import (
     Secuencia,
 )
 from ..domain.puertos import RepositorioEscenarios, RepositorioSecuencias
+from .variables_secuencia import paso_id_referenciado as _paso_id_referenciado
 
 #: Prefijo legible del id autogenerado, igual criterio que `PREFIJO_SUITE_ID`.
 PREFIJO_SECUENCIA_ID = "SEQ"
@@ -38,12 +39,17 @@ PREFIJO_SECUENCIA_ID = "SEQ"
 class DatosPaso:
     """Lo que la pantalla de creacion de secuencias necesita por paso -antes
     de convertirse en `PasoSecuencia` (que ya exige la validacion completa
-    de mutua exclusion entre `escenario_id`/`origen_paso_orden`)."""
+    de mutua exclusion entre `escenario_id`/`origen_paso_orden`).
+
+    `paso_id` (C2) es opcional: si no se indica, `ServicioSecuencias` genera
+    uno estable (`paso{N}`) -nunca lo deja vacio en lo que persiste-.
+    """
 
     origen_tipo: str
     escenario_id: str | None = None
     origen_paso_orden: int | None = None
     expectativas: Expectativas | None = None
+    paso_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,17 +79,38 @@ async def _validar_pasos(
     dentro de esta misma lista (nunca hacia adelante, nunca hacia si mismo:
     ambas reglas ya las exige `PasoSecuencia.__post_init__`, mas la de
     "anterior" se verifica aqui porque necesita ver la lista completa).
+
+    C2: ademas asigna/valida `paso_id` -unico dentro de la secuencia, y
+    generado (`paso{N}`) si no se indico-, y valida CUALQUIER referencia de
+    paso (`{{step.<id>...}}`, `application.variables_secuencia`) que el
+    escenario de un paso independiente tenga guardada: el `paso_id`
+    mencionado debe existir en esta secuencia y ser ESTRICTAMENTE ANTERIOR
+    (punto 10/11 del checkpoint: rechazar referencias hacia adelante o
+    circulares al GUARDAR la definicion, no en ejecucion).
     """
     if not pasos:
         raise ValueError("Una secuencia necesita al menos un paso.")
+
+    ids_vistos: set[str] = set()
+    paso_ids_por_orden: dict[int, str] = {}
+    for orden, datos in enumerate(pasos, start=1):
+        paso_id = datos.paso_id or f"paso{orden}"
+        if paso_id in ids_vistos:
+            raise ValueError(f"paso {orden}: el identificador {paso_id!r} ya se usó en esta secuencia.")
+        ids_vistos.add(paso_id)
+        paso_ids_por_orden[orden] = paso_id
 
     construidos: list[PasoSecuencia] = []
     for orden, datos in enumerate(pasos, start=1):
         if datos.origen_tipo == ORIGEN_PASO_INDEPENDIENTE:
             if not datos.escenario_id:
                 raise ValueError(f"paso {orden}: indique un escenario.")
-            if await repositorio_escenarios.obtener(datos.escenario_id) is None:
+            escenario = await repositorio_escenarios.obtener(datos.escenario_id)
+            if escenario is None:
                 raise ValueError(f"paso {orden}: no existe el escenario {datos.escenario_id!r}.")
+            _validar_referencias_de_paso(
+                orden, escenario.campos_manuales, paso_ids_por_orden
+            )
         elif datos.origen_tipo == ORIGEN_PASO_DERIVADO:
             if datos.origen_paso_orden is None:
                 raise ValueError(f"paso {orden}: indique de qué paso anterior deriva.")
@@ -104,9 +131,31 @@ async def _validar_pasos(
                     datos.origen_paso_orden if datos.origen_tipo == ORIGEN_PASO_DERIVADO else None
                 ),
                 expectativas=datos.expectativas,
+                paso_id=paso_ids_por_orden[orden],
             )
         )
     return tuple(construidos)
+
+
+def _validar_referencias_de_paso(
+    orden_actual: int, campos_manuales, paso_ids_por_orden: dict[int, str]
+) -> None:
+    ordenes_por_paso_id = {v: k for k, v in paso_ids_por_orden.items()}
+    for numero, valor in campos_manuales.items():
+        referencia = _paso_id_referenciado(valor)
+        if referencia is None:
+            continue
+        orden_origen = ordenes_por_paso_id.get(referencia)
+        if orden_origen is None:
+            raise ValueError(
+                f"paso {orden_actual}: el campo {numero} referencia el paso "
+                f"{referencia!r}, que no existe en esta secuencia."
+            )
+        if orden_origen >= orden_actual:
+            raise ValueError(
+                f"paso {orden_actual}: el campo {numero} referencia el paso "
+                f"{referencia!r}, que no es un paso ANTERIOR."
+            )
 
 
 class ServicioSecuencias:
