@@ -55,9 +55,12 @@ from ..domain.modelos import (
     DestinoTcp,
     EstadoCorridaSuite,
     EstadoPasoSecuencia,
+    IntentoPasoSecuencia,
     PasoCorridaSecuencia,
     PasoSecuencia,
+    PoliticaContinuacion,
     Secuencia,
+    es_estado_tecnico,
 )
 from ..domain.puertos import RepositorioCorridasSecuencia, RepositorioEjecuciones
 from ..domain.secuencias import calcular_resultado_global_secuencia
@@ -69,6 +72,7 @@ from .secuencias import ServicioSecuencias
 from .variables_secuencia import (
     es_referencia_de_paso,
     parece_referencia_de_paso_malformada,
+    resolver_expectativas_de_paso,
     resolver_referencia_de_paso,
 )
 
@@ -102,6 +106,23 @@ _MOTIVO_REFERENCIA_DE_PASO_INVALIDA = (
 )
 _MOTIVO_REFERENCIA_DE_PASO_SIN_ORIGEN = (
     "Este paso referencia un valor de otro paso que no llegó a producir ninguna ejecución."
+)
+#: C3: motivo especifico por cada estado TECNICO (nunca aplanados a un unico
+#: texto generico -punto 22 del checkpoint: "timeout" conserva su propia
+#: categoria de auditoria, aunque a nivel de EstadoPasoSecuencia siga siendo
+#: ERROR-). Se usa SOLO cuando la ejecucion se completo (hay `Ejecucion`
+#: persistida) pero su desenlace transaccional nunca fue una respuesta real
+#: -ver `domain.modelos.es_estado_tecnico`-.
+_MOTIVO_TECNICO_POR_ESTADO = {
+    "timeout": "La transacción se transmitió pero no llegó respuesta dentro del límite (timeout).",
+    "error_conexion": "No se pudo establecer la sesión TCP con el destino.",
+    "error_transmision": "El intercambio con el destino quedó indeterminado (no se puede demostrar qué se transmitió).",
+    "no_enviada": "La transacción no llegó a intentar transmisión por la red.",
+    "invalida": "La respuesta recibida no correspondía a la solicitud enviada.",
+}
+_MOTIVO_DETENIDO_POR_POLITICA = (
+    "No se ejecutó: el paso {orden} terminó en {causa} y su política de continuación "
+    "es DETENER."
 )
 
 #: Etiqueta para MOSTRAR de cada operacion derivada soportada (B8). Ampliable
@@ -174,10 +195,30 @@ class EjecutorDeSecuencia:
 
         contexto = ContextoSecuencia()
         conteos: dict[EstadoPasoSecuencia, int] = {estado: 0 for estado in EstadoPasoSecuencia}
+        #: C3: distinto de `None` en cuanto un paso con `on_error`/`on_qa_fail`
+        #: = DETENER termina en ERROR/FAIL. A partir de ahi, TODOS los pasos
+        #: siguientes -independientes Y derivados- quedan BLOQUEADO sin
+        #: intentarse (nunca se llama a `_ejecutar_paso`): la politica de
+        #: flujo detiene la SECUENCIA, nunca inventa un resultado distinto de
+        #: BLOQUEADO para lo que no se llego a intentar (mismo estado que ya
+        #: usa C1 para "precondicion no cumplida" -diferenciado por
+        #: `detalle`, nunca un enum nuevo, ver `PoliticaContinuacion`).
+        detenido_por: tuple[int, str] | None = None
         for paso in pasos_ordenados:
-            resultado, ejecucion_id, detalle, evaluacion_json = await self._ejecutar_paso(
-                paso, contexto
-            )
+            if detenido_por is not None:
+                orden_causante, causa = detenido_por
+                resultado = EstadoPasoSecuencia.BLOQUEADO
+                ejecucion_id = None
+                detalle = _MOTIVO_DETENIDO_POR_POLITICA.format(orden=orden_causante, causa=causa)
+                evaluacion_json = None
+            else:
+                resultado, ejecucion_id, detalle, evaluacion_json = await self._ejecutar_paso(
+                    paso, contexto, corrida_id
+                )
+                if resultado is EstadoPasoSecuencia.ERROR and paso.on_error == PoliticaContinuacion.DETENER.value:
+                    detenido_por = (paso.orden, "ERROR")
+                elif resultado is EstadoPasoSecuencia.FAIL and paso.on_qa_fail == PoliticaContinuacion.DETENER.value:
+                    detenido_por = (paso.orden, "FAIL de QA")
             if ejecucion_id is not None:
                 contexto.registrar(paso.orden, ejecucion_id, paso_id=paso.paso_id)
             conteos[resultado] += 1
@@ -232,10 +273,10 @@ class EjecutorDeSecuencia:
         return nombres
 
     async def _ejecutar_paso(
-        self, paso: PasoSecuencia, contexto: ContextoSecuencia
+        self, paso: PasoSecuencia, contexto: ContextoSecuencia, corrida_id: int
     ) -> tuple[EstadoPasoSecuencia, int | None, str | None, str | None]:
         if paso.origen_tipo == ORIGEN_PASO_INDEPENDIENTE:
-            return await self._ejecutar_paso_independiente(paso, contexto)
+            return await self._ejecutar_paso_independiente(paso, contexto, corrida_id)
         return await self._ejecutar_paso_derivado(paso, contexto)
 
     async def _resolver_referencias_de_paso(
@@ -262,7 +303,7 @@ class EjecutorDeSecuencia:
         return resueltos
 
     async def _ejecutar_paso_independiente(
-        self, paso: PasoSecuencia, contexto: ContextoSecuencia
+        self, paso: PasoSecuencia, contexto: ContextoSecuencia, corrida_id: int
     ) -> tuple[EstadoPasoSecuencia, int | None, str | None, str | None]:
         """Delega enteramente en `EjecutorDeEscenarios`: mismo mecanismo que
         ya usa `CorredorDeSuites._ejecutar_item` para un escenario suelto.
@@ -270,7 +311,19 @@ class EjecutorDeSecuencia:
         escenario tenga guardada en sus campos manuales -la EXPRESION queda
         intacta en el escenario (Fase A: nunca se congela un valor
         resuelto); solo esta ejecucion concreta recibe el valor ya literal.
-        """
+
+        C3: si `paso.max_retries > 0` (hoy solo posible para un escenario
+        Echo, validado al guardar la secuencia -`application.secuencias.
+        _validar_pasos`-), reintenta hasta `max_retries` veces cuando el
+        intento anterior fallo TECNICAMENTE (timeout, error de conexion/
+        transmision -`es_estado_tecnico`, mismo criterio que `_clasificar`-).
+        Nunca reintenta un error de configuracion (escenario/tarjeta
+        inexistente, referencia de paso invalida): reintentar eso repetiria
+        el mismo fallo sin ninguna posibilidad de exito. CADA intento se
+        registra por separado (`IntentoPasoSecuencia`, nunca se sobrescribe
+        el anterior) -el resultado devuelto es el del ULTIMO intento (el
+        primero que tuvo una respuesta real, o el ultimo si todos
+        fallaron)."""
         escenario = await self._escenarios.obtener(paso.escenario_id)
         if escenario is None:
             return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_ENCONTRADO, None
@@ -289,24 +342,50 @@ class EjecutorDeSecuencia:
         ):
             return EstadoPasoSecuencia.ERROR, None, _MOTIVO_REFERENCIA_DE_PASO_INVALIDA, None
 
-        try:
-            resultado = await self._ejecutor_escenarios.ejecutar(
-                paso.escenario_id,
-                campos_manuales_extra=campos_resueltos or None,
-            )
-        except EscenarioNoEncontrado:
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_ENCONTRADO, None
-        except EscenarioNoEjecutable:
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_EJECUTABLE, None
-        except TarjetaDesconocida:
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_TARJETA_DESCONOCIDA, None
-        except ErrorDelSimulador:
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ERROR_DEL_SIMULADOR, None
-        except Exception:
-            # Excepcion no contemplada: nunca su texto, nunca traceback.
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_FALLO_INESPERADO, None
+        total_intentos = paso.max_retries + 1
+        for numero_intento in range(1, total_intentos + 1):
+            try:
+                resultado = await self._ejecutor_escenarios.ejecutar(
+                    paso.escenario_id,
+                    campos_manuales_extra=campos_resueltos or None,
+                )
+            except EscenarioNoEncontrado:
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_ENCONTRADO, None
+            except EscenarioNoEjecutable:
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_EJECUTABLE, None
+            except TarjetaDesconocida:
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_TARJETA_DESCONOCIDA, None
+            except ErrorDelSimulador:
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ERROR_DEL_SIMULADOR, None
+            except Exception:
+                # Excepcion no contemplada: nunca su texto, nunca traceback.
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_FALLO_INESPERADO, None
 
-        return _clasificar(resultado.ejecucion)
+            estado, ejecucion_id, detalle, evaluacion_json = _clasificar(resultado.ejecucion)
+
+            if paso.max_retries > 0:
+                await self._corridas.registrar_intento(
+                    IntentoPasoSecuencia(
+                        corrida_id=corrida_id,
+                        orden=paso.orden,
+                        numero_intento=numero_intento,
+                        resultado=estado,
+                        ejecucion_id=ejecucion_id,
+                        detalle=detalle,
+                        creado_en=self._reloj(),
+                    )
+                )
+
+            es_reintentable = (
+                estado is EstadoPasoSecuencia.ERROR
+                and ejecucion_id is not None
+                and es_estado_tecnico(resultado.ejecucion.estado)
+            )
+            if not (es_reintentable and numero_intento < total_intentos):
+                return estado, ejecucion_id, detalle, evaluacion_json
+
+        # Inalcanzable: el bucle siempre retorna dentro del for.
+        raise AssertionError("_ejecutar_paso_independiente: bucle de reintentos sin retorno")
 
     async def _ejecutar_paso_derivado(
         self, paso: PasoSecuencia, contexto: ContextoSecuencia
@@ -317,6 +396,11 @@ class EjecutorDeSecuencia:
         mano: `Orquestador.ejecutar_reverso_financiero`/
         `ejecutar_aviso_reverso` ya hacen toda la resolucion/validacion
         segura (B6/B7/B8) -este metodo solo elige CUAL de las dos llamar.
+
+        C3: antes de invocar al orquestador, resuelve cualquier expectativa
+        DINAMICA que este paso tenga (`{{step...}}` como valor esperado,
+        punto 12 del checkpoint) -mismo mecanismo y mismos errores que ya
+        usa `_resolver_referencias_de_paso` para `campos_manuales`.
         """
         ejecucion_origen_id = contexto.ejecucion_id_de(paso.origen_paso_orden)
         if ejecucion_origen_id is None:
@@ -326,18 +410,32 @@ class EjecutorDeSecuencia:
         if origen is None or not origen.destino_host:
             return EstadoPasoSecuencia.BLOQUEADO, None, _MOTIVO_ORIGEN_SIN_DESTINO, None
 
+        try:
+            expectativas_resueltas, resoluciones = await resolver_expectativas_de_paso(
+                paso.expectativas, contexto, self._ejecuciones, self._perfil
+            )
+        except PasoDeSecuenciaNoEjecutado:
+            return EstadoPasoSecuencia.BLOQUEADO, None, _MOTIVO_REFERENCIA_DE_PASO_SIN_ORIGEN, None
+        except (
+            ExpresionDePasoMalformada,
+            CampoDeEjecucionSensible,
+            CampoDeEjecucionNoDisponible,
+            MetadataDeEjecucionDesconocida,
+        ):
+            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_REFERENCIA_DE_PASO_INVALIDA, None
+
         destino = DestinoTcp(host=origen.destino_host, puerto=origen.destino_puerto)
         try:
             orquestador = await self._fabrica_orquestador(destino, None)
             if paso.operacion_derivada == OPERACION_AVISO_REVERSO:
                 resultado = await orquestador.ejecutar_aviso_reverso(
                     DatosAvisoReverso(ejecucion_origen_id=ejecucion_origen_id),
-                    expectativas=paso.expectativas,
+                    expectativas=expectativas_resueltas,
                 )
             else:
                 resultado = await orquestador.ejecutar_reverso_financiero(
                     DatosReversoFinanciero(ejecucion_origen_id=ejecucion_origen_id),
-                    expectativas=paso.expectativas,
+                    expectativas=expectativas_resueltas,
                 )
         except (EjecucionOrigenNoEncontrada, EjecucionOrigenNoElegible):
             return EstadoPasoSecuencia.BLOQUEADO, None, _MOTIVO_ORIGEN_NO_ELEGIBLE, None
@@ -346,7 +444,18 @@ class EjecutorDeSecuencia:
         except Exception:
             return EstadoPasoSecuencia.ERROR, None, _MOTIVO_FALLO_INESPERADO, None
 
-        return _clasificar(resultado.ejecucion)
+        estado, ejecucion_id, detalle, evaluacion_json = _clasificar(resultado.ejecucion)
+        if resoluciones:
+            # Auditoria (punto 14): la expresion Y el valor efectivamente
+            # usado quedan escritos en `detalle`, nunca solo uno de los dos
+            # -incluso cuando el paso resulto PASS/FAIL, donde `detalle`
+            # normalmente queda en None.
+            nota = "; ".join(
+                f"expectativa dinámica DE{numero}: {expresion} → {valor}"
+                for numero, expresion, valor in resoluciones
+            )
+            detalle = f"{detalle} ({nota})" if detalle else nota
+        return estado, ejecucion_id, detalle, evaluacion_json
 
 
 def _clasificar(
@@ -355,9 +464,25 @@ def _clasificar(
     """Clasifica una `Ejecucion` ya persistida en su `EstadoPasoSecuencia` -
     mismo criterio que `CorredorDeSuites._ejecutar_item`: nunca recalcula
     Expected vs Actual, solo lee `evaluacion_estado`/`evaluacion_json`.
+
+    C3: cuando NO hay expectativas (`evaluacion_estado` es `None`), ya no se
+    asume automaticamente `SIN_EXPECTATIVAS` -antes de C3, una 0200 aprobada
+    sin expectativas y una 0200 con TIMEOUT sin expectativas caian en el
+    MISMO estado, perdiendo la diferencia entre "no habia nada que
+    reportar" y "algo se rompio tecnicamente". Ahora se distingue por
+    `es_estado_tecnico(ejecucion.estado)`: un desenlace TECNICO (timeout,
+    error de conexion/transmision, no enviada, invalida) sin expectativas es
+    `ERROR` -activa `on_error`, nunca `on_qa_fail`-; un desenlace
+    TRANSACCIONAL real (aprobada o rechazada) sin expectativas sigue siendo
+    `SIN_EXPECTATIVAS`, exactamente como antes -un rechazo transaccional
+    (DE39 negativo) sin expectativa que lo contradiga NUNCA es FAIL QA ni
+    ERROR, sigue sin ser un fallo (punto 3/20 del checkpoint B8->C3).
     """
     if ejecucion.evaluacion_estado == "pass":
         return EstadoPasoSecuencia.PASS, ejecucion.id, None, ejecucion.evaluacion_json
     if ejecucion.evaluacion_estado == "fail":
         return EstadoPasoSecuencia.FAIL, ejecucion.id, None, ejecucion.evaluacion_json
+    if es_estado_tecnico(ejecucion.estado):
+        motivo = _MOTIVO_TECNICO_POR_ESTADO.get(ejecucion.estado.value, _MOTIVO_FALLO_INESPERADO)
+        return EstadoPasoSecuencia.ERROR, ejecucion.id, motivo, None
     return EstadoPasoSecuencia.SIN_EXPECTATIVAS, ejecucion.id, None, None

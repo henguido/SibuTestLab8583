@@ -22,7 +22,8 @@ qué fase está en qué estado:
 | B — Modelo multi-MTI, subfase B7 (reverso interactivo real, 0400/0410) | **IMPLEMENTADA**, integrada a `main` (merge `6a31ce3`) |
 | C — Secuencias transaccionales, subfase C1 (infraestructura mínima: 0200 → 0400 dependiente) | **IMPLEMENTADA**, integrada a `main` (merge `989991e`) |
 | C — Secuencias transaccionales, subfase C2 (contexto y variables entre pasos: `{{step.<id>...}}`) | **IMPLEMENTADA**, integrada a `main` (merge `04372ba`) |
-| B — Modelo multi-MTI, subfase B8 (aviso de reverso, 0420/0430) | **IMPLEMENTADA** en `feature/multi-mti-b8-reversal-advice-0420` (commits `cc2479e`/`b298ee7`/`a242bc5`/`6add431`, sin mergear a `main`, en revisión) |
+| B — Modelo multi-MTI, subfase B8 (aviso de reverso, 0420/0430) | **IMPLEMENTADA**, integrada a `main` (merge `9a7dd32`) |
+| C — Secuencias transaccionales, subfase C3 (política de continuación STOP/CONTINUE, expectativas dinámicas, retry mínimo seguro) | **IMPLEMENTADA** en `feature/secuencias-c3-control-flujo` (commits `f5c9821`/`aa972c6`/`171129d`/`ec7bd2b`/`282fcab`, sin mergear a `main`, en revisión) |
 | D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
@@ -417,7 +418,7 @@ en paralelo a B si conviene por capacidad disponible.
 |---|---|---|---|
 | C1 | Infraestructura mínima: `Secuencia`/`PasoSecuencia`, `ContextoSecuencia`, tablas nuevas, secuencia de 2 pasos DEPENDIENTES, sin CONTINUE_ON_FAILURE, sin retries, sin timeout de secuencia | Fase B (B6/B7 ya completas) | **COMPLETO**, integrado a `main` (`989991e`) |
 | C2 | Variables entre pasos (`{{step.<id>.request\|response.deNN}}`, `{{step.<id>.execution_id}}`) | C1 | **COMPLETO**, integrado a `main` (`04372ba`) |
-| C3 | CONTINUE_ON_FAILURE, retries por paso, timeout de paso | C1, C2 | Planificado — próximo bloque recomendado (ver sección 12.O) |
+| C3 | Política de continuación (STOP/CONTINUE) ante ERROR/FAIL QA, expectativas dinámicas, retry mínimo seguro (exclusivo de Echo) | C1, C2, B8 | **COMPLETO** en rama, ver reporte de checkpoint (sección 13) |
 | C4 | Comparación de corridas de secuencia (equivalente a `comparacion_corridas.py`) | C1, al menos una corrida real que comparar | Planificado |
 
 **Nota (B8, 2026-09-14):** el motor de C1/C2 ya soporta una segunda operación derivada (aviso de
@@ -1202,23 +1203,138 @@ propias suites (`test_ejecutor_secuencia.py`, `test_e2e_variables_secuencia.py`,
 validacion_referencias_de_paso.py`, etc.) pasan sin modificación.
 
 **O. Commits:** `cc2479e` (B8.1-B8.3: semántica/perfil/builder/orquestador), `b298ee7` (B8.4: UI
-interactiva), `a242bc5` (B8.5: secuencias), `6add431` (B8.6a: seguridad). **No mergeado a
-`main`** — queda en `feature/multi-mti-b8-reversal-advice-0420`, pendiente de revisión del
-propietario.
+interactiva), `a242bc5` (B8.5: secuencias), `6add431` (B8.6a: seguridad). Integrado a `main`
+(merge `9a7dd32`) tras el checkpoint — ver sección 13 para el bloque siguiente (C3).
 
-**Próximo paso — decisión con evidencia real, no supuesta:** dos caminos disponibles, ninguno
-bloqueado por el otro:
-1. **C3** — control de flujo avanzado (CONTINUE_ON_FAILURE, retries por paso, timeout de paso).
-   B8 demostró que el motor de secuencias generaliza bien a una segunda operación derivada sin
-   tocar su núcleo (`ContextoSecuencia`, validación de pasos); C3 es la extensión natural de ESE
-   mismo motor, no de las operaciones ISO en sí.
-2. **Fase D — Host Simulator 2.0.** B8 no tocó `HostSimulado` en absoluto (punto H): su
-   generalidad ya cubrió 0420 sin cambios, lo cual sugiere que el simulador actual sigue
-   teniendo margen antes de necesitar una versión 2.0 — un argumento en contra de priorizar D
-   ahora mismo, no a favor.
+**Próximo paso, decidido con la evidencia de este checkpoint:** el propietario eligió **C3**
+(control de flujo avanzado) antes que Fase D (Host Simulator 2.0) — B8 demostró que el motor de
+secuencias generaliza bien a una segunda operación derivada sin tocar su núcleo
+(`ContextoSecuencia`, validación de pasos), mientras que `HostSimulado` no necesitó ningún
+cambio para soportar 0420 (punto H), señal de que el simulador actual todavía tiene margen. Ver
+checkpoint C3 en la sección 13.
 
-Con la evidencia de B8 (el simulador no necesitó tocarse, la arquitectura de secuencias sí
-generalizó sin fricción), la recomendación de este checkpoint es **C3**: hay más señal de que el
-motor de secuencias está listo para su siguiente incremento de complejidad que de que el
-simulador la necesite. **No se avanzó a ninguna de las dos todavía** — decisión pendiente del
-propietario.
+## 13. Checkpoint C3 — Control de flujo avanzado de secuencias
+
+**Estado: COMPLETO para el alcance acordado.** Rama `feature/secuencias-c3-control-flujo`,
+commits `f5c9821` (C3.1-C3.2: modelo/migración/motor STOP-CONTINUE), `aa972c6` (C3.3: E2E real +
+tabla de verdad del resultado global), `171129d` (C3.4: expectativas dinámicas), `ec7bd2b` (C3.5:
+retry mínimo y seguro), `282fcab` (C3.6: UI de intentos). **No mergeado a `main`** — queda en la
+rama, pendiente de revisión del propietario.
+
+**A. Integración de B8:** confirmada antes de abrir C3 — `main`/`origin/main` en `9a7dd32`, suite
+completa 1393 tests (1391 passed + 2 skipped por un `PATH` de shell sin `sibu-run-suite`, no una
+regresión — confirmado corrigiendo el `PATH` de la sesión: 1393 passed/0 skipped). Base de datos
+real verificada (`operacion_derivada` presente, 10 pasos existentes preservados como
+`financial_reversal`, 5 secuencias preservadas, `PRAGMA foreign_key_check` vacío). Cuatro smokes
+reales post-merge: (1) 0200→0400, (2) 0200→0420, (3) el historial del origen lista ambas
+derivadas (0400 y 0420) con enlaces, (4) una secuencia con referencia C2
+(`{{step.purchase.response.de38}}`) sigue transmitiendo el valor real sin regresión — confirmado
+también navegando la Ejecución #94 en el navegador real. `git push origin main`: `HEAD` ==
+`origin/main` == `9a7dd32`.
+
+**B. Investigación previa y un hallazgo que cambió el diseño:** cuatro agentes read-only
+(motor de secuencias, expectativas, retry, UX/auditoría) antes de escribir código. El hallazgo
+más importante del Agente A: **el bucle de `EjecutorDeSecuencia._correr` nunca se detuvo por sí
+mismo desde C1** — lo que en C1 parecía "detenerse" era siempre el efecto emergente de un paso
+DERIVADO sin contexto válido (`BLOQUEADO` por precondición/elegibilidad), nunca una decisión de
+flujo real. Esto contradice la premisa inicial del propietario ("hoy C1 esencialmente tiene
+stop_on_failure"), y cambia la decisión correcta de default: `CONTINUAR`, no `DETENER`, es el
+único valor que preserva el comportamiento observable de una secuencia definida antes de C3 —
+documentado explícitamente en vez de resuelto en silencio.
+
+**C. STOP/CONTINUE — comportamiento:** `PoliticaContinuacion` (`CONTINUAR`/`DETENER`) en
+`PasoSecuencia.on_error`/`on_qa_fail` (default `CONTINUAR` para ambos, ver punto B). Cuando un
+paso con la política en `DETENER` termina en `ERROR`/`FAIL`, **todos** los pasos siguientes
+—independientes y derivados— quedan `BLOQUEADO` sin intentarse, con un `detalle` que dice
+explícitamente que fue la política de continuación (nunca solo la palabra "BLOQUEADO", punto 26
+del checkpoint) y distinto del motivo ya existente de "origen no elegible". No se creó ningún
+estado nuevo: `BLOQUEADO` ya existía desde C1, ahora con dos causas distintas diferenciadas por
+texto, nunca por un enum nuevo.
+
+**D. Precondiciones protegidas:** la política de flujo nunca puede saltarse una precondición de
+dominio. Confirmado con E2E real: `CONTINUAR` tras un `FAIL` de QA en el paso origen no vuelve
+elegible a un reverso/aviso derivado — sigue `BLOQUEADO` por `domain.elegibilidad_reverso`,
+exactamente igual que sin ninguna política. `SIN_EXPECTATIVAS` nunca activa `on_qa_fail` (un
+rechazo transaccional sin expectativa que lo contradiga sigue sin ser un fallo).
+
+**E. Resultado global — regla:** sin cambiar `calcular_resultado_global_secuencia` (la
+precedencia ya existente desde C1 ya produce el resultado correcto): un `ERROR` que detuvo la
+secuencia por política sigue dominando como `ERROR` global; un `FAIL` de QA que detuvo la
+secuencia por política produce `FAIL` global, nunca "el último paso gana" (confirmado con un
+caso real: paso 1 FAIL + paso 2 PASS con `CONTINUAR` → global `FAIL`). Se agregaron dos pruebas
+de la tabla de verdad (`test_secuencias.py`) formalizando ambos casos con evidencia, no solo
+argumentándolos.
+
+**F. Expectativas dinámicas — sintaxis/resolución/auditoría:** mismo lenguaje `{{step.<paso_id>.
+request|response.deNN}}` de C2, reutilizado sin crear un segundo lenguaje. Solo aplica a
+`PasoSecuencia.expectativas` (exclusivo de un paso DERIVADO en este proyecto desde C1 — un paso
+independiente sigue tomando sus expectativas del escenario, que es reusable fuera de cualquier
+secuencia). Se resuelve DESPUÉS de que el paso origen tiene su respuesta persistida pero ANTES de
+evaluar la respuesta del paso actual. Auditoría: la definición de la secuencia sigue guardando la
+EXPRESIÓN (nunca el valor resuelto), mientras que el `detalle` de la corrida registra expresión Y
+valor efectivo juntos (`"expectativa dinámica DE39: {{step.purchase.response.de39}} → 00"`),
+incluso en pasos PASS/FAIL donde `detalle` normalmente queda vacío. Seguridad: mismas reglas de
+C2 — DE2/DE35/DE45 rechazados siempre, `perfil.es_sensible()` primero; una referencia hacia un
+paso posterior o inexistente se rechaza al GUARDAR la secuencia, nunca en ejecución.
+
+**G. Retry — qué se implementó y qué se rechazó por seguridad:** investigado explícitamente
+antes de implementar (agente de retry): un timeout o una transmisión indeterminada DESPUÉS de
+enviar 0200/0400/0420 no permite demostrar si el host ya procesó el mensaje, así que **se
+rechazó** cualquier retry automático de esas operaciones — `PasoSecuencia.__post_init__` rechaza
+`max_retries > 0` en cualquier paso DERIVADO de forma incondicional. Lo que **sí se implementó**:
+`max_retries > 0` únicamente para un paso independiente cuyo escenario es Echo (0800, la única
+operación sin efecto de negocio del laboratorio), validado también en
+`application.secuencias._validar_pasos` (que sí puede consultar el escenario real). Cada intento
+se registra por separado en la tabla nueva `corrida_secuencia_paso_intentos` sin sobrescribir al
+anterior; el resultado final del paso es el del primer intento con una respuesta real, o el
+último si todos fallaron. E2E real con timeout inducido en el primer intento (mismo
+`HostSimulado` de siempre, alternando su atributo `responder` ya existente desde la prueba, sin
+tocar código de producción ni construir infraestructura de Fase D) y éxito real en el segundo.
+
+**H. Persistencia — migración:** columnas aditivas `on_error`/`on_qa_fail`/`max_retries` en
+`secuencia_transaccional_pasos` (default `'continuar'`/`'continuar'`/`0`, preserva C1 sin migrar
+datos) y tabla nueva `corrida_secuencia_paso_intentos`. Verificada contra la base de desarrollo
+real: backup previo (`sibutestlab8583.db.bak-preC3-20260914-085301`), columnas y tabla nuevas
+confirmadas, 9 secuencias y 11 corridas existentes preservadas, `PRAGMA foreign_key_check` vacío.
+
+**I. UI — recorrido real:** decisión deliberada (mismo criterio que C2/B8-secuencias) de no
+expandir `secuencia_nueva.html` con controles nuevos — el formulario sigue siendo fijo (compra +
+reverso automático) y `detalle` ya renderiza el motivo completo de cada paso sin ningún cambio de
+plantilla. Lo único genuinamente invisible sin UI eran los intentos de retry: se agregó una tabla
+anidada en `secuencia_corrida_detalle.html`, visible solo cuando un paso tuvo más de un intento.
+Verificado en el navegador real contra la base de desarrollo (ya migrada): la Corrida #12 (Echo
+con retry real) muestra "Reintentos (C3): 2 intentos", Intento 1 `ERROR` (timeout) e Intento 2
+`Sin expectativas`, cada uno con su propio enlace a Ver ejecución.
+
+**J. Seguridad:** los nuevos motivos de auditoría (política de detención, expectativa dinámica
+resuelta, intentos de retry) usan siempre texto fijo y seguro o valores ya confirmados no
+sensibles — nunca `str(excepción)`, nunca traceback. Confirmado con pruebas dedicadas
+(`test_seguridad_c3.py`): el motivo de "detenido por política" nunca incluye texto de excepción;
+ningún intento de retry puede cargar un PAN (retry es exclusivo de Echo, que nunca tiene tarjeta);
+el `detalle` de una expectativa dinámica resuelta nunca contiene una secuencia con forma de PAN.
+
+**K. E2E — casos realizados:** seis casos reales de STOP/CONTINUE (`test_ejecutor_secuencia_
+control_flujo.py`, puntos 17-22 del checkpoint), cinco de expectativas dinámicas
+(`test_expectativas_dinamicas.py`), cuatro de retry (`test_retry_echo.py`, incluido el caso real
+de timeout-inducido-éxito), uno de UI de intentos (`test_web_retry_intentos.py`), tres de
+seguridad (`test_seguridad_c3.py`), doce de modelo puro (`test_politica_continuacion.py`) — todos
+contra TCP/SQLite/host simulado reales donde aplica, ninguno con mocks del núcleo.
+
+**L. Tests:** 1393 passed al abrir C3 (tras integrar B8) → **1421 passed / 2 skipped** al cierre
+de C3 (los 2 skipped son un artefacto del `PATH` del shell de esta sesión sin `sibu-run-suite`
+instalado, no una regresión — confirmado ejecutando la suite con el `PATH` corregido: 1421
+passed/0 skipped). 46 pruebas nuevas: 12 de modelo/política puro, 6 de STOP/CONTINUE E2E, 2 de
+tabla de verdad del resultado global, 5 de expectativas dinámicas, 4 de retry, 1 de UI, 3 de
+seguridad. Fase A, B6, B7, C1, C2, B8 intactas (sus propias suites pasan sin modificación).
+
+**M. Commits:** `f5c9821` (C3.1-C3.2: modelo de política, migración, motor STOP/CONTINUE),
+`aa972c6` (C3.3: E2E real + tabla de verdad), `171129d` (C3.4: expectativas dinámicas), `ec7bd2b`
+(C3.5: retry mínimo seguro), `282fcab` (C3.6: UI de intentos). **No mergeado a `main`** — queda en
+`feature/secuencias-c3-control-flujo`, pendiente de revisión del propietario.
+
+**N. Próximo paso:** dos caminos disponibles, ninguno bloqueado por el otro — **C4** (capacidades
+adicionales de secuencia: data-driven, comparación de corridas) o **Fase D — Host Simulator
+2.0**. C3 no tocó `HostSimulado` en absoluto (salvo alternar, desde una prueba, un atributo ya
+existente): la misma señal de B8 se repite — el motor de secuencias sigue generalizando bien,
+mientras el simulador actual sigue sin mostrar necesidad real de una versión 2.0. Decisión
+pendiente del propietario.

@@ -646,6 +646,27 @@ class EstadoEjecucion(str, Enum):
     NO_ENVIADA = "no_enviada"
 
 
+#: Estados que representan una respuesta TRANSACCIONAL real -el autorizador
+#: contesto algo interpretable, aprobara o no (C3, 2026-09-14). El resto
+#: (INVALIDA/TIMEOUT/ERROR_CONEXION/ERROR_TRANSMISION/NO_ENVIADA) son fallas
+#: TECNICAS: nunca hubo una respuesta que evaluar. Esta distincion es la que
+#: `EjecutorDeSecuencia._clasificar` usa para no confundir "se ejecuto sin
+#: expectativas" (una 0200 aprobada o rechazada, sin nada que comparar) con
+#: "fallo tecnicamente y no habia expectativas que lo acusaran" -antes de C3
+#: ambos casos caian en el mismo `SIN_EXPECTATIVAS`, perdiendo la diferencia
+#: entre "nada que reportar" y "algo se rompio".
+_ESTADOS_TRANSACCIONALES_REALES = frozenset({EstadoEjecucion.APROBADA, EstadoEjecucion.RECHAZADA})
+
+
+def es_estado_tecnico(estado: "EstadoEjecucion") -> bool:
+    """`True` si `estado` es una falla TECNICA (nunca hubo respuesta
+    utilizable), `False` si es un desenlace transaccional real (aprobada o
+    rechazada, con o sin expectativas). Pura, sin ningun conocimiento de
+    secuencias -reutilizable por cualquier capa que necesite esta distincion.
+    """
+    return estado not in _ESTADOS_TRANSACCIONALES_REALES
+
+
 @dataclass
 class Ejecucion:
     """Registro persistible de un intento de ejecucion (compra u otra operacion).
@@ -935,6 +956,47 @@ _OPERACIONES_DERIVADAS_VALIDAS = frozenset(
 )
 
 
+class PoliticaContinuacion(str, Enum):
+    """Que hace `EjecutorDeSecuencia` con los pasos SIGUIENTES cuando ESTE
+    paso termina en ERROR o en FAIL (C3, 2026-09-14).
+
+    CONTINUAR es el comportamiento REAL de este motor desde C1 -auditado
+    antes de disenar C3: el bucle de `EjecutorDeSecuencia._correr` nunca se
+    detuvo por si mismo; lo que en C1 PARECIA "detenerse" era siempre un
+    efecto emergente de que un paso DERIVADO no encontraba contexto valido
+    (BLOQUEADO por precondicion, `domain.elegibilidad_reverso`), nunca una
+    decision real de flujo-. Por eso CONTINUAR es el default: preserva el
+    comportamiento observable de toda secuencia creada antes de C3 sin
+    necesitar migrar ningun dato (la nueva columna se retro-completa con
+    este mismo valor).
+
+    DETENER es la politica nueva, explicita, para quien la pida: hace que
+    TODOS los pasos siguientes -independientes Y derivados- queden
+    `BLOQUEADO` sin intentarse, con un motivo que dice que un paso anterior
+    detuvo la secuencia (distinto del motivo de "origen no elegible" que
+    BLOQUEADO ya significaba desde C1 -mismo estado, causa distinta,
+    diferenciada en `PasoCorridaSecuencia.detalle`, nunca un enum nuevo).
+    """
+
+    CONTINUAR = "continuar"
+    DETENER = "detener"
+
+
+#: Numero maximo de reintentos automaticos permitido hoy (C3): SOLO para un
+#: paso independiente cuyo escenario es Echo (`MTI_ECHO`) -la unica
+#: operacion sin efecto de negocio en este laboratorio-, y solo ante fallas
+#: cuyo estado remoto es indemostrable (`es_estado_tecnico`). Investigado
+#: explicitamente (C3, agente de retry): un timeout o una transmision
+#: indeterminada DESPUES de enviar un 0200/0400/0420 no permite saber si el
+#: host ya proceso el mensaje -reintentarlo automaticamente arriesgaria
+#: duplicar un efecto financiero, aunque aqui sea un simulador. Por eso
+#: `max_retries > 0` en un paso DERIVADO (siempre 0400/0420) se rechaza aqui
+#: mismo -ni siquiera llega a la capa de aplicacion-; la restriccion para un
+#: paso independiente que NO sea Echo vive en `application/secuencias.py`
+#: (necesita consultar el escenario real, que este modulo no puede tocar).
+MAX_RETRIES_MINIMO = 0
+
+
 @dataclass(frozen=True)
 class PasoSecuencia:
     """Un paso de la DEFINICION de una secuencia -la intencion, no una
@@ -971,6 +1033,27 @@ class PasoSecuencia:
     `OPERACION_REVERSO_FINANCIERO` para no romper ninguna definicion de C1
     (que nunca supo de otra operacion derivada): una secuencia guardada
     antes de B8 sigue significando exactamente lo mismo sin migrarse.
+
+    `on_error`/`on_qa_fail` (C3, 2026-09-14): que hacer con los pasos
+    SIGUIENTES si ESTE paso termina en ERROR (falla tecnica) o en FAIL
+    (Expected vs Actual no se cumplio) -ver `PoliticaContinuacion`. Un
+    rechazo transaccional sin expectativa (DE39 negativo, sin nada que lo
+    contradiga) NUNCA activa `on_qa_fail`: sigue siendo `SIN_EXPECTATIVAS`,
+    nunca FAIL (ver `EjecutorDeSecuencia._clasificar`). Ambos con default
+    `CONTINUAR` -ver docstring de `PoliticaContinuacion` para por que ese es
+    el default que preserva C1, no `DETENER`.
+
+    `max_retries` (C3, 2026-09-14): reintentos automaticos permitidos para
+    ESTE paso -default 0 (deshabilitado), y solo puede ser mayor que 0 en un
+    paso INDEPENDIENTE cuyo escenario sea Echo (0800, sin efecto de negocio):
+    un paso DERIVADO (siempre 0400/0420, con efecto financiero o semantica
+    de reverso) rechaza aqui mismo cualquier valor mayor que 0 -nunca se
+    reintenta automaticamente una operacion cuyo estado remoto, ante un
+    timeout o una transmision indeterminada, no se puede demostrar (ver
+    `MAX_RETRIES_MINIMO`, `domain.modelos.es_estado_tecnico`). La restriccion
+    equivalente para un paso independiente que NO sea Echo vive en
+    `application.secuencias._validar_pasos` (necesita consultar el
+    escenario real, que este modulo puro no puede tocar).
     """
 
     orden: int
@@ -980,8 +1063,22 @@ class PasoSecuencia:
     expectativas: Expectativas | None = None
     paso_id: str | None = None
     operacion_derivada: str = OPERACION_REVERSO_FINANCIERO
+    on_error: str = PoliticaContinuacion.CONTINUAR.value
+    on_qa_fail: str = PoliticaContinuacion.CONTINUAR.value
+    max_retries: int = MAX_RETRIES_MINIMO
 
     def __post_init__(self) -> None:
+        if self.on_error not in (PoliticaContinuacion.CONTINUAR.value, PoliticaContinuacion.DETENER.value):
+            raise ValueError(f"paso {self.orden}: on_error desconocido {self.on_error!r}")
+        if self.on_qa_fail not in (PoliticaContinuacion.CONTINUAR.value, PoliticaContinuacion.DETENER.value):
+            raise ValueError(f"paso {self.orden}: on_qa_fail desconocido {self.on_qa_fail!r}")
+        if self.max_retries < MAX_RETRIES_MINIMO:
+            raise ValueError(f"paso {self.orden}: max_retries no puede ser negativo")
+        if self.origen_tipo == ORIGEN_PASO_DERIVADO and self.max_retries > MAX_RETRIES_MINIMO:
+            raise ValueError(
+                f"paso {self.orden}: un paso derivado (0400/0420, efecto financiero o de "
+                "reverso) nunca admite reintentos automaticos"
+            )
         if self.origen_tipo == ORIGEN_PASO_INDEPENDIENTE:
             if not self.escenario_id:
                 raise ValueError(
@@ -1112,3 +1209,25 @@ class PasoCorridaSecuencia:
     detalle: str | None = None
     evaluacion_json: str | None = None
     paso_id: str | None = None
+
+
+@dataclass(frozen=True)
+class IntentoPasoSecuencia:
+    """UN intento real de un paso con retry (C3, 2026-09-14): solo existe
+    cuando `PasoSecuencia.max_retries > 0` (hoy exclusivo de un paso
+    independiente cuyo escenario es Echo, ver `PasoSecuencia.max_retries`).
+
+    Nunca sobrescribe al anterior -"Intento 1 ERROR, Intento 2 PASS" quedan
+    AMBOS auditables (punto 9 del checkpoint)-. `PasoCorridaSecuencia` sigue
+    siendo la unica fuente del desenlace FINAL de un paso (el ultimo intento
+    exitoso, o el ultimo intento si todos fallaron); esta clase es solo el
+    detalle de auditoria de como se llego ahi.
+    """
+
+    corrida_id: int
+    orden: int
+    numero_intento: int
+    resultado: EstadoPasoSecuencia
+    ejecucion_id: int | None = None
+    detalle: str | None = None
+    creado_en: datetime = field(default_factory=_ahora)

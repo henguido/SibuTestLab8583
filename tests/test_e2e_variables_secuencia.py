@@ -91,13 +91,18 @@ async def test_paso_2_transmite_de_verdad_un_valor_producido_por_el_paso_1(base)
                 mti=MTI_COMPRA_FINANCIERA, card_id=CARD_ID_DEMO, monto=Decimal("33.00"),
             )
         )
-        # DE37 (RRN) es editable y SIN default en 0200: perfecto para
-        # demostrar la referencia sin inventar un campo nuevo.
+        # DE32 (institucion adquirente) es opcional y LLVAR(11) en 0200:
+        # acepta un valor corto como el STAN de otro paso sin violar ninguna
+        # longitud fija -a diferencia de DE37, fijo en 12 caracteres, que un
+        # STAN de 6 digitos nunca podria llenar validamente (C3 lo detecto:
+        # antes de la correccion de `_clasificar`, un DE37 mal formado
+        # producia NO_ENVIADA -RN-4, el codec rechaza la longitud- pero esa
+        # falla tecnica quedaba oculta bajo SIN_EXPECTATIVAS).
         paso2 = await escenarios.crear(
             DatosNuevoEscenario(
                 nombre="Paso 2 - referencia al paso 1", conexion_id="C2-E2E",
                 mti=MTI_COMPRA_FINANCIERA, card_id=CARD_ID_DEMO, monto=Decimal("12.00"),
-                campos_manuales={"37": "{{step.purchase.response.de38}}"},
+                campos_manuales={"32": "{{step.purchase.response.de38}}"},
             )
         )
 
@@ -129,14 +134,14 @@ async def test_paso_2_transmite_de_verdad_un_valor_producido_por_el_paso_1(base)
     ejecucion_2 = await ejecuciones.obtener(paso2_corrida.ejecucion_id)
 
     # DE38 del paso 1 (el host lo copia del STAN al aprobar) debe aparecer
-    # de verdad como DE37 en el mensaje REAL transmitido por el paso 2.
+    # de verdad como DE32 en el mensaje REAL transmitido por el paso 2.
     solicitud_2 = interpretar(ejecucion_2.solicitud_json, ejecucion_2.solicitud_enmascarada)
-    assert solicitud_2.valor("37") == ejecucion_1.stan
+    assert solicitud_2.valor("32") == ejecucion_1.stan
 
     # El escenario del paso 2 sigue guardando la EXPRESION, nunca el valor
     # resuelto -misma filosofia que Fase A (congelar, no resolver)-.
     escenario_2_recargado = await escenarios.obtener(paso2.escenario_id)
-    assert escenario_2_recargado.campos_manuales["37"] == "{{step.purchase.response.de38}}"
+    assert escenario_2_recargado.campos_manuales["32"] == "{{step.purchase.response.de38}}"
 
 
 async def test_referencia_a_execution_id_no_necesita_enviarse_como_campo_iso(base):
@@ -163,14 +168,17 @@ async def test_referencia_a_execution_id_no_necesita_enviarse_como_campo_iso(bas
                 mti=MTI_COMPRA_FINANCIERA, card_id=CARD_ID_DEMO, monto=Decimal("20.00"),
             )
         )
-        # DE41 (terminal) es editable, texto libre de hasta 8 caracteres:
-        # sirve para transportar el execution_id como texto sin inventar
-        # significado de negocio nuevo.
+        # DE32 (opcional, LLVAR hasta 11) sirve para transportar el
+        # execution_id como texto sin inventar significado de negocio nuevo
+        # -a diferencia de DE41 (terminal, FIJO en 8 caracteres), que un id
+        # autoincremental corto no llenaria validamente (mismo hallazgo de
+        # C3 documentado en el otro test de este archivo: un campo FIJO mal
+        # dimensionado produce NO_ENVIADA, no un fallo de este mecanismo).
         paso2 = await escenarios.crear(
             DatosNuevoEscenario(
                 nombre="Paso 2 metadata", conexion_id="C2-E2E-META",
                 mti=MTI_COMPRA_FINANCIERA, card_id=CARD_ID_DEMO, monto=Decimal("21.00"),
-                campos_manuales={"41": "{{step.purchase.execution_id}}"},
+                campos_manuales={"32": "{{step.purchase.execution_id}}"},
             )
         )
         secuencia = await secuencias.crear(
@@ -197,7 +205,7 @@ async def test_referencia_a_execution_id_no_necesita_enviarse_como_campo_iso(bas
 
     ejecucion_2 = await ejecuciones.obtener(paso2_corrida.ejecucion_id)
     solicitud_2 = interpretar(ejecucion_2.solicitud_json, ejecucion_2.solicitud_enmascarada)
-    assert solicitud_2.valor("41") == str(paso1_corrida.ejecucion_id)
+    assert solicitud_2.valor("32") == str(paso1_corrida.ejecucion_id)
 
 
 async def test_un_paso_origen_que_no_produce_ejecucion_bloquea_el_dependiente(base):

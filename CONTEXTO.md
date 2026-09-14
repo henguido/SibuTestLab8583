@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-14 (B8 — Aviso de reverso, 0420/0430)
+**Última actualización:** 2026-09-14 (C3 — Control de flujo avanzado de secuencias)
 
 ## Estado actual
 
@@ -25,8 +25,8 @@ derivado cuyo origen no produjo una ejecución elegible -nunca se finge FAIL/ERR
 (`application/variables_secuencia.py`), `paso_id` estable distinto de `orden`, seguridad
 (`perfil.es_sensible()` siempre primero), validación de referencias al guardar la definición.
 
-**B8 — Aviso de reverso (0420/0430)** (`feature/multi-mti-b8-reversal-advice-0420`, commits
-`cc2479e`/`b298ee7`/`a242bc5`/`6add431`, sin mergear todavía): segunda operación derivada del
+**B8 — Aviso de reverso (0420/0430)** (integrado a `main`, merge `9a7dd32`; commits
+`cc2479e`/`b298ee7`/`a242bc5`/`6add431`): segunda operación derivada del
 laboratorio. Investigada primero (Agente A, ISO 8583 genérico): un *reversal* (0400) es una
 SOLICITUD que el receptor puede negar; un *reversal advice* (0420) NOTIFICA un reverso ya
 ocurrido, que el receptor debe aceptar (0430) -diferencia de contrato, no de campos, que
@@ -43,8 +43,26 @@ de paso de C2 (protegido explícitamente)-. Interactivo: dos botones diferenciad
 Historial, tabla de derivadas distingue cada operación. Sin UI de secuencias para esto (mismo
 criterio que C2).
 
-Detalle completo (reportes A-N/A-L/A-O) en `docs/roadmap/SIBU_3.md` secciones 9, 10, 11 y 12;
-decisiones de gobernanza en `BITACORA.md`. Suite completa: **1391 passed, 0 skipped**.
+**C3 — Control de flujo avanzado de secuencias** (`feature/secuencias-c3-control-flujo`, commits
+`f5c9821`/`aa972c6`/`171129d`/`ec7bd2b`/`282fcab`, sin mergear todavía): investigación previa
+(4 agentes read-only) reveló que el bucle de `EjecutorDeSecuencia._correr` nunca se detuvo por
+sí mismo desde C1 -lo que parecía "detenerse" era siempre el efecto emergente de un paso
+DERIVADO sin contexto válido (`BLOQUEADO`)-, lo que fija `CONTINUAR` (no `DETENER`) como default
+correcto para preservar compatibilidad. `PoliticaContinuacion` (`on_error`/`on_qa_fail` por paso):
+`DETENER` bloquea TODOS los pasos siguientes sin intentarlos (mismo estado `BLOQUEADO`,
+diferenciado por `detalle`); nunca se salta una precondición de dominio. Clasificación corregida
+(`es_estado_tecnico`): un desenlace técnico (timeout/error de conexión-transmisión/no
+enviada/inválida) sin expectativas ahora es `ERROR`, no `SIN_EXPECTATIVAS` como antes de C3 -esto
+expuso un hallazgo real en dos pruebas de C2 (referenciaban un valor corto hacia un campo ISO de
+longitud fija incompatible, produciendo `NO_ENVIADA` silenciosamente enmascarado; corregidas).
+Expectativas dinámicas: el mismo `{{step...}}` de C2 ahora sirve como valor esperado en un paso
+derivado. Retry: investigado y **rechazado** para 0200/0400/0420 (estado remoto indemostrable
+tras timeout); solo admitido para un paso Echo, con auditoría de cada intento en una tabla nueva.
+UI: sin controles nuevos en `/secuencias/nueva` (mismo criterio que C2/B8); tabla nueva de
+intentos en el detalle de una corrida, verificada en navegador real.
+
+Detalle completo (reportes A-N/A-L/A-O/A-N) en `docs/roadmap/SIBU_3.md` secciones 9, 10, 11, 12
+y 13; decisiones de gobernanza en `BITACORA.md`. Suite completa: **1421 passed, 0 skipped**.
 
 **Estado anterior a Fase B (2026-09-09):**
 
@@ -395,12 +413,13 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-**B8 (aviso de reverso, 0420/0430) está completo en `feature/multi-mti-b8-reversal-advice-0420`,
-sin mergear a `main` — pendiente de aprobación del propietario.** Recomendación del checkpoint
-(`docs/roadmap/SIBU_3.md` sección 12.O): **C3** (control de flujo avanzado del motor de
-secuencias: CONTINUE_ON_FAILURE, retries/timeout por paso) sobre Fase D (Host Simulator 2.0) —
-B8 no tocó `HostSimulado` en absoluto, señal de que el simulador actual todavía tiene margen.
-Decisión pendiente del propietario; ninguna de las dos bloqueada por la otra.
+**C3 (control de flujo avanzado de secuencias) está completo en
+`feature/secuencias-c3-control-flujo`, sin mergear a `main` — pendiente de aprobación del
+propietario.** B8 ya fue aprobado e integrado a `main` (`9a7dd32`) antes de abrir C3. Próximo
+paso propuesto en el checkpoint (`docs/roadmap/SIBU_3.md` sección 13.N): **C4** (capacidades
+adicionales de secuencia) o **Fase D** (Host Simulator 2.0) — C3 tampoco tocó `HostSimulado`
+(salvo alternar, desde una prueba, un atributo ya existente), misma señal que B8 de que el
+simulador actual todavía tiene margen. Decisión pendiente del propietario.
 
 Las cinco mejoras funcionales pedidas el 2026-09-07 (ver «Estado actual» e «Historial de
 avances») están implementadas y verificadas, pero **sin commit ni push todavía** -queda para

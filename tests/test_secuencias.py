@@ -115,6 +115,30 @@ def test_pass_mezclado_con_sin_expectativas_es_incompleta():
     assert calcular_resultado_global_secuencia(conteos) == ResultadoGlobalSuite.INCOMPLETA
 
 
+# C3 (2026-09-14): un paso saltado por politica DETENER se cuenta como
+# BLOQUEADO -mismo estado que "precondicion no cumplida"-, nunca un enum
+# nuevo (ver docstring de `PoliticaContinuacion`). Estas pruebas confirman,
+# sin cambiar la funcion, que la tabla YA existente produce el resultado
+# correcto para los dos disparadores de DETENER (punto 28 del checkpoint:
+# "formalizar la precedencia... agregar tabla/test de verdad").
+
+
+def test_un_paso_error_que_detiene_la_secuencia_produce_resultado_error():
+    """Paso 1 ERROR con on_error=DETENER -> pasos siguientes BLOQUEADO. El
+    resultado global debe seguir siendo ERROR (un fallo tecnico real
+    domina), no INCOMPLETA -que subestimaria la severidad-."""
+    conteos = _conteos(**{EstadoPasoSecuencia.ERROR: 1, EstadoPasoSecuencia.BLOQUEADO: 2})
+    assert calcular_resultado_global_secuencia(conteos) == ResultadoGlobalSuite.ERROR
+
+
+def test_un_paso_fail_qa_que_detiene_la_secuencia_produce_resultado_fail():
+    """Paso 1 FAIL QA con on_qa_fail=DETENER -> pasos siguientes BLOQUEADO.
+    El resultado global debe ser FAIL -nada fallo tecnicamente, solo una
+    expectativa no se cumplio-, nunca ERROR ni "el ultimo paso gana"."""
+    conteos = _conteos(**{EstadoPasoSecuencia.FAIL: 1, EstadoPasoSecuencia.BLOQUEADO: 2})
+    assert calcular_resultado_global_secuencia(conteos) == ResultadoGlobalSuite.FAIL
+
+
 # ----------------------------------------------------------- ContextoSecuencia --
 
 

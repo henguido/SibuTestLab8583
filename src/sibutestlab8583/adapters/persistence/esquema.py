@@ -340,6 +340,27 @@ CREATE TABLE IF NOT EXISTS corrida_secuencia_pasos (
     PRIMARY KEY (corrida_id, orden)
 );
 
+-- Intentos de UN paso con retry (C3, 2026-09-14). Tabla NUEVA -no una fila
+-- por intento en corrida_secuencia_pasos, que seguiria representando SOLO
+-- el desenlace final/autoritativo de cada paso (misma fila, mismo
+-- significado que antes de C3)-: cada intento real (solo ocurre cuando
+-- `PasoSecuencia.max_retries > 0`, hoy exclusivo de un escenario Echo, ver
+-- domain/modelos.py) se guarda aqui, en su propio orden, sin sobrescribir
+-- al anterior. `corrida_secuencia_pasos.ejecucion_id`/`resultado` siguen
+-- siendo la fuente de verdad de "que paso al final"; esta tabla es el
+-- detalle de auditoria de COMO se llego ahi.
+CREATE TABLE IF NOT EXISTS corrida_secuencia_paso_intentos (
+    corrida_id      INTEGER NOT NULL,
+    orden           INTEGER NOT NULL,
+    numero_intento  INTEGER NOT NULL,
+    resultado       TEXT    NOT NULL,
+    ejecucion_id    INTEGER REFERENCES ejecuciones(id),
+    detalle         TEXT,
+    creado_en       TEXT    NOT NULL,
+    PRIMARY KEY (corrida_id, orden, numero_intento),
+    FOREIGN KEY (corrida_id, orden) REFERENCES corrida_secuencia_pasos(corrida_id, orden)
+);
+
 -- Secuencias persistentes. Existe para que el numero de trazabilidad sobreviva
 -- a los reinicios y sea unico entre peticiones concurrentes. NO se deriva de
 -- MAX(id) de ejecuciones: dos peticiones simultaneas leerian el mismo maximo.
@@ -487,9 +508,23 @@ COLUMNAS_AGREGADAS_ESCENARIOS: tuple[tuple[str, str], ...] = (
 #: guardada antes de B8 significa exactamente lo mismo que antes (su unico
 #: paso derivado posible ya era un reverso financiero), sin necesitar
 #: migrar datos.
+#:
+#: C3 (2026-09-14): `on_error`/`on_qa_fail` -politica de continuacion de la
+#: SECUENCIA cuando ESTE paso termina en ERROR/FAIL- y `max_retries` -
+#: reintentos automaticos permitidos, solo aplicable hoy a un paso Echo- son
+#: posteriores a C1/C2/B8, que no conocian ningun control de flujo. Aditivas,
+#: con el mismo default que `PasoSecuencia` (`domain/modelos.py`,
+#: `PoliticaContinuacion.CONTINUAR`/`0`): una secuencia guardada antes de C3
+#: preserva su comportamiento observable exacto -el motor NUNCA se detenia
+#: por si solo antes de C3 (auditado explicitamente, ver docstring de
+#: `PoliticaContinuacion`), asi que CONTINUAR es la unica retro-asignacion
+#: que no cambia nada para una definicion existente.
 COLUMNAS_AGREGADAS_SECUENCIA_TRANSACCIONAL_PASOS: tuple[tuple[str, str], ...] = (
     ("paso_id", "TEXT"),
     ("operacion_derivada", "TEXT NOT NULL DEFAULT 'financial_reversal'"),
+    ("on_error", "TEXT NOT NULL DEFAULT 'continuar'"),
+    ("on_qa_fail", "TEXT NOT NULL DEFAULT 'continuar'"),
+    ("max_retries", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 #: Lo mismo para `corrida_secuencia_pasos`: copia historica del `paso_id`

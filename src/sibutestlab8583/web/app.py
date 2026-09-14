@@ -2429,6 +2429,10 @@ async def corrida_secuencia_detalle(
         return _corrida_secuencia_no_encontrada(request)
 
     pasos = await composicion.corridas_secuencia.obtener_pasos(numero)
+    intentos_por_orden = {
+        paso.orden: await composicion.corridas_secuencia.obtener_intentos(numero, paso.orden)
+        for paso in pasos
+    }
     fila_corrida = presentacion.fila_de_corrida_secuencia(corrida)
     return PLANTILLAS.TemplateResponse(
         request=request,
@@ -2437,7 +2441,7 @@ async def corrida_secuencia_detalle(
             "seccion": "corridas_secuencia",
             "corrida": fila_corrida,
             "filas_pasos": presentacion.filas_de_corrida_secuencia(
-                pasos, composicion.descripciones_de_campos
+                pasos, composicion.descripciones_de_campos, intentos_por_orden
             ),
             "aviso_resultado": presentacion.AVISOS_RESULTADO_GLOBAL_SUITE.get(
                 fila_corrida.resultado_global
