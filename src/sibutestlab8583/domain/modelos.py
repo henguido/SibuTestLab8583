@@ -55,6 +55,20 @@ MTI_RESPUESTA_COMPRA_FINANCIERA = "0210"
 MTI_REVERSO_FINANCIERO = "0400"
 MTI_RESPUESTA_REVERSO_FINANCIERO = "0410"
 
+#: Aviso de reverso (B8, 2026-09-14): la SEGUNDA operacion derivada de este
+#: laboratorio, y deliberadamente distinta de `MTI_REVERSO_FINANCIERO` -no es
+#: "0400 con el MTI cambiado". Investigado con Agente A (dominio ISO 8583,
+#: fuentes publicas genericas): el tercer digito del MTI codifica la FUNCION
+#: del mensaje (0=request, 1=response, 2=advice, 3=advice response). Un
+#: "reversal request" (0400) es una SOLICITUD que el receptor puede negar; un
+#: "reversal advice" (0420) es la NOTIFICACION de un reverso que ya ocurrio
+#: -el emisor original ya no puede rechazarlo, solo confirmar que lo recibio
+#: (0430)-. Esa diferencia de contrato (solicitud-que-puede-fallar vs
+#: aviso-que-debe-aceptarse) es la que justifica dos operaciones derivadas
+#: separadas en este laboratorio, no una sola parametrizada por MTI.
+MTI_AVISO_REVERSO = "0420"
+MTI_RESPUESTA_AVISO_REVERSO = "0430"
+
 #: Identificador de la INTENCION funcional de un escenario (B3, 2026-09-13),
 #: separado del MTI: hoy cada MTI implica exactamente una operacion, asi que
 #: `OPERACION_POR_MTI` alcanza para derivarlo sin ambiguedad. El campo existe
@@ -72,11 +86,18 @@ OPERACION_COMPRA_FINANCIERA = "financial_purchase"
 #: identifica que ESTE mensaje concreto es una operacion derivada de otra
 #: ejecucion (ver `Ejecucion.ejecucion_origen_id`, B6).
 OPERACION_REVERSO_FINANCIERO = "financial_reversal"
+#: Aviso de reverso (B8): identidad funcional separada de "0420", mismo
+#: criterio que `OPERACION_REVERSO_FINANCIERO`. El nombre "reversal_advice"
+#: viene directamente de la investigacion de dominio (Agente A, B8): es el
+#: termino generico con el que la literatura publica de ISO 8583 identifica
+#: un 0420, no una eleccion arbitraria de este proyecto.
+OPERACION_AVISO_REVERSO = "reversal_advice"
 OPERACION_POR_MTI: Mapping[str, str] = {
     MTI_COMPRA: OPERACION_COMPRA,
     MTI_ECHO: OPERACION_ECHO,
     MTI_COMPRA_FINANCIERA: OPERACION_COMPRA_FINANCIERA,
     MTI_REVERSO_FINANCIERO: OPERACION_REVERSO_FINANCIERO,
+    MTI_AVISO_REVERSO: OPERACION_AVISO_REVERSO,
 }
 
 #: Campos ISO que transportan datos de tarjeta y nunca se persisten en claro.
@@ -240,6 +261,19 @@ class DatosReversoFinanciero:
     `ejecucion_origen_id` (hoy, solo una 0200 aprobada -ver
     `domain.elegibilidad_reverso`-) se revalida siempre en el orquestador:
     nunca se confia en que quien llama ya la valido.
+    """
+
+    ejecucion_origen_id: int
+
+
+@dataclass(frozen=True)
+class DatosAvisoReverso:
+    """Lo minimo para pedir un aviso de reverso (0420, B8): identico en forma
+    a `DatosReversoFinanciero` -misma identidad de ejecucion origen, mismo
+    "constructor cerrado", nada mas- pero es una operacion FUNCIONALMENTE
+    distinta (ver `MTI_AVISO_REVERSO`), por eso su propio tipo en vez de
+    reusar el de 0400: mezclar las dos perderia la separacion operacion-vs-
+    MTI que este laboratorio protege en todos lados (B3, B7).
     """
 
     ejecucion_origen_id: int

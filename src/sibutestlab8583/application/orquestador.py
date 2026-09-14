@@ -72,10 +72,12 @@ from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
 from ..domain.expectativas import evaluacion_a_dict, evaluar_expectativas, validar_expectativas
 from ..domain.modelos import (
+    MTI_AVISO_REVERSO,
     MTI_COMPRA,
     MTI_COMPRA_FINANCIERA,
     MTI_ECHO,
     MTI_REVERSO_FINANCIERO,
+    DatosAvisoReverso,
     DatosCompra,
     DatosCompraFinanciera,
     DatosEcho,
@@ -103,6 +105,7 @@ from ..domain.validacion import (
     mti_de_respuesta,
     validar_envio,
 )
+from .armado_aviso_reverso import armar_aviso_reverso
 from .armado_reverso import armar_reverso_financiero
 from .referencia_ejecucion import referencia_origen_elegible
 from .serializacion import a_json_respuesta, a_json_solicitud, a_texto
@@ -351,6 +354,55 @@ class Orquestador:
         momento = self._reloj()
         stan = await self._stan.siguiente()
         solicitud = armar_reverso_financiero(
+            referencia, stan_nuevo=stan, momento_nuevo=momento
+        )
+
+        return await self._ejecutar(
+            solicitud,
+            stan,
+            card_id=referencia.card_id,
+            monto=referencia.monto,
+            ejecucion_origen_id=referencia.ejecucion_id,
+            expectativas=expectativas,
+        )
+
+    async def ejecutar_aviso_reverso(
+        self,
+        datos: DatosAvisoReverso,
+        *,
+        expectativas: Expectativas | None = None,
+    ) -> ResultadoCompra:
+        """Arma, valida y ejecuta un aviso de reverso (0420, B8): la SEGUNDA
+        operacion derivada de este laboratorio -construida desde el mismo
+        snapshot seguro que el reverso financiero (`ReferenciaEjecucion`,
+        B6), pero un MTI y un builder propios (ver `application.
+        armado_aviso_reverso`) porque es una operacion funcionalmente
+        distinta (notificacion, no solicitud -ver `domain.modelos.
+        MTI_AVISO_REVERSO`).
+
+        Misma elegibilidad de origen que el reverso financiero (0200
+        aprobada, `domain.elegibilidad_reverso.puede_generar_operacion_
+        derivada`, investigado y confirmado sin cambios para B8: ver
+        `docs/roadmap/SIBU_3.md`): no impone que no exista ya un 0400 u otro
+        0420 para el mismo origen -este laboratorio no limita cardinalidad
+        de operaciones derivadas.
+
+        La elegibilidad del origen se REVALIDA aqui siempre, igual que en
+        `ejecutar_reverso_financiero` -mismo criterio de defensa en
+        profundidad-.
+        """
+        if expectativas is not None:
+            validar_expectativas(
+                expectativas, self._perfil, mti_de_respuesta(MTI_AVISO_REVERSO)
+            )
+
+        referencia = await referencia_origen_elegible(
+            datos.ejecucion_origen_id, self._ejecuciones
+        )
+
+        momento = self._reloj()
+        stan = await self._stan.siguiente()
+        solicitud = armar_aviso_reverso(
             referencia, stan_nuevo=stan, momento_nuevo=momento
         )
 
