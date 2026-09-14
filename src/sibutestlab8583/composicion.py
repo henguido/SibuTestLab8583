@@ -22,10 +22,12 @@ from .adapters.persistence.esquema import ruta_base_datos
 from .adapters.persistence.sqlite_repos import (
     GeneradorStanSQLite,
     RepositorioCatalogosSQLite,
+    RepositorioCorridasSecuenciaSQLite,
     RepositorioCorridasSuiteSQLite,
     RepositorioDestinosSQLite,
     RepositorioEjecucionesSQLite,
     RepositorioEscenariosSQLite,
+    RepositorioSecuenciasSQLite,
     RepositorioSuitesSQLite,
     RepositorioTarjetasSQLite,
 )
@@ -40,8 +42,10 @@ from .application.consultas import ServicioConsultas
 from .application.conexiones import ServicioConexiones
 from .application.corredor_suites import CorredorDeSuites
 from .application.ejecutor_escenarios import EjecutorDeEscenarios
+from .application.ejecutor_secuencia import EjecutorDeSecuencia
 from .application.escenarios import ServicioEscenarios
 from .application.orquestador import Orquestador
+from .application.secuencias import ServicioSecuencias
 from .application.suites import ServicioSuites
 from .application.tarjetas import ServicioTarjetas
 from .application.vista_previa import (
@@ -112,6 +116,8 @@ class Composicion:
         self._escenarios = RepositorioEscenariosSQLite(configuracion.ruta_base_datos)
         self._suites = RepositorioSuitesSQLite(configuracion.ruta_base_datos)
         self._corridas_suite = RepositorioCorridasSuiteSQLite(configuracion.ruta_base_datos)
+        self._secuencias = RepositorioSecuenciasSQLite(configuracion.ruta_base_datos)
+        self._corridas_secuencia = RepositorioCorridasSecuenciaSQLite(configuracion.ruta_base_datos)
         self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
@@ -196,6 +202,33 @@ class Composicion:
             self.administracion_escenarios,
             self._corridas_suite,
             self.ejecutor_escenarios,
+        )
+
+    @property
+    def administracion_secuencias(self) -> ServicioSecuencias:
+        return ServicioSecuencias(self._secuencias, self._escenarios)
+
+    @property
+    def corridas_secuencia(self):
+        """Historial de corridas de secuencia, de solo lectura para la web.
+        Mismo criterio que `corridas_suite`: el repositorio ya es la
+        interfaz de lectura completa."""
+        return self._corridas_secuencia
+
+    @property
+    def ejecutor_secuencia(self) -> EjecutorDeSecuencia:
+        """Motor de secuencias (Fase C1): un paso independiente delega en
+        `ejecutor_escenarios` (reejecuta un escenario guardado, sin cambios);
+        un paso derivado delega en `Orquestador.ejecutar_reverso_financiero`
+        (B6/B7). Ninguno de los dos se reimplementa aqui.
+        """
+        return EjecutorDeSecuencia(
+            self.administracion_secuencias,
+            self.administracion_escenarios,
+            self.ejecutor_escenarios,
+            self._ejecuciones,
+            self._corridas_secuencia,
+            lambda destino, tiempo_limite: self.orquestador(destino, tiempo_limite=tiempo_limite),
         )
 
     @property

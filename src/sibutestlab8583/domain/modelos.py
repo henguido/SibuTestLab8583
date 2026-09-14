@@ -862,3 +862,177 @@ class ItemCorridaSuite:
     ejecucion_id: int | None = None
     detalle: str | None = None
     evaluacion_json: str | None = None
+
+
+# ============================================================================
+# Fase C1 (2026-09-13): Secuencias transaccionales -pasos DEPENDIENTES-.
+#
+# SECUENCIA != SUITE. Una Suite es un conjunto de escenarios INDEPENDIENTES
+# (el B no necesita el resultado del A). Una Secuencia es una lista ORDENADA
+# de pasos DEPENDIENTES: el paso 2 puede necesitar la ejecucion que produjo
+# el paso 1. La primera secuencia real de este laboratorio es exactamente
+# eso -paso 1: compra financiera (0200); paso 2: reverso financiero (0400)
+# derivado del paso 1-, y reutiliza integramente el modelo de B6/B7
+# (`Ejecucion.ejecucion_origen_id`, `application.referencia_ejecucion.
+# referencia_origen_elegible`, `Orquestador.ejecutar_reverso_financiero`):
+# no se crea un segundo sistema de referencias.
+# ============================================================================
+
+#: Origen de datos de un paso -mutuamente excluyente, nunca "un poco de cada
+#: uno"-. 'independiente' arma su propio `DatosX` desde un escenario, igual
+#: que cualquier item de una suite hoy. 'derivado' no tiene escenario que
+#: armar libremente: se construye enteramente desde la ejecucion que produjo
+#: OTRO paso anterior de la MISMA secuencia (ver `PasoSecuencia.
+#: origen_paso_orden`) -en C1, el unico caso derivado real es un reverso
+#: financiero (`OPERACION_REVERSO_FINANCIERO`), automatico por construccion:
+#: el usuario nunca elige "que operacion" para un paso derivado, la decide
+#: la elegibilidad de la ejecucion origen (`domain.elegibilidad_reverso`).
+ORIGEN_PASO_INDEPENDIENTE = "independiente"
+ORIGEN_PASO_DERIVADO = "derivado"
+
+
+@dataclass(frozen=True)
+class PasoSecuencia:
+    """Un paso de la DEFINICION de una secuencia -la intencion, no una
+    corrida concreta-. Mismo principio que `Escenario`/`Suite`: nunca
+    contiene PAN ni host/puerto/timeout.
+
+    `escenario_id` y `origen_paso_orden` son mutuamente excluyentes segun
+    `origen_tipo` -ver `__post_init__`-, nunca ambos presentes ni ambos
+    ausentes: un paso independiente necesita saber CON QUE escenario
+    armarse; un paso derivado necesita saber DE QUE PASO ANTERIOR (por
+    `orden`, no por `ejecucion_id`: ese numero recien se conoce en cada
+    corrida real, nunca en la definicion) sacar su ejecucion origen.
+
+    `expectativas` solo aplica a un paso derivado: uno independiente ya trae
+    las suyas en el escenario referenciado, y duplicarlas aqui crearia dos
+    fuentes de la misma expectativa que podrian desincronizarse.
+    """
+
+    orden: int
+    origen_tipo: str
+    escenario_id: str | None = None
+    origen_paso_orden: int | None = None
+    expectativas: Expectativas | None = None
+
+    def __post_init__(self) -> None:
+        if self.origen_tipo == ORIGEN_PASO_INDEPENDIENTE:
+            if not self.escenario_id:
+                raise ValueError(
+                    f"paso {self.orden}: un paso independiente necesita escenario_id"
+                )
+            if self.origen_paso_orden is not None:
+                raise ValueError(
+                    f"paso {self.orden}: un paso independiente no puede tener origen_paso_orden"
+                )
+        elif self.origen_tipo == ORIGEN_PASO_DERIVADO:
+            if self.origen_paso_orden is None:
+                raise ValueError(
+                    f"paso {self.orden}: un paso derivado necesita origen_paso_orden"
+                )
+            if self.origen_paso_orden == self.orden:
+                raise ValueError(f"paso {self.orden}: no puede derivar de si mismo")
+            if self.escenario_id:
+                raise ValueError(
+                    f"paso {self.orden}: un paso derivado no puede tener escenario_id"
+                )
+        else:
+            raise ValueError(f"paso {self.orden}: origen_tipo desconocido {self.origen_tipo!r}")
+
+
+@dataclass(frozen=True)
+class Secuencia:
+    """Una secuencia reutilizable: la intencion (lista ordenada de pasos
+    DEPENDIENTES), no una corrida concreta. Ver docstring de la seccion
+    "Fase C1" mas arriba para la distincion con `Suite`.
+    """
+
+    secuencia_id: str
+    nombre: str
+    descripcion: str = ""
+    pasos: tuple[PasoSecuencia, ...] = ()
+    activa: bool = True
+    creado_en: datetime = field(default_factory=_ahora)
+    actualizado_en: datetime = field(default_factory=_ahora)
+
+
+class EstadoPasoSecuencia(str, Enum):
+    """Resultado de UN paso dentro de una corrida de secuencia.
+
+    Mismos cuatro primeros valores que `EstadoItemCorrida`, mismo
+    significado exacto -no se reinventa el vocabulario-. `BLOQUEADO` es el
+    UNICO estado genuinamente nuevo: un paso DERIVADO cuyo paso origen no
+    produjo una ejecucion elegible (no corrio, corrio con error/timeout, o
+    corrio pero el autorizador no la aprobo) -nunca se finge un FAIL de una
+    operacion que nunca llego a intentarse, ni se cuenta como ERROR tecnico
+    de ESTE paso: el paso 2 en si mismo no fallo, simplemente su precondicion
+    no se cumplio (B7/C1, ver `domain.elegibilidad_reverso`).
+
+      PASS               se ejecuto, tenia expectativas, se cumplieron
+      FAIL               se ejecuto, tenia expectativas, no se cumplieron
+      ERROR              no se pudo ejecutar (paso independiente no
+                         ejecutable) o fallo tecnicamente de forma inesperada
+      SIN_EXPECTATIVAS  se ejecuto sin problema, sin expectativas definidas
+      BLOQUEADO          paso DERIVADO cuyo origen no fue elegible
+      NO_EJECUTADO       todavia no se intento; solo sobrevive si la corrida
+                         se interrumpio antes de llegar a este paso
+    """
+
+    PASS = "pass"
+    FAIL = "fail"
+    ERROR = "error"
+    SIN_EXPECTATIVAS = "sin_expectativas"
+    BLOQUEADO = "bloqueado"
+    NO_EJECUTADO = "no_ejecutado"
+
+
+@dataclass
+class CorridaSecuencia:
+    """Ejecucion historica concreta de una `Secuencia`. No frozen:
+    `corrida_id` se asigna despues de insertar, igual que `CorridaSuite`.
+
+    `resultado_global` reutiliza `ResultadoGlobalSuite` -mismo vocabulario
+    de veredicto agregado (PASS/FAIL/ERROR/INCOMPLETA/SIN_EXPECTATIVAS), sin
+    inventar un enum paralelo solo porque el agregador que lo calcula
+    (`domain.secuencias.calcular_resultado_global_secuencia`) es distinto-:
+    un `BLOQUEADO` en algun paso mapea a `INCOMPLETA`, igual criterio que ya
+    usa Suites para "no todos los escenarios se evaluaron de verdad".
+    """
+
+    secuencia_id: str
+    secuencia_nombre: str
+    total: int
+    estado: EstadoCorridaSuite = EstadoCorridaSuite.EN_CURSO
+    resultado_global: ResultadoGlobalSuite | None = None
+    cantidad_pass: int = 0
+    cantidad_fail: int = 0
+    cantidad_error: int = 0
+    cantidad_sin_expectativas: int = 0
+    cantidad_bloqueado: int = 0
+    cantidad_no_ejecutado: int = 0
+    iniciada_en: datetime = field(default_factory=_ahora)
+    finalizada_en: datetime | None = None
+    corrida_id: int | None = None
+
+
+@dataclass(frozen=True)
+class PasoCorridaSecuencia:
+    """Resultado historico de UN paso dentro de una `CorridaSecuencia`.
+
+    `origen_tipo`/`origen_paso_orden` se copian de la definicion al
+    presembrar el paso -editar la secuencia despues no altera una corrida ya
+    registrada, mismo principio que `escenario_nombre` en `ItemCorridaSuite`-.
+    `ejecucion_id` es `None` cuando el paso quedo `BLOQUEADO`: nunca se llego
+    a generar ninguna ejecucion para el.
+    """
+
+    corrida_id: int
+    orden: int
+    origen_tipo: str
+    resultado: EstadoPasoSecuencia
+    escenario_id: str | None = None
+    escenario_nombre: str | None = None
+    origen_paso_orden: int | None = None
+    ejecucion_id: int | None = None
+    detalle: str | None = None
+    evaluacion_json: str | None = None

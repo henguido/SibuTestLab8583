@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import encabezado_pagina %}
+{% block titulo %}Corridas de secuencia · SibuTestLab8583{% endblock %}
+{% set etiquetas_resultado_global = {
+  'pass': 'PASS', 'fail': 'FAIL', 'error': 'ERROR',
+  'incompleta': 'Incompleta', 'sin_expectativas': 'Sin expectativas',
+} %}
+
+{% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/secuencias">Secuencias</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">Corridas</span>
+</nav>
+{{ encabezado_pagina(
+  'Corridas de secuencia',
+  'Cada corrida es una ejecución histórica de una secuencia: editar la secuencia después no altera una corrida ya registrada.'
+) }}
+
+<section class="panel">
+  <div class="panel__cabecera">
+    <h2 class="panel__titulo">Corridas recientes</h2>
+    <span class="panel__nota">
+      {{ filas|length }} registro{{ 's' if filas|length != 1 }}
+    </span>
+  </div>
+  {% if filas %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Corridas de secuencia recientes">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Fecha y hora (UTC)</th>
+          <th>Secuencia</th>
+          <th>Resultado</th>
+          <th class="num">Total</th>
+          <th class="num">PASS</th>
+          <th class="num">FAIL</th>
+          <th class="num">ERROR</th>
+          <th class="num">Bloqueado</th>
+          <th>Duración</th>
+          <th>Detalle</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr data-resultado-global="{{ fila.resultado_global or '' }}">
+          <td class="mono">{{ fila.iniciada_en }}</td>
+          <td>{{ fila.secuencia_nombre }}</td>
+          <td>
+            {% if fila.resultado_global == 'pass' %}
+            <span class="chip chip--pass">{{ etiquetas_resultado_global.pass }}</span>
+            {% elif fila.resultado_global == 'fail' %}
+            <span class="chip chip--fail">{{ etiquetas_resultado_global.fail }}</span>
+            {% elif fila.resultado_global == 'error' %}
+            <span class="chip chip--qa">{{ etiquetas_resultado_global.error }}</span>
+            {% elif fila.resultado_global %}
+            <span class="chip chip--sintetica">
+              {{ etiquetas_resultado_global.get(fila.resultado_global, fila.resultado_global) }}
+            </span>
+            {% else %}
+            <span class="vacio">en curso</span>
+            {% endif %}
+          </td>
+          <td class="num">{{ fila.total }}</td>
+          <td class="num">{{ fila.cantidad_pass }}</td>
+          <td class="num">{{ fila.cantidad_fail }}</td>
+          <td class="num">{{ fila.cantidad_error }}</td>
+          <td class="num">{{ fila.cantidad_bloqueado }}</td>
+          <td class="mono">{{ fila.duracion }}</td>
+          <td><a href="/secuencias/corridas/{{ fila.corrida_id }}">Ver detalle</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="estado-vacio">
+    <p class="estado-vacio__titulo">Todavía no hay corridas registradas</p>
+    <p class="estado-vacio__detalle">Ejecute una secuencia para ver aquí su resultado.</p>
+    <a class="boton" href="/secuencias">Ir a secuencias</a>
+  </div>
+  {% endif %}
+</section>
+
+<a class="volver" href="/secuencias">&larr; Secuencias</a>
+{% endblock %}

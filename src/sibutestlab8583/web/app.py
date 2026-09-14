@@ -21,7 +21,7 @@ from __future__ import annotations
 import functools
 import json
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, FastAPI, Form, Query, Request
@@ -46,12 +46,14 @@ from ..application.corredor_suites import (
     SuiteNoEjecutable,
 )
 from ..application.ejecutor_escenarios import EscenarioNoEjecutable
+from ..application.ejecutor_secuencia import SecuenciaNoEjecutable
 from ..application.escenarios import (
     DatosEdicionEscenario,
     DatosNuevoEscenario,
     EscenarioNoEncontrado,
 )
 from ..application.orquestador import TarjetaDesconocida
+from ..application.secuencias import DatosNuevaSecuencia, DatosPaso
 from ..application.suites import DatosEdicionSuite, DatosNuevaSuite, SuiteNoEncontrada
 from ..application.vista_previa import TarjetaNoDisponibleParaVistaPrevia
 from ..application.tarjetas import (
@@ -80,6 +82,8 @@ from ..domain.modelos import (
     MTI_RESPUESTA_COMPRA,
     MTI_RESPUESTA_COMPRA_FINANCIERA,
     MTI_RESPUESTA_ECHO,
+    ORIGEN_PASO_DERIVADO,
+    ORIGEN_PASO_INDEPENDIENTE,
     OPERACION_COMPRA_FINANCIERA,
     OPERACION_ECHO,
     OPERACION_POR_MTI,
@@ -2128,6 +2132,190 @@ async def corrida_detalle(
             # deshabilitado sin explicacion (ver `SinItemsReintentables`,
             # que ademas revalida esto mismo del lado del servidor).
             "puede_reintentar": (corrida.cantidad_fail + corrida.cantidad_error) > 0,
+        },
+    )
+
+
+# ==================================== SECUENCIAS (Fase C1) ==================== #
+#
+# SECUENCIA != SUITE: pasos DEPENDIENTES, no escenarios independientes (ver
+# docstring de `domain.modelos`, seccion "Fase C1"). C1 solo soporta la
+# primera forma real: paso 1 = compra financiera (financial_purchase,
+# escenario elegido), paso 2 = reverso de ese paso (financial_reversal,
+# automatico -el usuario nunca elige la operacion de un paso derivado, la
+# decide `domain.elegibilidad_reverso`).
+
+
+def _secuencia_no_encontrada(request: Request):
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="no_encontrado.html",
+        context={
+            "seccion": "secuencias",
+            "titulo": "Secuencia no encontrada",
+            "detalle": "La secuencia solicitada no existe o ya no está disponible.",
+            "ruta_vuelta": "/secuencias",
+            "texto_vuelta": "Volver a secuencias",
+        },
+        status_code=404,
+    )
+
+
+def _corrida_secuencia_no_encontrada(request: Request):
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="no_encontrado.html",
+        context={
+            "seccion": "secuencias",
+            "titulo": "Corrida no encontrada",
+            "detalle": "La corrida de secuencia solicitada no existe o ya no está disponible.",
+            "ruta_vuelta": "/secuencias/corridas",
+            "texto_vuelta": "Volver a corridas de secuencia",
+        },
+        status_code=404,
+    )
+
+
+async def _formulario_secuencia_nueva(
+    request: Request,
+    composicion: Composicion,
+    *,
+    error: str | None = None,
+    enviado: Mapping | None = None,
+    estado_http: int = 200,
+):
+    enviado = enviado or {}
+    # Solo compra financiera puede ser el paso 1 -es la unica operacion
+    # con tarjeta cuya ejecucion aprobada `domain.elegibilidad_reverso`
+    # reconoce como origen valido de un reverso (B6/B7); ofrecer otros MTI
+    # aqui fingiria una capacidad que C1 no soporta (punto 20/21).
+    candidatos = [
+        e for e in await composicion.administracion_escenarios.listar()
+        if e.mti == MTI_COMPRA_FINANCIERA
+    ]
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="secuencia_nueva.html",
+        context={
+            "seccion": "secuencias",
+            "error": error,
+            "nombre": enviado.get("nombre", ""),
+            "descripcion": enviado.get("descripcion", ""),
+            "escenario_id_elegido": enviado.get("escenario_id", ""),
+            "escenarios_candidatos": candidatos,
+        },
+        status_code=estado_http,
+    )
+
+
+@enrutador.get("/secuencias", response_class=HTMLResponse)
+async def secuencias_lista(
+    request: Request, composicion: Composicion = Depends(obtener_composicion)
+):
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="secuencias.html",
+        context={
+            "seccion": "secuencias",
+            "secuencias": await composicion.administracion_secuencias.listar(),
+        },
+    )
+
+
+@enrutador.get("/secuencias/nueva", response_class=HTMLResponse)
+async def secuencia_nueva_formulario(
+    request: Request, composicion: Composicion = Depends(obtener_composicion)
+):
+    return await _formulario_secuencia_nueva(request, composicion)
+
+
+@enrutador.post("/secuencias", response_class=HTMLResponse)
+async def secuencia_crear(
+    request: Request,
+    nombre: str = Form(""),
+    descripcion: str = Form(""),
+    escenario_id: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """Crea una secuencia de dos pasos: paso 1 independiente (el escenario
+    de compra financiera elegido), paso 2 derivado del paso 1 (reverso,
+    automático -sin selector: C1 solo soporta esta forma, ver punto 20).
+    """
+    try:
+        creada = await composicion.administracion_secuencias.crear(
+            DatosNuevaSecuencia(
+                nombre=nombre,
+                descripcion=descripcion,
+                pasos=[
+                    DatosPaso(origen_tipo=ORIGEN_PASO_INDEPENDIENTE, escenario_id=escenario_id or None),
+                    DatosPaso(origen_tipo=ORIGEN_PASO_DERIVADO, origen_paso_orden=1),
+                ],
+            )
+        )
+    except ValueError as error:
+        return await _formulario_secuencia_nueva(
+            request, composicion, error=str(error),
+            enviado={"nombre": nombre, "descripcion": descripcion, "escenario_id": escenario_id},
+            estado_http=400,
+        )
+    return RedirectResponse(f"/secuencias?creada={creada.secuencia_id}", status_code=303)
+
+
+@enrutador.post("/secuencias/{secuencia_id}/ejecutar", response_class=HTMLResponse)
+async def secuencia_ejecutar(
+    request: Request, secuencia_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    """Corre la secuencia completa, paso a paso, en esta misma peticion -sin
+    progreso en vivo, misma limitacion consciente que `suite_ejecutar`."""
+    try:
+        corrida = await composicion.ejecutor_secuencia.ejecutar(secuencia_id)
+    except SecuenciaNoEjecutable:
+        return _secuencia_no_encontrada(request)
+    return RedirectResponse(f"/secuencias/corridas/{corrida.corrida_id}", status_code=303)
+
+
+@enrutador.get("/secuencias/corridas", response_class=HTMLResponse)
+async def corridas_secuencia_lista(
+    request: Request, composicion: Composicion = Depends(obtener_composicion)
+):
+    corridas = await composicion.corridas_secuencia.listar()
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="secuencia_corridas.html",
+        context={
+            "seccion": "corridas_secuencia",
+            "filas": [presentacion.fila_de_corrida_secuencia(c) for c in corridas],
+        },
+    )
+
+
+@enrutador.get("/secuencias/corridas/{corrida_id}", response_class=HTMLResponse)
+async def corrida_secuencia_detalle(
+    request: Request, corrida_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    try:
+        numero = int(corrida_id)
+    except ValueError:
+        return _corrida_secuencia_no_encontrada(request)
+
+    corrida = await composicion.corridas_secuencia.obtener(numero)
+    if corrida is None:
+        return _corrida_secuencia_no_encontrada(request)
+
+    pasos = await composicion.corridas_secuencia.obtener_pasos(numero)
+    fila_corrida = presentacion.fila_de_corrida_secuencia(corrida)
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="secuencia_corrida_detalle.html",
+        context={
+            "seccion": "corridas_secuencia",
+            "corrida": fila_corrida,
+            "filas_pasos": presentacion.filas_de_corrida_secuencia(
+                pasos, composicion.descripciones_de_campos
+            ),
+            "aviso_resultado": presentacion.AVISOS_RESULTADO_GLOBAL_SUITE.get(
+                fila_corrida.resultado_global
+            ),
         },
     )
 

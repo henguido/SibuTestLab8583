@@ -180,6 +180,8 @@ GRUPOS_NAV: tuple[GrupoNav, ...] = (
         Seccion("escenarios", "/escenarios", "Escenarios"),
         Seccion("suites", "/suites", "Suites"),
         Seccion("corridas", "/suites/corridas", "Corridas"),
+        Seccion("secuencias", "/secuencias", "Secuencias"),
+        Seccion("corridas_secuencia", "/secuencias/corridas", "Corridas de secuencia"),
     )),
     GrupoNav("Configuración", (
         Seccion("conexiones", "/configuracion/conexiones", "Conexiones"),
@@ -1109,6 +1111,89 @@ def evaluacion_de_item(item, descripciones: Mapping[str, str]) -> EvaluacionMost
     datos = json.loads(item.evaluacion_json)
     filas = [_fila_de_discrepancia(d, descripciones) for d in datos.get("discrepancias", [])]
     return EvaluacionMostrada(estado=datos["resultado"], filas=tuple(filas))
+
+
+# ==================================== SECUENCIAS (Fase C1) ==================== #
+#
+# Reutiliza `AVISOS_RESULTADO_GLOBAL_SUITE` tal cual -mismo vocabulario de
+# veredicto agregado (`domain.secuencias.calcular_resultado_global_secuencia`
+# devuelve `ResultadoGlobalSuite`, ver justificacion en `domain/modelos.py`)-,
+# nunca una segunda tabla de avisos con las mismas cinco entradas.
+
+
+@dataclass(frozen=True)
+class FilaCorridaSecuencia:
+    """Una fila del listado de corridas de secuencia. Mismo criterio que
+    `FilaCorrida`, mas `cantidad_bloqueado` -el unico contador que Suites
+    no tiene."""
+
+    corrida_id: int
+    secuencia_nombre: str
+    estado: str
+    resultado_global: str | None
+    total: int
+    cantidad_pass: int
+    cantidad_fail: int
+    cantidad_error: int
+    cantidad_sin_expectativas: int
+    cantidad_bloqueado: int
+    iniciada_en: str
+    duracion: str
+
+
+def fila_de_corrida_secuencia(corrida) -> FilaCorridaSecuencia:
+    return FilaCorridaSecuencia(
+        corrida_id=corrida.corrida_id,
+        secuencia_nombre=corrida.secuencia_nombre,
+        estado=corrida.estado.value,
+        resultado_global=corrida.resultado_global.value if corrida.resultado_global else None,
+        total=corrida.total,
+        cantidad_pass=corrida.cantidad_pass,
+        cantidad_fail=corrida.cantidad_fail,
+        cantidad_error=corrida.cantidad_error,
+        cantidad_sin_expectativas=corrida.cantidad_sin_expectativas,
+        cantidad_bloqueado=corrida.cantidad_bloqueado,
+        iniciada_en=corrida.iniciada_en.strftime("%Y-%m-%d %H:%M:%S"),
+        duracion=_duracion(corrida),
+    )
+
+
+@dataclass(frozen=True)
+class FilaPasoCorridaSecuencia:
+    """Una fila del detalle de una corrida de secuencia: un paso y su
+    resultado. Mismo criterio que `FilaItemCorrida`; `origen_tipo`/
+    `origen_paso_orden` son lo unico que Suites no necesita -describen la
+    DEPENDENCIA entre pasos, el rasgo que distingue una Secuencia de una
+    Suite (ver docstring de `domain.modelos`, seccion "Fase C1")."""
+
+    orden: int
+    origen_tipo: str
+    origen_paso_orden: int | None
+    escenario_id: str | None
+    escenario_nombre: str | None
+    resultado: str
+    detalle: str | None
+    ejecucion_id: int | None
+    evaluacion: EvaluacionMostrada | None
+
+
+def filas_de_corrida_secuencia(
+    pasos: Sequence, descripciones: Mapping[str, str]
+) -> Sequence[FilaPasoCorridaSecuencia]:
+    return [
+        FilaPasoCorridaSecuencia(
+            orden=paso.orden,
+            origen_tipo=paso.origen_tipo,
+            origen_paso_orden=paso.origen_paso_orden,
+            escenario_id=paso.escenario_id,
+            escenario_nombre=paso.escenario_nombre,
+            resultado=paso.resultado.value,
+            detalle=paso.detalle,
+            ejecucion_id=paso.ejecucion_id,
+            evaluacion=evaluacion_de_item(paso, descripciones),
+        )
+        for paso in pasos
+    ]
 
 
 # ============================================== COMPARACION DE CORRIDAS === #

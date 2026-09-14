@@ -19,8 +19,9 @@ qué fase está en qué estado:
 | B — Modelo multi-MTI, subfase B4 (0200/0210 compra financiera real) | **IMPLEMENTADA**, integrada a `main` (merge `1998491`) |
 | B — Modelo multi-MTI, subfase B5 (editor común de operaciones con tarjeta) | **IMPLEMENTADA**, integrada a `main` (merge `07b69f3`) |
 | B — Modelo multi-MTI, subfase B6 (modelo conceptual de operación derivada/reverso, SIN 0400/0410) | **IMPLEMENTADA**, integrada a `main` (merge `7c034ed`) |
-| B — Modelo multi-MTI, subfase B7 (reverso interactivo real, 0400/0410) | **IMPLEMENTADA** en `feature/multi-mti-b7-reversal-0400` (commits `820bd5e`/`cde3852`/`6f4f3f6`/`de0556b`, sin mergear a `main`, en revisión) |
-| C, D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
+| B — Modelo multi-MTI, subfase B7 (reverso interactivo real, 0400/0410) | **IMPLEMENTADA**, integrada a `main` (merge `6a31ce3`) |
+| C — Secuencias transaccionales, subfase C1 (infraestructura mínima: 0200 → 0400 dependiente) | **IMPLEMENTADA** en `feature/secuencias-c1-core` (commits `a81e080`/`e139522`/`f52eaf5`, sin mergear a `main`, en revisión) |
+| D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
 10 agentes especializados (investigación/diseño, sin escritura de código salvo lo que el
@@ -412,10 +413,30 @@ en paralelo a B si conviene por capacidad disponible.
 
 | Subfase | Objetivo | Depende de |
 |---|---|---|
-| C1 | Infraestructura: `Secuencia`/`PasoSecuencia`/`ContextoPaso`, validación de dependencias, tablas nuevas (`secuencias`, `secuencia_pasos`, `corridas_secuencia`, `corrida_secuencia_items`), secuencia de 2 pasos 0100→0100, STOP_ON_FAILURE fijo (sin CONTINUE_ON_FAILURE, sin retries, sin timeout de secuencia) | Fase A (ya completa) |
-| C2 | CONTINUE_ON_FAILURE, retries por paso, timeout de paso | C1 |
-| C3 | Secuencias con MTIs reales (0100→0200→0420) | C1, Fase B completa |
+| C1 | Infraestructura mínima: `Secuencia`/`PasoSecuencia`, `ContextoSecuencia`, tablas nuevas, secuencia de 2 pasos DEPENDIENTES, sin CONTINUE_ON_FAILURE, sin retries, sin timeout de secuencia | Fase B (B6/B7 ya completas) |
+| C2 | Variables entre pasos (`{{step.N.campo}}` o sintaxis equivalente), CONTINUE_ON_FAILURE, retries por paso, timeout de paso | C1 |
+| C3 | Secuencias con más operaciones/MTIs (0420/0430 y automatización de reversos dentro de escenarios/suites) | C1, C2 si se necesitan variables |
 | C4 | Comparación de corridas de secuencia (equivalente a `comparacion_corridas.py`) | C1, al menos una corrida real que comparar |
+
+**Actualización (C1, 2026-09-13): implementada, revisada contra el código real -no contra el
+diseño original de Agente 3-.** Decisión de orden del propietario: C1 se hizo **después** de B7
+(reverso interactivo real), no antes ni en paralelo -al contrario de lo que ARCH-004 permitía-,
+porque B6/B7 ya alcanzaban para demostrar el primer caso de uso real (compra financiera →
+reverso) sin necesitar secuencias todavía; C1 automatiza ese mismo caso, no lo inventa.
+
+Diferencias reales contra el diseño de Agente 3: **no se implementó `ContextoPaso` genérico ni
+`depende_de`/`captura`** -en su lugar, `PasoSecuencia.origen_tipo` (`independiente`/`derivado`) +
+`origen_paso_orden`, y `ContextoSecuencia` con una API mínima (`registrar`/`ejecucion_id_de`),
+suficiente para el único caso real de C1 (un paso deriva de la ejecución de otro vía
+`ejecucion_origen_id`/`ReferenciaEjecucion`, B6/B7 reutilizados tal cual). Las tablas nuevas se
+llaman `secuencias_transaccionales`/`secuencia_transaccional_pasos`/`corridas_secuencia`/
+`corrida_secuencia_pasos` -no `secuencias`/`secuencia_pasos`- porque `secuencias` ya es el nombre
+de la tabla del contador de STAN, sin ninguna relación con este concepto (hallazgo del Agente B
+de la investigación de C1, evitado antes de escribir el DDL). `EstadoItemCorrida`/
+`calcular_resultado_global` SÍ se reutilizaron como vocabulario -no la clase entera-: se creó
+`EstadoPasoSecuencia` (mismos PASS/FAIL/ERROR/SIN_EXPECTATIVAS/NO_EJECUTADO + `BLOQUEADO`, el
+único estado nuevo) y `calcular_resultado_global_secuencia`, que devuelve el mismo
+`ResultadoGlobalSuite` de siempre. Detalle completo del checkpoint en la sección 10.
 
 **Riesgo documentado:** un campo capturado (`captura`) debe validarse contra `CAMPOS_SENSIBLES`
 al guardar la secuencia — mismo criterio que ya usa `campos_permitidos_expectativa` — para que
@@ -533,14 +554,13 @@ Historial. Secuencias sigue siendo necesaria más adelante, mas no como prerrequ
 Orden aprobado: B6 → **B7 (reverso interactivo 0400/0410, completo — ver sección 9)** → Fase C
 (secuencias/contexto entre pasos) → 0420/0430 y automatización de reversos (B8, ver sección 6).
 
-**Próximo bloque:** **B8 (propuesta) — Reversos automatizados (0420/0430)**, condicionado a que
-exista Fase C (al menos C1, infraestructura de Secuencias): un escenario de reverso automatizado
-necesita expresar "usa la salida del paso anterior", que hoy no existe fuera de una ejecución
-manual concreta (ver sección 9.N).
+**Próximo bloque:** **C2 (propuesta) — Variables entre pasos (`{{step.N.campo}}`) y
+CONTINUE_ON_FAILURE/retries/timeout de paso**, o alternativamente **0420/0430 sobre el motor de
+secuencias ya construido (C1, sección 10)** — ambas opciones están disponibles; la decisión de
+cuál seguir es del propietario (ver sección 10.N).
 
-Alternativa independiente de esa decisión: **D0 — cerrar QA-002** (test dedicado para
-`adapters/host_simulado/cli.py`) y/o **C1 — infraestructura mínima de Secuencias** (no requiere
-0400/0410, solo agrupa escenarios existentes, ver ARCH-004).
+Alternativa independiente: **D0 — cerrar QA-002** (test dedicado para
+`adapters/host_simulado/cli.py`).
 
 ## 8. Checkpoint B6 — Modelo de operación derivada (reversos, sin 0400/0410)
 
@@ -749,3 +769,143 @@ entrega mínima (dos pasos 0100→0100) no depende de B7. Lo que SÍ depende de 
 automatizado necesita expresar "usa la ejecución producida por el paso anterior", no un
 `ejecucion_id` fijo — ese es exactamente el contrato que Secuencias (`ContextoPaso`,
 `depende_de`/`captura`) está diseñada para dar. **No se avanza a 0420/0430 todavía.**
+
+## 10. Checkpoint C1 — Secuencias transaccionales (infraestructura mínima)
+
+**Estado: COMPLETO para el alcance acordado.** Rama `feature/secuencias-c1-core`, commits
+`a81e080` (C1.1 modelo+persistencia), `e139522` (C1.2 contexto+ejecutor: 0200→0400 real),
+`f52eaf5` (C1.3 UI mínima). Sin mergear a `main`, pendiente de aprobación del propietario.
+Decisión de orden previa (ver sección 7): C1 se construyó DESPUÉS de B7, no antes ni en
+paralelo — B6/B7 ya alcanzaban para el reverso manual; C1 lo automatiza dentro de un flujo de
+dos pasos, sin inventar un segundo sistema de referencias.
+
+**A. Integración B7:** confirmada antes de abrir C1 — `main`/`origin/main` en `6a31ce3`, suite
+1296 passed/0 skipped en verde.
+
+**B. Modelo de Secuencia:** `Secuencia`/`PasoSecuencia` (definición) + `CorridaSecuencia`/
+`PasoCorridaSecuencia` (histórico), en `domain/modelos.py`. Cada `PasoSecuencia` declara
+`origen_tipo` (`independiente`/`derivado`), mutuamente excluyente con `escenario_id`/
+`origen_paso_orden` (validado en `__post_init__`): un paso independiente arma su propio
+`DatosX` desde un escenario guardado (igual que un ítem de Suite); uno derivado no tiene
+escenario — se construye enteramente desde la ejecución que produjo OTRO paso ANTERIOR de la
+misma secuencia (`origen_paso_orden`, un `orden` dentro de la definición, nunca un
+`ejecucion_id` fijo — ese solo se conoce en cada corrida real). `EstadoPasoSecuencia` reutiliza
+el vocabulario de `EstadoItemCorrida` (PASS/FAIL/ERROR/SIN_EXPECTATIVAS/NO_EJECUTADO) y agrega
+`BLOQUEADO`, el único estado genuinamente nuevo: un paso derivado cuyo origen no produjo una
+ejecución elegible.
+
+**C. Persistencia:** 4 tablas nuevas — `secuencias_transaccionales`/`secuencia_transaccional_
+pasos` (definición) y `corridas_secuencia`/`corrida_secuencia_pasos` (histórico) — vía
+`CREATE TABLE IF NOT EXISTS`, sin tocar ninguna tabla existente (`ejecucion_origen_id`, de B6,
+ya alcanzaba). Nombradas con cuidado para NO chocar con la tabla `secuencias` preexistente (el
+contador de STAN, sin relación con este concepto — hallazgo de la investigación previa,
+Agente B). Aplicada contra la base real de desarrollo con backup
+(`sibutestlab8583.db.bak-preC1-20260913-162610`), 72 filas antes/después, `PRAGMA
+foreign_key_check` vacío, re-ejecutada para confirmar idempotencia.
+
+**D. Contexto:** `ContextoSecuencia` (`application/contexto_secuencia.py`) — deliberadamente
+DISTINTO de `domain.variables.ContextoResolucion` (Fase A): aquel resuelve `{{...}}` dentro de
+un mensaje en armado; este ubica qué ejecución produjo un paso ya terminado. API explícita, sin
+diccionarios mágicos: `registrar(orden, ejecucion_id)` / `ejecucion_id_de(orden) -> int | None`,
+llenado únicamente cuando un paso independiente produce una `Ejecucion` real. Nunca reconstruye
+`ReferenciaEjecucion` a mano: eso sigue siendo exclusivo de `referencia_origen_elegible`
+(B6/B7), invocado internamente por `Orquestador.ejecutar_reverso_financiero`.
+
+**E. Ejecutor:** `EjecutorDeSecuencia` (`application/ejecutor_secuencia.py`) recorre los pasos
+en orden, SECUENCIAL y se detiene por dependencia — a diferencia de `CorredorDeSuites`, que
+aísla ítems independientes y sigue. Un paso independiente delega tal cual en
+`EjecutorDeEscenarios` (sin ningún cambio); un paso derivado arma `DatosReversoFinanciero` con
+el `ejecucion_id` que el contexto ya registró y delega en `Orquestador.
+ejecutar_reverso_financiero`, que revalida la elegibilidad él mismo — las excepciones
+`EjecucionOrigenNoEncontrada`/`EjecucionOrigenNoElegible` se clasifican como `BLOQUEADO`, nunca
+se reimplementa la regla de `domain.elegibilidad_reverso` aquí.
+
+**F. 0200→0400 real:** `tests/test_ejecutor_secuencia.py::
+test_secuencia_real_compra_financiera_y_reverso` — TCP/codec/SQLite/host simulado reales, sin
+dobles: paso 1 (0200→0210/00) produce la ejecución A; paso 2 (derivado) arma y transmite el
+0400, recibe 0410/00, y persiste `ejecucion_origen_id = A` con un STAN nuevo (≠ STAN de A).
+
+**Evidencia real en la base de desarrollo (Corrida de secuencia #1, generada durante la
+verificación en navegador real de C1):**
+
+```
+corridas_secuencia   corrida_id=1  secuencia="Compra + reverso (navegador)"
+                      estado=finalizada  resultado_global=sin_expectativas
+                      total=2  pass=0 fail=0 error=0 sin_expectativas=2 bloqueado=0
+
+ejecuciones           id=73  0200→0210  estado=aprobada  ejecucion_origen_id=NULL
+                      id=74  0400→0410  estado=aprobada  ejecucion_origen_id=73
+
+PRAGMA foreign_key_check  -> []  (vacío, sin violaciones)
+```
+
+Confirma en datos reales, no solo en test, el diagrama exigido por el checkpoint:
+`paso 1 (0200→0210, ejecución #73) → contexto de secuencia → paso 2 (0400→0410, ejecución #74,
+ejecucion_origen_id=73)`, sin ningún `ejecucion_id` fijo en la definición ni referencia manual.
+
+**G. Bloqueos:** dos negativas E2E reales, TCP/host real de por medio — `test_una_financiera_
+rechazada_bloquea_el_reverso` (0200→0210/51: el paso 2 queda `BLOQUEADO`, cero ejecuciones 0400
+generadas) y `test_timeout_en_el_primer_paso_bloquea_el_reverso` (timeout en el paso 1 — que SÍ
+persiste como `Ejecucion` con estado `TIMEOUT` — el paso 2 igual queda `BLOQUEADO`, porque
+`referencia_origen_elegible` exige `APROBADA`). Ninguno de los dos casos finge un `FAIL`/`ERROR`
+del paso 2: la precondición simplemente no se cumplió.
+
+**H. Expectativas:** por paso (`PasoSecuencia.expectativas`, solo aplica a un derivado; uno
+independiente ya trae las suyas en el escenario) y global (`domain.secuencias.
+calcular_resultado_global_secuencia`, que devuelve el mismo `ResultadoGlobalSuite` de Suites —
+`BLOQUEADO` mapea a `INCOMPLETA`, mismo criterio que la mezcla PASS+SIN_EXPECTATIVAS). Ningún
+motor de expectativas nuevo: `evaluar_expectativas` (Fase A/RN) se reutiliza sin cambios,
+exactamente como ya hacía `CorredorDeSuites`.
+
+**Semántica protegida explícitamente (revisión de la Corrida #1 real, 2026-09-13):** dos ejes
+independientes que no deben confundirse nunca. `EstadoEjecucion` (transaccional: aprobada,
+rechazada, timeout, ...) responde "¿qué pasó con el mensaje ISO?"; `EstadoEvaluacion`/
+`EstadoPasoSecuencia` (QA) responde "¿eso era lo que el escenario esperaba?". Dos pruebas
+dedicadas en `tests/test_ejecutor_secuencia.py` los fijan como regresión:
+- Dos transacciones **aprobadas** sin ninguna expectativa declarada → `SIN_EXPECTATIVAS`,
+  nunca `PASS` implícito (`assert paso1.resultado is not EstadoPasoSecuencia.PASS`, sobre la
+  corrida real de la sección F).
+- Una transacción **rechazada** (0200/51) con una expectativa que esperaba exactamente ese
+  rechazo → `PASS` de QA (`test_una_financiera_rechazada_con_expectativa_correcta_es_pass_qa`),
+  aunque `Ejecucion.estado` siga siendo `RECHAZADA` — y el paso derivado sigue `BLOQUEADO`: un
+  PASS de QA no vuelve elegible un origen que `domain.elegibilidad_reverso` ya rechazó.
+
+**I. Seguridad:** ningún dato de tarjeta nuevo se expone — un paso derivado nunca recibe PAN,
+Track1/Track2 ni RAW (los mismos guardias de B6/B7 siguen intactos, sin tocar). El contexto
+entre pasos solo transporta `ejecucion_id` (un entero), nunca un objeto de dominio con datos
+sensibles. `tests/test_secuencias.py` cubre la validación pura de `PasoSecuencia`/
+`ContextoSecuencia`; `tests/test_administracion_secuencias.py` cubre el rechazo de un paso
+derivado que apunte hacia adelante o hacia sí mismo, y de un escenario inexistente.
+
+**J. UI:** Historial → chip/preview de reverso (B6/B7, sin cambios) más, nuevo en C1: `/secuencias`
+(lista + "Nueva secuencia"), `/secuencias/nueva` (formulario: nombre + UN escenario de compra
+financiera; el paso 2 es automático, sin selector — C1 solo soporta esta forma),
+`/secuencias/{id}/ejecutar`, `/secuencias/corridas[/{id}]` (historial + detalle paso a paso,
+con enlace real a `/historial/{ejecucion_id}`). Nueva entrada "Secuencias"/"Corridas de
+secuencia" en la barra lateral (grupo Automatización). Verificado con recorrido manual completo
+en navegador real: crear escenario de compra financiera, guardarlo, crear la secuencia,
+ejecutarla, confirmar ambos pasos en "Sin expectativas" (sin expectativas definidas, no es un
+fallo), y navegar al Isoscopio real de cada ejecución -incluida "Originada desde la ejecución
+#N" en el paso derivado-.
+
+**K. Arquitectura — qué reutilizó B6/B7:** el modelo de operación derivada
+(`ejecucion_origen_id`), la elegibilidad (`domain.elegibilidad_reverso`), el snapshot seguro
+(`ReferenciaEjecucion`/`referencia_origen_elegible`) y el propio `Orquestador.
+ejecutar_reverso_financiero` se reutilizaron TAL CUAL, sin ninguna modificación: la única pieza
+nueva de infraestructura es el motor de secuencias en sí (modelo, persistencia, contexto,
+ejecutor, UI). Cero condicionales especiales por MTI se agregaron en ningún módulo de dominio.
+
+**L. Tests:** 1296 passed al cerrar B7 → **1331 passed** al cierre formal de C1 (35 nuevos:
+3 migración, 6 E2E de ejecutor -incluida la protección explícita de la semántica
+transaccional-vs-QA, punto priorizado tras revisar la Corrida #1 real-, 17 puros de
+modelo/contexto/agregador, 5 de administración de secuencias, 2 web verticales, 2 web de humo).
+0 skipped. `git diff --check` limpio en cada commit.
+
+**M. Commits:** `a81e080` (C1.1), `e139522` (C1.2), `f52eaf5` (C1.3).
+
+**N. Próximo paso:** dos caminos disponibles, ninguno bloqueado por el otro — **C2** (variables
+entre pasos `{{step.N.campo}}`, CONTINUE_ON_FAILURE, retries/timeout de paso) o **0420/0430**
+sobre el motor de secuencias ya construido (reutilizaría `EjecutorDeSecuencia` con una tercera
+operación derivada, análoga a `financial_reversal`). La decisión de cuál priorizar es del
+propietario; ninguna de las dos requiere deshacer nada de C1. **No se avanzó a 0420/0430 ni a
+variables entre pasos todavía.**
