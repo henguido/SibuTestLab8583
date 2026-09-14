@@ -824,7 +824,24 @@ se reimplementa la regla de `domain.elegibilidad_reverso` aquí.
 test_secuencia_real_compra_financiera_y_reverso` — TCP/codec/SQLite/host simulado reales, sin
 dobles: paso 1 (0200→0210/00) produce la ejecución A; paso 2 (derivado) arma y transmite el
 0400, recibe 0410/00, y persiste `ejecucion_origen_id = A` con un STAN nuevo (≠ STAN de A).
-Confirmado también con recorrido manual en navegador real.
+
+**Evidencia real en la base de desarrollo (Corrida de secuencia #1, generada durante la
+verificación en navegador real de C1):**
+
+```
+corridas_secuencia   corrida_id=1  secuencia="Compra + reverso (navegador)"
+                      estado=finalizada  resultado_global=sin_expectativas
+                      total=2  pass=0 fail=0 error=0 sin_expectativas=2 bloqueado=0
+
+ejecuciones           id=73  0200→0210  estado=aprobada  ejecucion_origen_id=NULL
+                      id=74  0400→0410  estado=aprobada  ejecucion_origen_id=73
+
+PRAGMA foreign_key_check  -> []  (vacío, sin violaciones)
+```
+
+Confirma en datos reales, no solo en test, el diagrama exigido por el checkpoint:
+`paso 1 (0200→0210, ejecución #73) → contexto de secuencia → paso 2 (0400→0410, ejecución #74,
+ejecucion_origen_id=73)`, sin ningún `ejecucion_id` fijo en la definición ni referencia manual.
 
 **G. Bloqueos:** dos negativas E2E reales, TCP/host real de por medio — `test_una_financiera_
 rechazada_bloquea_el_reverso` (0200→0210/51: el paso 2 queda `BLOQUEADO`, cero ejecuciones 0400
@@ -839,6 +856,19 @@ calcular_resultado_global_secuencia`, que devuelve el mismo `ResultadoGlobalSuit
 `BLOQUEADO` mapea a `INCOMPLETA`, mismo criterio que la mezcla PASS+SIN_EXPECTATIVAS). Ningún
 motor de expectativas nuevo: `evaluar_expectativas` (Fase A/RN) se reutiliza sin cambios,
 exactamente como ya hacía `CorredorDeSuites`.
+
+**Semántica protegida explícitamente (revisión de la Corrida #1 real, 2026-09-13):** dos ejes
+independientes que no deben confundirse nunca. `EstadoEjecucion` (transaccional: aprobada,
+rechazada, timeout, ...) responde "¿qué pasó con el mensaje ISO?"; `EstadoEvaluacion`/
+`EstadoPasoSecuencia` (QA) responde "¿eso era lo que el escenario esperaba?". Dos pruebas
+dedicadas en `tests/test_ejecutor_secuencia.py` los fijan como regresión:
+- Dos transacciones **aprobadas** sin ninguna expectativa declarada → `SIN_EXPECTATIVAS`,
+  nunca `PASS` implícito (`assert paso1.resultado is not EstadoPasoSecuencia.PASS`, sobre la
+  corrida real de la sección F).
+- Una transacción **rechazada** (0200/51) con una expectativa que esperaba exactamente ese
+  rechazo → `PASS` de QA (`test_una_financiera_rechazada_con_expectativa_correcta_es_pass_qa`),
+  aunque `Ejecucion.estado` siga siendo `RECHAZADA` — y el paso derivado sigue `BLOQUEADO`: un
+  PASS de QA no vuelve elegible un origen que `domain.elegibilidad_reverso` ya rechazó.
 
 **I. Seguridad:** ningún dato de tarjeta nuevo se expone — un paso derivado nunca recibe PAN,
 Track1/Track2 ni RAW (los mismos guardias de B6/B7 siguen intactos, sin tocar). El contexto
@@ -865,9 +895,11 @@ ejecutar_reverso_financiero` se reutilizaron TAL CUAL, sin ninguna modificación
 nueva de infraestructura es el motor de secuencias en sí (modelo, persistencia, contexto,
 ejecutor, UI). Cero condicionales especiales por MTI se agregaron en ningún módulo de dominio.
 
-**L. Tests:** 1296 passed al cerrar B7 → **1330 passed** al cerrar C1 (34 nuevos: 3 migración,
-5 E2E de ejecutor, 17 puros de modelo/contexto/agregador, 5 de administración de secuencias,
-2 web verticales, 2 web de humo). 0 skipped. `git diff --check` limpio en cada commit.
+**L. Tests:** 1296 passed al cerrar B7 → **1331 passed** al cierre formal de C1 (35 nuevos:
+3 migración, 6 E2E de ejecutor -incluida la protección explícita de la semántica
+transaccional-vs-QA, punto priorizado tras revisar la Corrida #1 real-, 17 puros de
+modelo/contexto/agregador, 5 de administración de secuencias, 2 web verticales, 2 web de humo).
+0 skipped. `git diff --check` limpio en cada commit.
 
 **M. Commits:** `a81e080` (C1.1), `e139522` (C1.2), `f52eaf5` (C1.3).
 
