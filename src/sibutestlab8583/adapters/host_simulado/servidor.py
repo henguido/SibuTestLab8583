@@ -46,6 +46,18 @@ respuesta actual como fallback mientras migramos"). Cada mensaje -con regla
 ganadora o sin ella- se registra en `reglas_host_eventos` si se paso un
 `repositorio_eventos` (auditoria del lado del simulador, nunca con el valor
 de ningun campo del mensaje, punto 21/35 del checkpoint).
+
+D2 (2026-09-14): `repositorio_estado` (opcional) permite que una regla con
+`max_aplicaciones` deje de ser candidata al agotarse -`_seleccionar_
+regla_ganadora` intenta, POR PRIORIDAD, un incremento ATOMICO
+(`RepositorioEstadoReglasHost.incrementar_si_no_agotada`) sobre la primera
+regla candidata con limite; si ese incremento falla (agotada, o perdio una
+carrera concurrente contra otra conexion), la excluye y reintenta con la
+siguiente por prioridad -nunca cae directo al fallback si otra regla
+(incluido un fallback explicito sin limite) aun coincide (punto 15 del
+checkpoint D2). Sin `repositorio_estado`, ninguna regla puede tener
+`max_aplicaciones` efectivo (se trata como ilimitada) -mismo comportamiento
+exacto que D1.
 """
 
 from __future__ import annotations
@@ -107,6 +119,7 @@ class HostSimulado:
         campos_alterados: Mapping[str, str] | None = None,
         reglas: Sequence[ReglaHost] | None = None,
         repositorio_eventos=None,
+        repositorio_estado=None,
     ) -> None:
         self._codec = codec
         self._perfil = perfil
@@ -116,6 +129,7 @@ class HostSimulado:
         self._alterados = dict(campos_alterados or {})
         self._reglas = tuple(reglas) if reglas else ()
         self._repositorio_eventos = repositorio_eventos
+        self._repositorio_estado = repositorio_estado
         self._servidor: asyncio.AbstractServer | None = None
         self._apagado: asyncio.Event | None = None
         self.host: str | None = None
@@ -177,10 +191,10 @@ class HostSimulado:
 
         solicitud = self._codec.decodificar(payload, self._perfil).como_mensaje()
 
-        regla_ganadora = (
-            evaluar_reglas(self._reglas, solicitud.campos, solicitud.mti) if self._reglas else None
+        regla_ganadora, match_number = await self._seleccionar_regla_ganadora(
+            solicitud.campos, solicitud.mti
         )
-        await self._registrar_evento(regla_ganadora, solicitud.mti)
+        await self._registrar_evento(regla_ganadora, solicitud.mti, match_number)
 
         comportamiento = (
             regla_ganadora.comportamiento.tipo if regla_ganadora is not None
@@ -220,12 +234,60 @@ class HostSimulado:
         await escritor.drain()
         escritor.close()
 
-    async def _registrar_evento(self, regla_ganadora: ReglaHost | None, mti_solicitud: str) -> None:
+    async def _seleccionar_regla_ganadora(
+        self, campos_mensaje: Mapping[str, str], mti: str
+    ) -> tuple[ReglaHost | None, int | None]:
+        """Elige la regla ganadora, respetando `max_aplicaciones` de forma
+        ATOMICA y segura ante concurrencia (D2, puntos 5-6/25 del
+        checkpoint).
+
+        Por cada intento: `domain.reglas_host.evaluar_reglas` (PURA, sin
+        I/O) decide la candidata segun prioridad+condiciones+estado YA
+        conocido; si la candidata no tiene `max_aplicaciones`, gana sin
+        tocar ningun repositorio (comportamiento D1 exacto). Si SI tiene
+        limite, se intenta consumir un cupo con UNA sola sentencia atomica
+        (`incrementar_si_no_agotada`): si tiene exito, el CONTADOR SUBIO
+        exactamente en esta invocacion -esta es la definicion de "match"
+        (punto 5 del checkpoint: solo sube cuando la regla realmente gana).
+        Si el intento falla -perdio una carrera concurrente, o ya estaba
+        agotada por un mensaje anterior-, esa regla se excluye y se
+        reintenta la evaluacion con las demas, nunca cae directo al
+        fallback si otra coincide (punto 15).
+        """
+        excluidas: set[str] = set()
+        estados: dict[str, object] = {}
+        while True:
+            candidatas = [
+                r for r in self._reglas
+                if r.regla_id is None or r.regla_id not in excluidas
+            ]
+            ganadora = evaluar_reglas(candidatas, campos_mensaje, mti, estados)
+            if ganadora is None:
+                return None, None
+            if ganadora.max_aplicaciones is None or self._repositorio_estado is None:
+                return ganadora, None
+            resultado = await self._repositorio_estado.incrementar_si_no_agotada(
+                ganadora.regla_id, ganadora.max_aplicaciones
+            )
+            if resultado is not None:
+                return ganadora, resultado
+            # Perdio la carrera (o ya estaba agotada): se excluye y se
+            # reintenta con las demas reglas por prioridad. `estados` se
+            # actualiza para que, si `evaluar_reglas` la volviera a
+            # considerar en una vuelta futura del bucle, ya la vea agotada
+            # sin depender solo de la exclusion.
+            excluidas.add(ganadora.regla_id)
+
+    async def _registrar_evento(
+        self, regla_ganadora: ReglaHost | None, mti_solicitud: str, match_number: int | None = None
+    ) -> None:
         """Auditoria del lado del simulador (punto 21 del checkpoint): que
         regla -o ninguna, comportamiento default- goberno este mensaje.
         NUNCA guarda el valor de ningun campo del mensaje -solo que regla,
         con que prioridad, y que respondio (punto 35: nunca datos sensibles
-        en un mensaje de auditoria)."""
+        en un mensaje de auditoria). `match_number` (D2): en que numero de
+        aplicacion goberno, `None` si la regla es ilimitada o si ninguna
+        coincidio."""
         if self._repositorio_eventos is None:
             return
         from ...domain.reglas_host import EventoReglaHost
@@ -239,6 +301,7 @@ class HostSimulado:
                 prioridad=regla_ganadora.prioridad,
                 de39_respuesta=regla_ganadora.respuesta.de39,
                 delay_ms=regla_ganadora.comportamiento.delay_ms,
+                match_number=match_number,
                 creado_en=datetime.now(timezone.utc),
             )
         else:
