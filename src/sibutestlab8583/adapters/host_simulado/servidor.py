@@ -59,8 +59,11 @@ from ...domain.armado import formatear_monto
 from ...domain.errores import ErrorDeFraming
 from ...domain.modelos import MTI_COMPRA, MTI_COMPRA_FINANCIERA, MTI_ECHO, MensajeIso
 from ...domain.reglas_host import (
+    CAMPO_MTI,
+    CondicionRegla,
     GeneradorValor,
     ReglaHost,
+    RespuestaRegla,
     TipoComportamiento,
     evaluar_reglas,
     generador_referenciado,
@@ -317,3 +320,43 @@ class HostSimulado:
                 campos[CAMPO_AUTORIZACION] = solicitud.campos.get("11", "000000")
         campos.update(self._alterados)
         return MensajeIso(mti=mti_respuesta, campos=campos)
+
+
+def regla_migrada_rechazo_sintetico_financiero() -> tuple[ReglaHost, ReglaHost]:
+    """La regla sintetica de rechazo por monto (B4, ver docstring del
+    modulo) EXPRESADA en el motor declarativo de D1 (punto 18 del
+    checkpoint: "el resultado externo debe mantenerse identico").
+
+    Son DOS reglas -no una- porque el `if/elif` original decide con un
+    UNICO umbral (mayor->rechaza, resto->aprueba): la primera (prioridad 1)
+    cubre "mayor que el umbral" (DE39=51, sin DE38 -un rechazo nunca trae
+    codigo de autorizacion-); la segunda (prioridad 2, sin condicion de
+    monto) cubre TODO lo demas para 0200 -igual o por debajo del umbral-
+    (DE39=00, DE38=el STAN del propio request). El orden de prioridad hace
+    el trabajo de un `else` sin necesitar un operador "menor o igual".
+
+    Esta funcion NO se usa automaticamente en ningun lado todavia -queda
+    disponible para quien quiera demostrar equivalencia (ver
+    `tests/test_migracion_regla_sintetica.py`) o adoptarla explicitamente
+    mas adelante; el fallback DEFAULT del host (sin `reglas`, o con
+    `reglas` que no incluyan esta) sigue siendo `_construir_respuesta` tal
+    cual, sin ningun cambio de comportamiento (punto 33)-.
+    """
+    rechazo = ReglaHost(
+        nombre="Rechazo sintetico por monto (migrada de B4)", prioridad=1, activa=True,
+        condiciones=(
+            CondicionRegla(CAMPO_MTI, "igual", MTI_COMPRA_FINANCIERA),
+            CondicionRegla("4", "mayor_que", _MONTO_UMBRAL_RECHAZO_FINANCIERO),
+        ),
+        respuesta=RespuestaRegla(de39=CODIGO_RECHAZO_MONTO_SINTETICO),
+    )
+    aprobacion = ReglaHost(
+        nombre="Aprobacion por defecto de compra financiera (migrada de B4)",
+        prioridad=2, activa=True,
+        condiciones=(CondicionRegla(CAMPO_MTI, "igual", MTI_COMPRA_FINANCIERA),),
+        respuesta=RespuestaRegla(
+            de39="00",
+            campos_adicionales={CAMPO_AUTORIZACION: f"@{GeneradorValor.AUTORIZACION_DESDE_STAN.value}"},
+        ),
+    )
+    return rechazo, aprobacion
