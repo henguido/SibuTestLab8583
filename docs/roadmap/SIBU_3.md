@@ -24,6 +24,8 @@ qué fase está en qué estado:
 | C — Secuencias transaccionales, subfase C2 (contexto y variables entre pasos: `{{step.<id>...}}`) | **IMPLEMENTADA**, integrada a `main` (merge `04372ba`) |
 | B — Modelo multi-MTI, subfase B8 (aviso de reverso, 0420/0430) | **IMPLEMENTADA**, integrada a `main` (merge `9a7dd32`) |
 | C — Secuencias transaccionales, subfase C3 (política de continuación STOP/CONTINUE, expectativas dinámicas, retry mínimo seguro) | **IMPLEMENTADA**, integrada a `main` (merge `a7be884`) |
+| D — Host Simulator 2.0, subfase D1 (motor de reglas declarativas, persistencia SQLite, UI) | **IMPLEMENTADA**, integrada a `main` (merge `fc69dbd`) |
+| D — Host Simulator 2.0, subfase D2 (reglas con estado limitado: `max_aplicaciones`, atomicidad real) | **IMPLEMENTADA** en `feature/host-simulator-d2-stateful-rules` (commits `906593d`/`9353499`/`d32ce30`/`640d627`/`34dba88`/`ea118e7`, sin mergear a `main`, en revisión) |
 | D — Host Simulator 2.0, subfase D1 (motor de reglas declarativas, persistencia SQLite, UI) | **IMPLEMENTADA** en `feature/host-simulator-d1-rules-engine` (commits `8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`, sin mergear a `main`, en revisión) |
 | D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
@@ -477,8 +479,8 @@ host_simulado/cli.py`, IMPLEMENTADA).
 |---|---|---|
 | D0 | Cerrar QA-002: test de `_argumentos()` de `cli.py`, sin ningún cambio de comportamiento | Ninguno — puede hacerse ya, independiente de esta fase |
 | D1 | Modelo de reglas (`domain/reglas_host.py`), matching, persistencia SQLite, integración con `HostSimulado`, UI, migración de la regla sintética existente | D0 |
-| D2 | `visto_antes` (duplicados) y reglas con estado -deliberadamente NO incluido en D1, ver checkpoint sección 14.G- | D1 |
-| D3 | Los 3 modos de falla que todavía no requieren estado y no se cubrieron en D1 (`bytes_invalidos`, remapeo de campo en `copiar`, regex/rangos combinados si hay necesidad demostrable) | D2 |
+| D2 | Estado limitado por regla (`max_aplicaciones`/contador de aplicaciones, atomicidad real), integración con el retry de C3 sin doubles | D1 |
+| D3 | `visto_antes` (duplicados, con estado más general) y los modos de falla que todavía no requieren estado y no se cubrieron en D1/D2 (`bytes_invalidos`, remapeo de campo en `copiar`, regex/rangos combinados si hay necesidad demostrable) | D2 |
 
 **Confirmado por el diseño:** ninguno de los 5 fallos simulados requiere cambios en el lado
 cliente — `TiempoAgotado`, `FalloDeTransmision`, `ErrorDeDecodificacion`→`INVALIDA`, `RECHAZADA`
@@ -1449,14 +1451,121 @@ intactas (sus propias suites pasan sin modificación).
 
 **N. Commits:** `8fcbb36` (D1.1-D1.2: modelo puro + matching), `791fa6b` (D1.3: persistencia),
 `39c4215` (D1.4: integración en `HostSimulado`), `f6da670` (D1.5: migración de la regla sintética),
-`d4538f9` (D1.6: UI), `4a498bf` (D1.7a: integración con retry de C3). No mergeado a `main` — queda
-en `feature/host-simulator-d1-rules-engine`, pendiente de revisión del propietario.
+`d4538f9` (D1.6: UI), `4a498bf` (D1.7a: integración con retry de C3), `aa60f71` (D1.7b: docs).
+Integrado a `main` en `fc69dbd` tras la aprobación del propietario (2026-09-14).
 
-**O. Próximo paso:** tres caminos disponibles, ninguno bloqueado por el otro — D2 (reglas con
-estado: `visto_antes`/contadores, simulación adversarial/stateful), C4 (data-driven u otras
-capacidades de secuencia), o Fase E (Client/Server/Proxy). D1 demostró que el motor de reglas
-generaliza bien sobre el `HostSimulado` existente sin romper ningún comportamiento previo (punto
-L), y que ya se integra de verdad con el retry de C3 (punto K) — señal de que el laboratorio tiene
-ahora una base declarativa real para simular comportamiento de host, con reglas con estado como la
-extensión natural más próxima si se necesita reproducir escenarios de duplicado/reintento más
-realistas. Decisión pendiente del propietario.
+**O. Próximo paso:** decidido por el propietario — **D2** (reglas con estado limitado) sobre C4 y
+Fase E. Ver checkpoint D2 en la sección 15.
+
+## 15. Checkpoint D2 — Reglas del Host con estado controlado
+
+**Estado: COMPLETO para el alcance acordado.** Rama `feature/host-simulator-d2-stateful-rules`,
+commits `906593d` (D2.1: modelo), `9353499` (D2.2: persistencia/atomicidad), `d32ce30` (D2.3-D2.4:
+matching stateful + auditoría), `640d627` (D2.5: E2E retry de C3), `34dba88` (D2.6: UI),
+`ea118e7` (D2.7a: seguridad). **No mergeado a `main`** — queda en la rama, pendiente de revisión
+del propietario.
+
+**A. Integración de D1:** confirmada antes de abrir D2 — `main`/`origin/main` en `fc69dbd`. Suite
+completa reconciliada: 1493 passed + 2 skipped (artefacto de `PATH`) = 1495 passed/0 skipped con
+el `PATH` corregido. Base de datos real verificada (tabla `reglas_host` sin filas de prueba
+residuales, `PRAGMA foreign_key_check` vacío). Cinco smokes reales post-merge: (1) sin reglas,
+comportamiento histórico; (2) `0200` + monto alto → 51; (3) Echo con delay; (4) Echo timeout;
+(5) Echo disconnect. `git push origin main`: `HEAD` == `origin/main` == `fc69dbd`.
+
+**B. Modelo de estado — decisión:** `ReglaHost.max_aplicaciones` (atributo de nivel-regla,
+`None` = ilimitada) en vez de una `CondicionRegla` especial sobre un "número de coincidencia" —
+más simple de explicar a un QA, menos cambio sobre el matching de D1 (investigado y confirmado
+por el agente de diseño). `EstadoReglaHost` (`aplicaciones_consumidas`) vive deliberadamente
+SEPARADO de `ReglaHost` — mismo principio que ya separa `reglas_host` (configuración) de
+`reglas_host_eventos` (auditoría): duplicar una regla copia la configuración pero nunca el
+estado; editar la configuración nunca resetea el contador salvo una acción explícita.
+
+**C. Persistencia:** tabla nueva `reglas_host_estado` (PK/FK 1:1 hacia `reglas_host`), PERSISTENTE
+—no efímera en memoria—, decisión tomada con evidencia (investigado): un contador efímero sería el
+único componente inconsistente del modelo de reglas (configuración y auditoría ya son
+persistentes), y un restart de `sibu-host-demo` reseteando silenciosamente un límite contradiría
+la premisa misma del feature.
+
+**D. Atomicidad:** `incrementar_si_no_agotada` resuelve TODO en una sola sentencia
+(`INSERT ... ON CONFLICT DO UPDATE ... WHERE ... RETURNING`), mismo espíritu que
+`GeneradorStanSQLite.siguiente()` (precedente ya existente en el proyecto): SQLite mantiene el
+bloqueo de escritura durante toda la sentencia, así que dos conexiones concurrentes compitiendo
+por la MISMA regla se serializan — nunca un `SELECT` seguido de un `UPDATE` en pasos separados.
+Confirmado con una prueba real: 20 corrutinas concurrentes contra una regla `max_aplicaciones=1`,
+exactamente UNA obtiene un resultado exitoso.
+
+**E. Matching:** `evaluar_reglas` (dominio, sigue PURA, sin I/O) recibe el estado YA obtenido y
+salta una regla agotada, continuando con la siguiente por prioridad. `HostSimulado.
+_seleccionar_regla_ganadora` (adaptador, con I/O) orquesta: intenta el incremento atómico sobre
+la candidata; si falla (agotada, o perdió una carrera concurrente), la excluye y reintenta con
+las demás — nunca cae directo al fallback del host si otra regla (incluido un fallback explícito
+sin límite) aún coincide.
+
+**F. Reset:** acción EXPLÍCITA (`ServicioReglasHost.reiniciar_contador`, ruta
+`/reglas-host/{id}/reiniciar-contador`, siempre POST), nunca implícita en guardar/activar/
+desactivar. Pone el contador en 0 sin borrar la fila ni tocar la auditoría histórica
+(`reglas_host_eventos` permanece intacta, confirmado con una prueba dedicada).
+
+**G. Auditoría — match number:** `EventoReglaHost.match_number` (columna nueva, aditiva) registra
+en qué número de aplicación gobernó la regla — `None` si es ilimitada o si ninguna coincidió.
+Permite reconstruir después "por qué el segundo intento recibió otra respuesta" sin adivinar.
+
+**H. C3 Retry — E2E real:** la prueba de fuego del checkpoint (`test_d2_c3_retry_automatico.py`):
+una secuencia C3 con retry de Echo (`max_retries=1`) contra una regla D2 de timeout
+(`max_aplicaciones=1`) más un fallback normal, TOTALMENTE AUTOMÁTICA — a diferencia del test
+equivalente escrito en la sesión D1/C3 (`test_integracion_reglas_host_secuencias_c3.py`), que
+necesitaba alternar `regla.activa` manualmente entre intentos. Aquí el propio motor de reglas
+decide, sin ninguna intervención de la prueba: primer intento TIMEOUT real, segundo intento
+NORMAL real, confirmado tanto por la auditoría de C3 (tabla de intentos) como por la auditoría
+independiente del lado del HOST (`reglas_host_eventos`).
+
+**I. Concurrencia — evidencia:** dos niveles de prueba real, sin mocks: (1) contra el repositorio
+aislado, 20 corrutinas concurrentes, exactamente una tiene éxito; (2) contra el `HostSimulado`
+completo (TCP real), 10 solicitudes Echo concurrentes reales compitiendo por una regla
+`max_aplicaciones=1`, exactamente una recibe el rechazo, las demás caen al fallback.
+
+**J. Restart:** no se implementó una prueba de restart real de proceso (reiniciar
+`sibu-host-demo` como subproceso) — la garantía de persistencia se demuestra indirectamente: el
+contador vive en SQLite (tabla `reglas_host_estado`), fuera del proceso Python, exactamente igual
+que `secuencias.valor` (STAN) ya sobrevive un restart hoy sin código adicional. Se documenta como
+inferencia razonada a partir de un precedente ya probado, no como una prueba directa nueva —
+transparente sobre esta limitación en vez de afirmar algo no verificado.
+
+**K. UI — recorrido real:** campo "Número máximo de aplicaciones" (vacío = sin límite, mismo
+patrón que `comportamiento_delay_ms`); columna "Aplicaciones" ("N / M" o "∞"); chip "Activa ·
+agotada" (variante propia, nunca `chip--inactiva` — una regla agotada sigue activa
+conceptualmente); acción "Reiniciar contador" (POST, visible solo con límite configurado).
+Verificado en el navegador real contra la base de datos de desarrollo (migrada primero, backup
+`sibutestlab8583.db.bak-preD2-*`, 10 secuencias y 12 corridas preservadas, `PRAGMA
+foreign_key_check` limpio): una regla real con límite 2 mostró "1 / 2", "Reiniciar contador" la
+llevó a "0 / 2", y consumir el límite completo mostró "Activa · agotada" con "2 / 2".
+
+**L. Compatibilidad D1:** una regla sin `max_aplicaciones` nunca toca el repositorio de estado,
+confirmado con una prueba dedicada; el `if/elif` hardcodeado de `_construir_respuesta` sigue sin
+tocarse.
+
+**M. Seguridad:** `max_aplicaciones` no abre ninguna vía nueva para evadir la prohibición de
+campos sensibles (DE2/35/45 siguen rechazados con límite configurado); `EstadoReglaHost` es
+estructuralmente incapaz de contener un PAN (solo `regla_id`/contador entero/timestamp); el
+reset nunca borra auditoría histórica.
+
+**N. Tests:** 1495 passed/0 skipped al abrir D2 (tras integrar D1 y reconciliar el artefacto de
+`PATH`) → **1522 passed/0 skipped** al cierre de D2 (27 nuevos: 8 de modelo puro, 5 de
+persistencia/atomicidad incluida la prueba de concurrencia real, 5 de matching stateful contra
+`HostSimulado`, 1 de E2E principal con retry de C3, 4 de UI web, 4 de seguridad). Fase A, B6-B8,
+C1-C3, D1 intactas (sus propias suites pasan sin modificación).
+
+**O. Commits:** `906593d` (D2.1: modelo de estado limitado), `9353499` (D2.2: persistencia y
+atomicidad), `d32ce30` (D2.3-D2.4: matching stateful + auditoría con match_number), `640d627`
+(D2.5: E2E principal, retry de C3 automático), `34dba88` (D2.6: UI), `ea118e7` (D2.7a: seguridad).
+No mergeado a `main` — queda en `feature/host-simulator-d2-stateful-rules`, pendiente de
+revisión del propietario.
+
+**P. Próximo paso:** tres caminos disponibles, ninguno bloqueado por el otro — **D3** (simulación
+adversarial/`visto_antes`/modos de falla restantes), **C4** (data-driven u otras capacidades de
+secuencia), o **Fase E** (Client/Server/Proxy). D2 demostró que el estado limitado se integra de
+verdad con el retry de C3 sin test doubles (punto H), y que la atomicidad real de SQLite (mismo
+patrón que `GeneradorStanSQLite`) es suficiente para concurrencia real sin necesitar locks de
+proceso (punto I) — señal de que el laboratorio tiene ahora una base sólida tanto para reglas
+declarativas como para el próximo incremento de estado (`visto_antes`) si se necesita. Decisión
+pendiente del propietario.

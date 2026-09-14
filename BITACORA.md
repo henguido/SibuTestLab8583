@@ -3135,6 +3135,48 @@ mismo criterio ya usado para alternar `responder=False` en las pruebas de C3).
 nuevos). Migración aditiva (dos tablas nuevas) aplicada con backup contra la base de desarrollo
 real (`sibutestlab8583.db.bak-preD1-*`), 10 secuencias y 12 corridas existentes preservadas,
 `PRAGMA foreign_key_check` vacío. Commits:
-`8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`. Sin merge a `main` — pendiente de
-aprobación del propietario. Reporte completo (secciones A-O) en `docs/roadmap/SIBU_3.md`
-sección 14.
+`8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`. Reporte completo (secciones A-O) en
+`docs/roadmap/SIBU_3.md` sección 14. Integrado a `main` en `fc69dbd` tras la aprobación del
+propietario (2026-09-14).
+
+## 2026-09-14 — D2: Reglas del Host con estado controlado
+
+**Decisión de diseño clave:** `max_aplicaciones` como atributo de nivel-regla (no una condición
+especial sobre un "número de coincidencia") -más simple de explicar, menos cambio sobre el
+matching ya existente de D1-. El contador (`aplicaciones_consumidas`) vive en una tabla SEPARADA
+(`reglas_host_estado`), mismo principio que ya separa configuración de auditoría desde D1:
+duplicar una regla nunca copia su estado, editar la configuración nunca resetea el contador salvo
+una acción explícita.
+
+**Persistente, no efímero:** decisión tomada con evidencia (investigado, no solo preferido): un
+contador efímero en memoria sería el único componente inconsistente del modelo de reglas -
+configuración y auditoría ya son persistentes-, y un restart del host reseteando silenciosamente
+un límite contradiría la premisa misma del feature.
+
+**Atomicidad real, sin locks de proceso:** `incrementar_si_no_agotada` resuelve todo en una sola
+sentencia SQL (`INSERT ... ON CONFLICT DO UPDATE ... WHERE ... RETURNING`), mismo patrón que
+`GeneradorStanSQLite.siguiente()` (precedente ya existente en el proyecto para el generador de
+STAN). Confirmado con una prueba real de concurrencia: 20 corrutinas compitiendo por una regla con
+límite 1, exactamente una tiene éxito -sin `asyncio.Lock`, la garantía vive en SQLite, coherente
+con que el host "algún día podría correr multiproceso".
+
+**Hallazgo real (el guardia de PAN tropezó consigo mismo):** un literal de prueba de 15 dígitos,
+elegido justamente para demostrar "ni un contador enorme es un PAN", activó el propio test que
+protege contra eso. Corregido con el separador numérico de Python (`999_999_999_999`), que rompe
+la racha de dígitos consecutivos en el código fuente sin cambiar el valor -mismo tipo de hallazgo
+ya visto en C1/B7 con timestamps/montos formateados.
+
+**La prueba de fuego (punto central de Fase D):** una secuencia C3 con retry de Echo, ejecutada
+contra una regla D2 de timeout con límite 1 más un fallback normal, TOTALMENTE AUTOMÁTICA -sin
+alternar nada desde la prueba, a diferencia del test equivalente escrito en la sesión D1/C3 que
+necesitaba alternar `regla.activa` manualmente-. El propio motor de reglas decide, sin
+intervención externa, que el primer intento agota la regla de timeout y el segundo cae al
+fallback.
+
+**Tests:** 1495 passed al abrir D2 (tras integrar D1) → 1522 passed / 0 skipped al cerrar (27
+nuevos). Migración aditiva (tabla nueva + dos columnas) aplicada con backup contra la base de
+desarrollo real (`sibutestlab8583.db.bak-preD2-*`), 10 secuencias y 12 corridas existentes
+preservadas, `PRAGMA foreign_key_check` vacío. Commits:
+`906593d`/`9353499`/`d32ce30`/`640d627`/`34dba88`/`ea118e7`. Sin merge a `main` — pendiente de
+aprobación del propietario. Reporte completo (secciones A-P) en `docs/roadmap/SIBU_3.md`
+sección 15.

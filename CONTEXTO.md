@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-14 (D1 — Motor de reglas del Host Simulado)
+**Última actualización:** 2026-09-14 (D2 — Reglas del Host con estado controlado)
 
 ## Estado actual
 
@@ -61,8 +61,8 @@ tras timeout); solo admitido para un paso Echo, con auditoría de cada intento e
 UI: sin controles nuevos en `/secuencias/nueva` (mismo criterio que C2/B8); tabla nueva de
 intentos en el detalle de una corrida, verificada en navegador real.
 
-**D1 — Motor de reglas del Host Simulado** (`feature/host-simulator-d1-rules-engine`, commits
-`8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`, sin mergear todavía): decisión de
+**D1 — Motor de reglas del Host Simulado** (integrado a `main`, merge `fc69dbd`; commits
+`8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`/`aa60f71`): decisión de
 alcance explícita -el roadmap registraba un diseño previo (YAML, sin persistencia ni UI); el
 propietario confirmó, consultado antes de implementar, continuar con SQLite + UI dentro de D1,
 reemplazando esa nota-. `domain/reglas_host.py`: `ReglaHost`/`CondicionRegla`/`RespuestaRegla`/
@@ -79,8 +79,25 @@ real con el retry de Echo de C3 (una regla de timeout lo activa de verdad, sin t
 Hallazgo corregido en la verificación de navegador: el selector de campo exponía claves
 estructurales del bitmap ("h"/"p"/"t") como si fueran campos ISO reales.
 
-Detalle completo (reportes A-N/A-L/A-O/A-N/A-O) en `docs/roadmap/SIBU_3.md` secciones 9, 10, 11,
-12, 13 y 14; decisiones de gobernanza en `BITACORA.md`. Suite completa: **1493 passed, 0 skipped**.
+**D2 — Reglas del Host con estado controlado** (`feature/host-simulator-d2-stateful-rules`,
+commits `906593d`/`9353499`/`d32ce30`/`640d627`/`34dba88`/`ea118e7`, sin mergear todavía):
+`ReglaHost.max_aplicaciones` (atributo de nivel-regla, no una condición especial -mas simple de
+explicar, confirmado por el agente de diseño-). `EstadoReglaHost` (contador) vive en una tabla
+SEPARADA (`reglas_host_estado`), mismo principio que ya separa configuración de auditoría:
+duplicar nunca copia el estado, editar nunca lo resetea salvo una acción explícita. Persistente
+-no efímero-, decidido con evidencia: un contador efímero sería el único componente inconsistente
+del modelo (config/auditoría ya son persistentes). Atomicidad real sin locks de proceso
+(`INSERT ... ON CONFLICT DO UPDATE ... WHERE ... RETURNING`, mismo patrón que
+`GeneradorStanSQLite.siguiente()`), confirmada con 20 corrutinas concurrentes -exactamente una
+tiene éxito-. La prueba de fuego (razón central de Fase D): una secuencia C3 con retry de Echo
+contra una regla D2 de timeout (límite 1) más un fallback, TOTALMENTE AUTOMÁTICA -sin alternar
+nada desde la prueba, a diferencia del equivalente D1/C3 que necesitaba alternar `regla.activa`
+manualmente-. UI: campo "Número máximo de aplicaciones", columna "Aplicaciones" ("N / M" o "∞"),
+chip "Activa · agotada", acción "Reiniciar contador" -verificado en navegador real-.
+
+Detalle completo (reportes A-N/A-L/A-O/A-N/A-O/A-P) en `docs/roadmap/SIBU_3.md` secciones 9, 10,
+11, 12, 13, 14 y 15; decisiones de gobernanza en `BITACORA.md`. Suite completa: **1522 passed,
+0 skipped**.
 
 **Estado anterior a Fase B (2026-09-09):**
 
@@ -431,12 +448,12 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-**D1 (motor de reglas del Host Simulado) está completo en
-`feature/host-simulator-d1-rules-engine`, sin mergear a `main` — pendiente de aprobación del
-propietario.** C3 ya fue aprobado e integrado a `main` (`a7be884`) antes de abrir D1. Próximo
-paso propuesto en el checkpoint (`docs/roadmap/SIBU_3.md` sección 14.O): **D2** (reglas con
-estado: `visto_antes`/contadores), **C4** (capacidades adicionales de secuencia), o **Fase E**
-(Client/Server/Proxy). Decisión pendiente del propietario.
+**D2 (reglas del Host con estado controlado) está completo en
+`feature/host-simulator-d2-stateful-rules`, sin mergear a `main` — pendiente de aprobación del
+propietario.** D1 ya fue aprobado e integrado a `main` (`fc69dbd`) antes de abrir D2. Próximo
+paso propuesto en el checkpoint (`docs/roadmap/SIBU_3.md` sección 15.P): **D3**
+(`visto_antes`/modos de falla restantes), **C4** (capacidades adicionales de secuencia), o
+**Fase E** (Client/Server/Proxy). Decisión pendiente del propietario.
 
 Las cinco mejoras funcionales pedidas el 2026-09-07 (ver «Estado actual» e «Historial de
 avances») están implementadas y verificadas, pero **sin commit ni push todavía** -queda para
