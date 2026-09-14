@@ -413,6 +413,22 @@ CREATE TABLE IF NOT EXISTS reglas_host_eventos (
     delay_ms        INTEGER NOT NULL DEFAULT 0,
     creado_en       TEXT    NOT NULL
 );
+
+-- ESTADO OPERACIONAL de una regla con `max_aplicaciones` (Fase D2,
+-- 2026-09-14): deliberadamente SEPARADA de `reglas_host` -mismo principio
+-- que ya separa configuracion (reglas_host) de auditoria
+-- (reglas_host_eventos): duplicar una regla (INSERT en reglas_host) nunca
+-- toca esta tabla -la copia arranca sin fila aqui, equivalente a contador
+-- en 0-; reiniciar el contador es un UPDATE de una sola fila que nunca
+-- toca la configuracion. `regla_id` es PK Y FK 1:1 hacia `reglas_host`: una
+-- regla sin `max_aplicaciones` nunca necesita fila aqui (investigado:
+-- `es_agotada`/`evaluar_reglas` ya tratan "sin fila" como "0 consumidas",
+-- ver `domain/reglas_host.py`).
+CREATE TABLE IF NOT EXISTS reglas_host_estado (
+    regla_id                TEXT    PRIMARY KEY REFERENCES reglas_host(regla_id),
+    aplicaciones_consumidas INTEGER NOT NULL DEFAULT 0,
+    actualizado_en          TEXT    NOT NULL
+);
 """
 
 #: Nombre de la secuencia del numero de trazabilidad.
@@ -576,6 +592,21 @@ COLUMNAS_AGREGADAS_SECUENCIA_TRANSACCIONAL_PASOS: tuple[tuple[str, str], ...] = 
 #: vigente al presembrar el paso (mismo criterio que `escenario_nombre`).
 COLUMNAS_AGREGADAS_CORRIDA_SECUENCIA_PASOS: tuple[tuple[str, str], ...] = (
     ("paso_id", "TEXT"),
+)
+
+#: D2 (2026-09-14): `max_aplicaciones` es posterior a D1, que no conocia
+#: ningun limite. Aditiva, nullable -sin default numerico-: una regla
+#: guardada antes de D2 significa "ilimitada" exactamente igual que antes,
+#: sin necesitar backfill (NULL ya es "ilimitada" para `es_agotada`).
+COLUMNAS_AGREGADAS_REGLAS_HOST: tuple[tuple[str, str], ...] = (
+    ("max_aplicaciones", "INTEGER"),
+)
+
+#: D2: `match_number` es posterior a D1. Aditiva, nullable: un evento
+#: registrado antes de D2 nunca tuvo un limite que contar, asi que `NULL`
+#: es el unico valor coherente para esas filas historicas.
+COLUMNAS_AGREGADAS_REGLAS_HOST_EVENTOS: tuple[tuple[str, str], ...] = (
+    ("match_number", "INTEGER"),
 )
 
 #: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
@@ -849,6 +880,8 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         await _migrar(
             conexion, "corrida_secuencia_pasos", COLUMNAS_AGREGADAS_CORRIDA_SECUENCIA_PASOS
         )
+        await _migrar(conexion, "reglas_host", COLUMNAS_AGREGADAS_REGLAS_HOST)
+        await _migrar(conexion, "reglas_host_eventos", COLUMNAS_AGREGADAS_REGLAS_HOST_EVENTOS)
         # Corre AL FINAL de las migraciones de columnas: reconstruye la tabla
         # completa (ver docstring), asi que necesita que todas las columnas
         # modernas ya existan -si una base historica todavia no tenia

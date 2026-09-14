@@ -328,6 +328,24 @@ class RepositorioEventosReglasHost(Protocol):
 
 
 @runtime_checkable
+class RepositorioEstadoReglasHost(Protocol):
+    """Estado OPERACIONAL de una regla con `max_aplicaciones` (Fase D2):
+    cuantas veces ya goberno. Deliberadamente separado de
+    `RepositorioReglasHost` (configuracion) -mismo principio que ya separa
+    configuracion de auditoria."""
+
+    async def obtener(self, regla_id: str) -> "EstadoReglaHost | None": ...
+
+    async def incrementar_si_no_agotada(self, regla_id: str, max_aplicaciones: int) -> int | None:
+        """Consume UNA aplicacion, atomicamente, respetando el limite.
+        Devuelve el nuevo contador si tuvo exito, o `None` si ya estaba
+        agotada (nunca un error)."""
+        ...
+
+    async def reiniciar(self, regla_id: str) -> None: ...
+
+
+@runtime_checkable
 class VerificadorDeConexion(Protocol):
     """Comprobacion TCP puntual de "Probar conexion", ajena al recorrido de compra.
 

@@ -46,6 +46,7 @@ from ...domain.modelos import (
 from ...domain.reglas_host import (
     ComportamientoRegla,
     CondicionRegla,
+    EstadoReglaHost,
     EventoReglaHost,
     ReglaHost,
     RespuestaRegla,
@@ -1267,8 +1268,8 @@ class RepositorioReglasHostSQLite(_RepositorioSQLite):
                 "INSERT INTO reglas_host"
                 " (regla_id, nombre, prioridad, activa, condiciones_json, de39,"
                 "  campos_adicionales_json, comportamiento_tipo, comportamiento_delay_ms,"
-                "  creado_en, actualizado_en)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "  max_aplicaciones, creado_en, actualizado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(regla_id) DO UPDATE SET"
                 "   nombre = excluded.nombre,"
                 "   prioridad = excluded.prioridad,"
@@ -1278,6 +1279,7 @@ class RepositorioReglasHostSQLite(_RepositorioSQLite):
                 "   campos_adicionales_json = excluded.campos_adicionales_json,"
                 "   comportamiento_tipo = excluded.comportamiento_tipo,"
                 "   comportamiento_delay_ms = excluded.comportamiento_delay_ms,"
+                "   max_aplicaciones = excluded.max_aplicaciones,"
                 "   actualizado_en = excluded.actualizado_en",
                 (
                     regla.regla_id,
@@ -1292,6 +1294,7 @@ class RepositorioReglasHostSQLite(_RepositorioSQLite):
                     json.dumps(dict(regla.respuesta.campos_adicionales)),
                     regla.comportamiento.tipo,
                     regla.comportamiento.delay_ms,
+                    regla.max_aplicaciones,
                     ahora,
                     ahora,
                 ),
@@ -1318,6 +1321,7 @@ def _a_regla_host(fila: aiosqlite.Row) -> ReglaHost:
             tipo=fila["comportamiento_tipo"],
             delay_ms=fila["comportamiento_delay_ms"],
         ),
+        max_aplicaciones=_opcional(fila, "max_aplicaciones"),
     )
 
 
@@ -1331,8 +1335,8 @@ class RepositorioEventosReglasHostSQLite(_RepositorioSQLite):
             await conexion.execute(
                 "INSERT INTO reglas_host_eventos"
                 " (regla_id, regla_nombre, prioridad, mti_solicitud, de39_respuesta,"
-                "  comportamiento, delay_ms, creado_en)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "  comportamiento, delay_ms, match_number, creado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     evento.regla_id,
                     evento.regla_nombre,
@@ -1341,6 +1345,7 @@ class RepositorioEventosReglasHostSQLite(_RepositorioSQLite):
                     evento.de39_respuesta,
                     evento.comportamiento,
                     evento.delay_ms,
+                    evento.match_number,
                     evento.creado_en.isoformat(),
                 ),
             )
@@ -1366,5 +1371,85 @@ def _a_evento_regla_host(fila: aiosqlite.Row) -> EventoReglaHost:
         de39_respuesta=fila["de39_respuesta"],
         comportamiento=fila["comportamiento"],
         delay_ms=fila["delay_ms"],
+        match_number=_opcional(fila, "match_number"),
         creado_en=datetime.fromisoformat(fila["creado_en"]),
+    )
+
+
+class RepositorioEstadoReglasHostSQLite(_RepositorioSQLite):
+    """Estado OPERACIONAL de una regla con `max_aplicaciones` (Fase D2):
+    cuantas veces ya goberno. Deliberadamente separado del catalogo de
+    reglas -ver docstring de `esquema.py::reglas_host_estado`.
+    """
+
+    async def obtener(self, regla_id: str) -> EstadoReglaHost | None:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM reglas_host_estado WHERE regla_id = ?", (regla_id,)
+            ) as cursor:
+                fila = await cursor.fetchone()
+        return _a_estado_regla_host(fila) if fila else None
+
+    async def incrementar_si_no_agotada(self, regla_id: str, max_aplicaciones: int) -> int | None:
+        """Intenta consumir UNA aplicacion de la regla, respetando su
+        limite, en UNA SOLA sentencia atomica -mismo espiritu que
+        `GeneradorStanSQLite.siguiente()`: SQLite mantiene el bloqueo de
+        escritura durante toda la sentencia, asi que dos conexiones
+        concurrentes que compitan por la MISMA regla se serializan; nunca
+        se hace un `SELECT` seguido de un `UPDATE` en pasos separados
+        -ese es exactamente el error que este patron evita (punto 6 del
+        checkpoint D2)-.
+
+        Devuelve el nuevo `aplicaciones_consumidas` si esta invocacion
+        consumio un cupo, o `None` si la regla ya estaba agotada -`None`
+        NUNCA es un error, es la señal de "ya no es candidata".
+
+        `INSERT ... ON CONFLICT DO UPDATE ... WHERE` cubre en una sola
+        sentencia tanto la primera aplicacion (fila inexistente, se crea
+        con `aplicaciones_consumidas=1`) como las siguientes (fila
+        existente, se incrementa solo si `aplicaciones_consumidas <
+        max_aplicaciones`); si la condicion del `WHERE` del `DO UPDATE`
+        falla, SQLite no actualiza nada y `RETURNING` no devuelve fila.
+        """
+        ahora = datetime.now(timezone.utc).isoformat()
+        async with self._conectar() as conexion:
+            await conexion.execute("PRAGMA foreign_keys = ON")
+            async with conexion.execute(
+                "INSERT INTO reglas_host_estado (regla_id, aplicaciones_consumidas, actualizado_en)"
+                " VALUES (?, 1, ?)"
+                " ON CONFLICT(regla_id) DO UPDATE SET"
+                "   aplicaciones_consumidas = aplicaciones_consumidas + 1,"
+                "   actualizado_en = excluded.actualizado_en"
+                " WHERE aplicaciones_consumidas < ?"
+                " RETURNING aplicaciones_consumidas",
+                (regla_id, ahora, max_aplicaciones),
+            ) as cursor:
+                fila = await cursor.fetchone()
+            await conexion.commit()
+        return fila[0] if fila else None
+
+    async def reiniciar(self, regla_id: str) -> None:
+        """Pone el contador en 0 -nunca borra la fila (para no perder
+        `actualizado_en` como evidencia de que hubo un reset), nunca toca
+        `reglas_host` (configuracion) ni `reglas_host_eventos` (auditoria
+        historica, punto 8 del checkpoint D2)."""
+        ahora = datetime.now(timezone.utc).isoformat()
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "INSERT INTO reglas_host_estado (regla_id, aplicaciones_consumidas, actualizado_en)"
+                " VALUES (?, 0, ?)"
+                " ON CONFLICT(regla_id) DO UPDATE SET"
+                "   aplicaciones_consumidas = 0,"
+                "   actualizado_en = excluded.actualizado_en",
+                (regla_id, ahora),
+            )
+            await conexion.commit()
+
+
+def _a_estado_regla_host(fila: aiosqlite.Row) -> EstadoReglaHost:
+    return EstadoReglaHost(
+        regla_id=fila["regla_id"],
+        aplicaciones_consumidas=fila["aplicaciones_consumidas"],
+        actualizado_en=datetime.fromisoformat(fila["actualizado_en"]),
     )

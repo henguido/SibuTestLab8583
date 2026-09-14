@@ -57,3 +57,24 @@ async def test_la_migracion_es_idempotente(base):
             " AND name IN ('reglas_host', 'reglas_host_eventos')"
         ).fetchone()[0]
     assert tablas == 2
+
+
+async def test_una_base_nueva_ya_nace_con_la_tabla_de_estado_d2(base):
+    with sqlite3.connect(base) as conexion:
+        nombres = {
+            fila[0]
+            for fila in conexion.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    assert "reglas_host_estado" in nombres
+
+
+async def test_columnas_d2_presentes_y_la_migracion_es_idempotente(base):
+    await inicializar(base)
+    await inicializar(base)
+    with sqlite3.connect(base) as conexion:
+        columnas_reglas = {r[1] for r in conexion.execute("PRAGMA table_info(reglas_host)")}
+        columnas_eventos = {r[1] for r in conexion.execute("PRAGMA table_info(reglas_host_eventos)")}
+    assert "max_aplicaciones" in columnas_reglas
+    assert "match_number" in columnas_eventos
