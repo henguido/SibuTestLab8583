@@ -1162,12 +1162,29 @@ def fila_de_corrida_secuencia(corrida) -> FilaCorridaSecuencia:
 
 
 @dataclass(frozen=True)
+class FilaIntentoPasoSecuencia:
+    """Un intento real de un paso con retry (C3, 2026-09-14). Solo existe
+    cuando el paso tuvo `max_retries > 0` -ver `domain.modelos.
+    IntentoPasoSecuencia`-."""
+
+    numero_intento: int
+    resultado: str
+    detalle: str | None
+    ejecucion_id: int | None
+    creado_en: str
+
+
+@dataclass(frozen=True)
 class FilaPasoCorridaSecuencia:
     """Una fila del detalle de una corrida de secuencia: un paso y su
     resultado. Mismo criterio que `FilaItemCorrida`; `origen_tipo`/
     `origen_paso_orden` son lo unico que Suites no necesita -describen la
     DEPENDENCIA entre pasos, el rasgo que distingue una Secuencia de una
-    Suite (ver docstring de `domain.modelos`, seccion "Fase C1")."""
+    Suite (ver docstring de `domain.modelos`, seccion "Fase C1").
+
+    `intentos` (C3): vacio para cualquier paso sin retry configurado -el
+    caso normal-; con mas de una fila solo cuando `max_retries > 0` y hubo
+    mas de un intento real."""
 
     orden: int
     origen_tipo: str
@@ -1178,11 +1195,15 @@ class FilaPasoCorridaSecuencia:
     detalle: str | None
     ejecucion_id: int | None
     evaluacion: EvaluacionMostrada | None
+    intentos: Sequence[FilaIntentoPasoSecuencia] = ()
 
 
 def filas_de_corrida_secuencia(
-    pasos: Sequence, descripciones: Mapping[str, str]
+    pasos: Sequence,
+    descripciones: Mapping[str, str],
+    intentos_por_orden: Mapping[int, Sequence] | None = None,
 ) -> Sequence[FilaPasoCorridaSecuencia]:
+    intentos_por_orden = intentos_por_orden or {}
     return [
         FilaPasoCorridaSecuencia(
             orden=paso.orden,
@@ -1194,6 +1215,16 @@ def filas_de_corrida_secuencia(
             detalle=paso.detalle,
             ejecucion_id=paso.ejecucion_id,
             evaluacion=evaluacion_de_item(paso, descripciones),
+            intentos=[
+                FilaIntentoPasoSecuencia(
+                    numero_intento=intento.numero_intento,
+                    resultado=intento.resultado.value,
+                    detalle=intento.detalle,
+                    ejecucion_id=intento.ejecucion_id,
+                    creado_en=intento.creado_en.strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                for intento in intentos_por_orden.get(paso.orden, ())
+            ],
         )
         for paso in pasos
     ]

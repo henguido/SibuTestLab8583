@@ -124,6 +124,40 @@
           <td colspan="6">{{ pieza_evaluacion(fila.evaluacion) }}</td>
         </tr>
         {% endif %}
+        {% if fila.intentos %}
+        <tr>
+          <td colspan="6">
+            <div class="campo__pista">
+              Reintentos (C3): {{ fila.intentos|length }} intento{{ 's' if fila.intentos|length != 1 else '' }}.
+              El resultado de arriba es el del intento final.
+            </div>
+            <div class="desplazable" tabindex="0" role="region" aria-label="Intentos de este paso">
+              <table class="tabla">
+                <thead>
+                  <tr><th>Intento</th><th>Resultado</th><th>Detalle</th><th>Ejecución</th><th>Fecha y hora (UTC)</th></tr>
+                </thead>
+                <tbody>
+                  {% for intento in fila.intentos %}
+                  <tr>
+                    <td class="num">{{ intento.numero_intento }}</td>
+                    <td>{{ etiquetas_resultado.get(intento.resultado, intento.resultado) }}</td>
+                    <td>{{ intento.detalle or '—' }}</td>
+                    <td>
+                      {% if intento.ejecucion_id %}
+                      <a href="/historial/{{ intento.ejecucion_id }}">Ver ejecución</a>
+                      {% else %}
+                      <span class="vacio">—</span>
+                      {% endif %}
+                    </td>
+                    <td class="mono">{{ intento.creado_en }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
