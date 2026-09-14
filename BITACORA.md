@@ -2994,3 +2994,55 @@ real (columna `paso_id`) aplicada con backup
 foreign_key_check` vacío. Commits: `3fef508` (C2.1), `754d1c3` (C2.2), `6f0cd77` (C2.3),
 `e4e0208` (C2.4). Sin merge a `main` — pendiente de aprobación del propietario. Reporte completo
 (secciones A-L) en `docs/roadmap/SIBU_3.md` sección 11.
+
+---
+
+**2026-09-14 — C2 integrado a `main`.** Merge `04372ba` (`--no-ff`, historia preservada) desde
+`feature/secuencias-c2-contexto-variables`. Suite 1355 passed / 0 skipped antes y después del
+merge, `git diff --check` limpio, base de desarrollo verificada (`paso_id` presente en las dos
+tablas de C2, definiciones/corridas existentes preservadas, `PRAGMA foreign_key_check` vacío).
+Dos smokes reales post-merge: C1 (secuencia `0200 → 0400`, el reverso usa la ejecución del paso
+1) y C2 (secuencia con `{{step.purchase.response.de38}}`, el valor transmitido por TCP coincide
+con el STAN del paso anterior). Push a `origin/main`, `HEAD == origin/main`.
+
+**B8 — Aviso de reverso (0420/0430):** segunda operación derivada del laboratorio, investigada
+antes de escribir código (Agente A, dominio ISO 8583): un *reversal* (0400) es una solicitud que
+el receptor puede negar; un *reversal advice* (0420) es la notificación de un reverso ya
+ocurrido, que el receptor debe aceptar (0430). Esa diferencia de contrato -no de campos- justifica
+dos operaciones derivadas separadas, con la misma disciplina operación≠MTI del resto del proyecto
+(`OPERACION_AVISO_REVERSO = "reversal_advice"`).
+
+**Reutilización medida, no anticipada:** comparados campo por campo, los builders de 0400 y 0420
+resultaron idénticos -se extrajo `application/armado_operacion_derivada.py` como composición
+común, con wrappers específicos (`armar_reverso_financiero`/`armar_aviso_reverso`)-. Reutilizados
+SIN NINGÚN CAMBIO: `ReferenciaEjecucion`, `domain.elegibilidad_reverso` (misma regla de 0200
+aprobada), el núcleo del `Orquestador`, el generador de STAN, y `HostSimulado` (cero líneas
+tocadas). El perfil de 0420/0430 se declaró de cero en `profiles/generico.py`, sin referenciar el
+de 0400, por disciplina arquitectónica -aunque hoy comparten forma.
+
+**Hallazgo real, no anticipado:** `domain.validacion.mti_de_respuesta` calculaba `0420 → 0410`
+(incorrecto) porque siempre mapeaba el tercer dígito del MTI a `0->1`; el propio comentario de una
+versión anterior ya señalaba esto como pendiente. Se completó con la regla genérica de función de
+mensaje (`0->1` para request/response, `2->3` para advice/advice-response) -confirmada con un
+test E2E real por TCP antes de continuar-, sin tocar RN-3 ni ningún otro llamador: todos ya
+derivaban el MTI esperado desde esa función.
+
+**Secuencias:** un paso derivado ahora declara `operacion_derivada` (reverso o aviso), con
+default que preserva toda definición de C1 sin migrar datos. Probada una secuencia real
+`0200 → 0420` (origen resuelto vía `ContextoSecuencia`, nunca un `ejecucion_id` fijo ni una
+variable de paso de C2 -protegido explícitamente, punto 17 del encargo-) y una secuencia con
+AMBOS tipos de paso derivado sobre el mismo origen. Sin UI para crear esto desde
+`/secuencias/nueva` -mismo criterio que C2.
+
+**Interactivo:** dos botones diferenciados desde Historial ("Crear reverso"/"Crear aviso de
+reverso"), con texto explicando la diferencia; la tabla de derivadas ahora distingue cada
+operación ("Reverso financiero · 0400", "Aviso de reverso · 0420") en vez de listar solo el
+número de ejecución. Verificado en navegador real: mismo origen produciendo un 0400 y un 0420,
+ambos navegables.
+
+**Tests:** 1355 passed al abrir B8 → 1391 passed al cerrar (36 nuevos, 0 skipped). Migración
+aditiva (`operacion_derivada`) aplicada con backup contra la base de desarrollo real
+(`sibutestlab8583.db.bak-preB8-migracion-*`), 10 pasos existentes retro-completados a su
+significado real, `PRAGMA foreign_key_check` vacío. Commits: `cc2479e`/`b298ee7`/`a242bc5`/
+`6add431`. Sin merge a `main` — pendiente de aprobación del propietario. Reporte completo
+(secciones A-O) en `docs/roadmap/SIBU_3.md` sección 12.

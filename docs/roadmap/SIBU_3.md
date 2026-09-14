@@ -21,7 +21,8 @@ qué fase está en qué estado:
 | B — Modelo multi-MTI, subfase B6 (modelo conceptual de operación derivada/reverso, SIN 0400/0410) | **IMPLEMENTADA**, integrada a `main` (merge `7c034ed`) |
 | B — Modelo multi-MTI, subfase B7 (reverso interactivo real, 0400/0410) | **IMPLEMENTADA**, integrada a `main` (merge `6a31ce3`) |
 | C — Secuencias transaccionales, subfase C1 (infraestructura mínima: 0200 → 0400 dependiente) | **IMPLEMENTADA**, integrada a `main` (merge `989991e`) |
-| C — Secuencias transaccionales, subfase C2 (contexto y variables entre pasos: `{{step.<id>...}}`) | **IMPLEMENTADA** en `feature/secuencias-c2-contexto-variables` (commits `3fef508`/`754d1c3`/`6f0cd77`/`e4e0208`, sin mergear a `main`, en revisión) |
+| C — Secuencias transaccionales, subfase C2 (contexto y variables entre pasos: `{{step.<id>...}}`) | **IMPLEMENTADA**, integrada a `main` (merge `04372ba`) |
+| B — Modelo multi-MTI, subfase B8 (aviso de reverso, 0420/0430) | **IMPLEMENTADA** en `feature/multi-mti-b8-reversal-advice-0420` (commits `cc2479e`/`b298ee7`/`a242bc5`/`6add431`, sin mergear a `main`, en revisión) |
 | D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
@@ -326,8 +327,8 @@ escribirse, no asumirse):
 | B4 | 0200/0210 compra financiera real (primer MTI con tarjeta y monto además de 0100) | B3 | **COMPLETO**, integrado a `main` (`1998491`) |
 | B5 | Editor común de operaciones con tarjeta (`OperacionIso`, unifica Autorización/Compra financiera) | B4 | **COMPLETO**, integrado a `main` (`07b69f3`) |
 | B6 | Modelo conceptual de operación derivada (origen→derivada, futuro reverso), SIN 0400/0410 todavía | B5 | **COMPLETO**, integrado a `main` (`7c034ed`), ver reporte de checkpoint (sección 8) |
-| B7 | Reverso interactivo real (0400/0410), iniciado desde Historial sobre una 0200 aprobada | B6 | **COMPLETO** en rama, ver reporte de checkpoint (sección 9) |
-| B8 (propuesta) | Reversos automatizados (0420/0430) dentro de escenarios/suites | B7, y Fase C (Secuencias) | Depende de que exista contexto entre pasos (Fase C) antes de automatizar; ver sección 9.N |
+| B7 | Reverso interactivo real (0400/0410), iniciado desde Historial sobre una 0200 aprobada | B6 | **COMPLETO**, integrado a `main` (`6a31ce3`), ver reporte de checkpoint (sección 9) |
+| B8 | Aviso de reverso real (0420/0430), segunda operación derivada, iniciado desde Historial sobre una 0200 aprobada; primera secuencia `0200 → 0420` real usando el motor de C1/C2 | B7, C1, C2 | **COMPLETO** en rama, ver reporte de checkpoint (sección 12) |
 
 **Nota (2026-09-13):** la numeración original de subfases (B2=0800, B3=0200 con variantes de
 DE3, B4=reversos) se ajustó contra la ejecución real: B2 pasó a ser Echo puro, B3 absorbió el
@@ -415,9 +416,16 @@ en paralelo a B si conviene por capacidad disponible.
 | Subfase | Objetivo | Depende de | Estado |
 |---|---|---|---|
 | C1 | Infraestructura mínima: `Secuencia`/`PasoSecuencia`, `ContextoSecuencia`, tablas nuevas, secuencia de 2 pasos DEPENDIENTES, sin CONTINUE_ON_FAILURE, sin retries, sin timeout de secuencia | Fase B (B6/B7 ya completas) | **COMPLETO**, integrado a `main` (`989991e`) |
-| C2 | Variables entre pasos (`{{step.<id>.request\|response.deNN}}`, `{{step.<id>.execution_id}}`) | C1 | **COMPLETO** en rama, ver checkpoint sección 11 |
-| C3 | CONTINUE_ON_FAILURE, retries por paso, timeout de paso, y/o secuencias con más operaciones/MTIs (0420/0430 y automatización de reversos dentro de escenarios/suites) | C1, C2 | Planificado — decisión de cuál priorizar pendiente (ver sección 11.L) |
+| C2 | Variables entre pasos (`{{step.<id>.request\|response.deNN}}`, `{{step.<id>.execution_id}}`) | C1 | **COMPLETO**, integrado a `main` (`04372ba`) |
+| C3 | CONTINUE_ON_FAILURE, retries por paso, timeout de paso | C1, C2 | Planificado — próximo bloque recomendado (ver sección 12.O) |
 | C4 | Comparación de corridas de secuencia (equivalente a `comparacion_corridas.py`) | C1, al menos una corrida real que comparar | Planificado |
+
+**Nota (B8, 2026-09-14):** el motor de C1/C2 ya soporta una segunda operación derivada (aviso de
+reverso, 0420/0430) dentro de un paso derivado -`PasoSecuencia.operacion_derivada`-, probada con
+una secuencia real `0200 → 0420`. Esto NO era una subfase de Fase C separada: fue una extensión
+mínima del mismo mecanismo de C1 (`_ejecutar_paso_derivado` pasó de invocar un único método fijo
+del `Orquestador` a despachar entre dos, según el campo nuevo), sin tocar `ContextoSecuencia` ni
+el motor de variables de C2. Ver checkpoint B8, sección 12.
 
 **Actualización (C1, 2026-09-13): implementada, revisada contra el código real -no contra el
 diseño original de Agente 3-.** Decisión de orden del propietario: C1 se hizo **después** de B7
@@ -1042,3 +1050,175 @@ otro-:
    explícitamente diferido, punto 19) y/o data-driven (CONTINUE_ON_FAILURE, retries/timeout de
    paso, ver sección 6, subfase C3 actualizada).
 **No se avanzó a ninguna de las dos todavía.**
+
+---
+
+## 12. Checkpoint B8 — Aviso de reverso (0420/0430)
+
+**A. Integración de C2:** confirmada antes de abrir B8 — `main`/`origin/main` en `04372ba`
+(merge `--no-ff` de `feature/secuencias-c2-contexto-variables`, historia preservada), suite
+1355 passed / 0 skipped antes y después del merge, `git diff --check` limpio, base de desarrollo
+verificada (`paso_id` presente en ambas tablas de C2, definiciones y corridas existentes
+preservadas, `PRAGMA foreign_key_check` vacío). Dos smokes reales post-merge: (1) C1 — una
+secuencia `0200 → 0400` real confirmó que el reverso sigue usando la ejecución producida por el
+paso 1; (2) C2 — una secuencia con `{{step.purchase.response.de38}}` en el DE37 del segundo paso
+confirmó, contra el DE37 realmente transmitido por TCP, que coincide con el STAN producido por el
+paso anterior. `git push origin main`: `HEAD == origin/main == 04372ba`.
+
+**B. Investigación (Agente A, dominio ISO 8583, fuentes públicas genéricas):** el tercer dígito
+del MTI codifica la FUNCIÓN del mensaje: `0`=request, `1`=request response, `2`=advice,
+`3`=advice response. Un *reversal* (0400/0410) es una **solicitud** que el receptor puede negar;
+un *reversal advice* (0420/0430) es la **notificación** de un reverso que ya ocurrió — el emisor
+no pide permiso, informa un hecho consumado, y el receptor está obligado a aceptarlo (0430), no a
+evaluarlo de nuevo. Campos típicamente relevantes en la literatura genérica: DE90 (Original Data
+Elements, para correlacionar con el mensaje original — ver punto F), DE39 (código de respuesta),
+DE11 (STAN nuevo, distinto del original). El catálogo detallado de "reason codes" de un 0420 varía
+por marca/red y **no se investigó ni se inventó** — fuera de alcance por `CLAUDE.md`. Fuentes:
+isoparser.com/iso-8583-reference, github.com/moov-io/iso8583 (docs/mti.md), neapay.com.
+
+**C. Semántica funcional:** `OPERACION_AVISO_REVERSO = "reversal_advice"` (`domain/modelos.py`),
+separada de `MTI_AVISO_REVERSO = "0420"` — misma disciplina operación≠MTI que el resto del
+proyecto (`OPERACION_COMPRA_FINANCIERA`, `OPERACION_REVERSO_FINANCIERO`). El nombre viene
+directamente de la investigación (punto B), no es una elección arbitraria de este proyecto.
+
+**D. Perfil (0420/0430):** `OBLIGATORIOS_0420 = {"3","4","7","11","41","49"}`,
+`OBLIGATORIOS_0430 = {"3","4","7","11","39","41"}`, `_POLITICA_AVISO_REVERSO` — declarados de
+cero en `profiles/generico.py`, **sin referenciar** `OBLIGATORIOS_0400`/`_POLITICA_REVERSO_
+FINANCIERO` aunque comparten forma (punto 7 del encargo): auditados campo por campo contra
+`ReferenciaEjecucion`, resultaron idénticos a los de 0400 porque este laboratorio no tiene ninguna
+fuente que distinga los campos de un aviso de los de una solicitud — la diferencia es de
+*contrato de mensaje*, no de campos (ver punto E). `CODIGO_PROCESO_AVISO_REVERSO = "000000"`,
+constante propia.
+
+**E. Diferencia frente a 0400:** documentada en el docstring de `domain/modelos.py::
+MTI_AVISO_REVERSO` y en `application/armado_aviso_reverso.py`: 0400 es una solicitud que el
+receptor puede negar; 0420 es un aviso que el receptor debe aceptar. Esa diferencia de contrato
+(no de campos) es la que justifica dos operaciones derivadas separadas — dos MTI, dos builders,
+dos métodos del `Orquestador` — en vez de una sola parametrizada por MTI.
+
+**F. DE90:** revisitada, no reabierta. Sigue sin fuente defendible para DE33 (Forwarding
+Institution ID) en `ESPECIFICACION_GENERICA` — misma conclusión de B7, ratificada sin
+implementar nada parcial ni admitir texto libre. La correlación 0420↔original sigue apoyándose
+en `Ejecucion.ejecucion_origen_id` (B6) y DE37/RRN cuando el original lo tenía; la correlación
+0420↔0430 (RN-3, la del intercambio actual) siguió funcionando sin ninguna estrategia nueva una
+vez completado el punto G.
+
+**G. Builder y arquitectura reutilizada:** `application/armado_operacion_derivada.py` (nuevo)
+extrae `componer_operacion_derivada_financiera(mti, referencia, *, stan_nuevo, momento_nuevo,
+codigo_proceso)` — la composición de campos resultó **idéntica** entre 0400 y 0420 al comparar
+campo por campo (duplicación medida, no anticipada, punto 8 del encargo); `armar_reverso_
+financiero` ahora delega en ella, `armar_aviso_reverso` (nuevo) es su wrapper específico.
+Reutilizado **sin ningún cambio**: `ReferenciaEjecucion`/`referencia_origen_elegible`
+(application/referencia_ejecucion.py), `domain.elegibilidad_reverso.puede_generar_operacion_
+derivada` (misma regla de 0200 aprobada — investigada para B8, no asumida: el evento que ambas
+operaciones referencian es el mismo), `GeneradorStanSQLite` (STAN nuevo automático), y el núcleo
+`Orquestador._ejecutar`/`_registrar`. Único hallazgo que requirió un cambio real: `domain.
+validacion.mti_de_respuesta` mapeaba el tercer dígito SIEMPRE a `0->1`, calculando `0420 → 0410`
+(incorrecto) en vez de `0420 → 0430` — el propio comentario de una versión anterior ya lo
+señalaba como "caso distinto, fuera de esta función". Se completó con una tabla genérica
+`{0:1, 2:3}` (la misma regla de función-de-mensaje del punto B, no una regla inventada): RN-3
+(`domain/validacion.py`), el `HostSimulado` y la validación de expectativas del `Orquestador` ya
+derivaban el MTI de respuesta desde esta función, así que quedaron correctos para 0420/0430 sin
+tocarlos — confirmado con un test E2E real por TCP antes de continuar con el resto de B8.
+
+**H. Host:** `HostSimulado._construir_respuesta` no tiene branching por MTI 0400 — cae en el
+`else` genérico (DE39 configurable, default `"00"`) igual que cualquier MTI sin caso especial.
+Con el fix del punto G, 0420 usa exactamente el mismo camino: **cero líneas tocadas** en
+`adapters/host_simulado/servidor.py`.
+
+**I. Interactivo:** rutas `GET/POST /historial/{id}/aviso-reverso(/ejecutar)` (espejo exacto de
+`reverso_preview`/`reverso_ejecutar`), plantilla `aviso_reverso_preview.html` (espejo de
+`reverso_preview.html`, PAN nunca en claro). El detalle de una ejecución elegible ahora muestra
+dos botones diferenciados ("Crear reverso" / "Crear aviso de reverso") con un párrafo explicando
+la diferencia funcional; la tabla de derivadas distingue cada una ("Reverso financiero · 0400",
+"Aviso de reverso · 0420") en vez de listar solo el número de ejecución. Verificado con evidencia
+real en navegador (TCP/SQLite reales, host `sibu-host-demo`): ejecución origen #87 (0200
+aprobada, STAN 000089) → aviso de reverso real #88 (0420→0430, STAN 000090) → reverso financiero
+real #89 (0400→0410, STAN nuevo) sobre el MISMO origen; el detalle de #87 lista ambas derivadas
+correctamente rotuladas y enlazadas, y cada detalle derivado enlaza de vuelta a #87.
+
+**J. Secuencia (0200 → 0420):** `PasoSecuencia`/`DatosPaso` ganan `operacion_derivada: str =
+OPERACION_REVERSO_FINANCIERO` (default preserva toda definición de C1 sin migrarla);
+`EjecutorDeSecuencia._ejecutar_paso_derivado` despacha entre `ejecutar_reverso_financiero`/
+`ejecutar_aviso_reverso` según ese campo — el resto del método (resolución de `ContextoSecuencia`
+por `orden`, clasificación BLOQUEADO/ejecutado) no cambió. Migración aditiva
+(`operacion_derivada TEXT NOT NULL DEFAULT 'financial_reversal'` en `secuencia_transaccional_
+pasos`), verificada contra la base de desarrollo real (backup `sibutestlab8583.db.bak-preB8-
+migracion-*`): 10 pasos existentes, los 10 retro-completados a `'financial_reversal'` (su
+significado real antes de B8), `PRAGMA foreign_key_check` vacío. E2E real (TCP/SQLite/host
+simulado) confirma: paso "purchase" (0200→0210/00) → paso "reversal_advice" (0420→0430, origen =
+ejecución del paso purchase, resuelto vía `ContextoSecuencia`, **sin** `ejecucion_id` fijo en la
+definición) y una secuencia con AMBOS tipos de paso derivado (reverso Y aviso) sobre el mismo
+origen, sin ningún candado de exclusividad. **Sin UI** para crear esta secuencia desde
+`/secuencias/nueva` — mismo criterio que C2 (el formulario web sigue construyendo solo compra +
+reverso; la capacidad se probó a nivel de aplicación/dominio).
+
+**K. C2 (uso real de variables entre pasos):** ninguno nuevo, deliberadamente (punto 18 del
+encargo): 0420, igual que 0400, se construye **completamente** desde `ReferenciaEjecucion` — no
+existe ningún dato no sensible donde forzar una referencia `{{step...}}` habría agregado valor
+real sin ser artificial. La prueba de que C2 sigue funcionando después de B8 ya está cubierta
+independientemente (punto A, smoke 2, y la suite completa de C2 sin regresiones). Punto 17
+protegido explícitamente: un paso derivado sigue sin `campos_manuales` (`DatosReversoFinanciero`/
+`DatosAvisoReverso` son "constructores cerrados"), así que `{{step...}}` no tiene ningún punto de
+entrada en él — la identidad del origen es *siempre* `ContextoSecuencia`/`ReferenciaEjecucion`,
+nunca una variable de paso.
+
+**L. Seguridad:** `ReferenciaEjecucion.campos_respuesta` sigue siendo la whitelist `{"37","38"}`
+sin cambios; el preview de 0420 no consulta `RepositorioTarjetas` (igual que el de 0400); el piso
+universal `CAMPOS_SENSIBLES = {"2","35","45"}` y el orden de verificación de C2 (`perfil.
+es_sensible` antes que cualquier otra cosa en `resolver_referencia_de_paso`) se confirmaron
+intactos con una prueba de regresión dedicada (`tests/test_seguridad_aviso_reverso.py`); ningún
+campo `"90"` (DE90) aparece en la vista previa (punto F); ninguna tabla nueva de C1/B8
+(`secuencia_transaccional_pasos` con su columna `operacion_derivada`) tiene columna de PAN. B8 no
+introduce ningún vector nuevo de exposición de PAN/Track/RAW respecto de B7 (confirmado por
+investigación dedicada antes de escribir código, y por la suite de seguridad después).
+
+**M. Arquitectura — señal de reutilización:** medido con `git diff --stat` contra `main`. B8
+(cuatro commits, segunda operación derivada) queda en ~1670 líneas insertadas entre código y
+pruebas — muy similar en tamaño a B7 (~1566 líneas, la PRIMERA operación derivada, que tuvo que
+construir `ReferenciaEjecucion`, `domain/elegibilidad_reverso.py` y la extensión del núcleo del
+`Orquestador` desde cero). La señal real no está en el conteo de líneas -la mitad de B8 son
+pruebas espejo, deliberadamente redundantes con las de B7 por diseño- sino en **qué no se tocó
+en absoluto**: `elegibilidad_reverso.py`, `referencia_ejecucion.py`, el núcleo `Orquestador._
+ejecutar`/`_registrar`, `GeneradorStanSQLite`, `HostSimulado`, `ContextoSecuencia`, y el motor de
+variables de C2 — cero líneas modificadas en los siete. Lo genuinamente nuevo fue angosto:
+constantes de MTI/operación, un dataclass de 3 líneas (`DatosAvisoReverso`), un wrapper de
+builder de ~20 líneas, una política de perfil declarada aparte, un método del `Orquestador` de
+~30 líneas, dos rutas web + una plantilla, y una línea de despacho en el ejecutor de secuencias.
+**La arquitectura de operaciones derivadas escala**: agregar una segunda operación no forzó
+duplicar B7, solo extenderlo en los puntos que su propio diseño ya dejaba abiertos (perfil por
+MTI, despacho por campo). El único ajuste que NO estaba anticipado fue el fix de
+`mti_de_respuesta` (punto G) — y ese es una corrección de una regla genérica incompleta, no una
+señal de que la arquitectura de reversos no escale.
+
+**N. Tests:** 1355 passed / 0 skipped al abrir B8 (tras integrar C2) → **1391 passed / 0
+skipped** al cierre de B8 (36 nuevos: 9 de builder/perfil puros, 8 E2E reales del `Orquestador`
+-incluida la coexistencia 0400+0420 sobre el mismo origen-, 5 web/interactivos, 5 del motor de
+secuencias -incluida una secuencia con ambos tipos de paso derivado-, 6 de migración/seguridad,
+3 de ajuste a pruebas existentes). `git diff --check` limpio en cada commit. Migración real
+aplicada contra la base de desarrollo con backup (punto J). Recorrido manual en navegador real
+(punto I). Fase A y B7 intactas (sin cambios, suite completa en verde). C1/C2 intactas: sus
+propias suites (`test_ejecutor_secuencia.py`, `test_e2e_variables_secuencia.py`, `test_
+validacion_referencias_de_paso.py`, etc.) pasan sin modificación.
+
+**O. Commits:** `cc2479e` (B8.1-B8.3: semántica/perfil/builder/orquestador), `b298ee7` (B8.4: UI
+interactiva), `a242bc5` (B8.5: secuencias), `6add431` (B8.6a: seguridad). **No mergeado a
+`main`** — queda en `feature/multi-mti-b8-reversal-advice-0420`, pendiente de revisión del
+propietario.
+
+**Próximo paso — decisión con evidencia real, no supuesta:** dos caminos disponibles, ninguno
+bloqueado por el otro:
+1. **C3** — control de flujo avanzado (CONTINUE_ON_FAILURE, retries por paso, timeout de paso).
+   B8 demostró que el motor de secuencias generaliza bien a una segunda operación derivada sin
+   tocar su núcleo (`ContextoSecuencia`, validación de pasos); C3 es la extensión natural de ESE
+   mismo motor, no de las operaciones ISO en sí.
+2. **Fase D — Host Simulator 2.0.** B8 no tocó `HostSimulado` en absoluto (punto H): su
+   generalidad ya cubrió 0420 sin cambios, lo cual sugiere que el simulador actual sigue
+   teniendo margen antes de necesitar una versión 2.0 — un argumento en contra de priorizar D
+   ahora mismo, no a favor.
+
+Con la evidencia de B8 (el simulador no necesitó tocarse, la arquitectura de secuencias sí
+generalizó sin fricción), la recomendación de este checkpoint es **C3**: hay más señal de que el
+motor de secuencias está listo para su siguiente incremento de complejidad que de que el
+simulador la necesite. **No se avanzó a ninguna de las dos todavía** — decisión pendiente del
+propietario.

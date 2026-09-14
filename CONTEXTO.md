@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-14 (C2 — Contexto y variables entre pasos)
+**Última actualización:** 2026-09-14 (B8 — Aviso de reverso, 0420/0430)
 
 ## Estado actual
 
@@ -16,29 +16,35 @@ tarjeta (`OperacionIso`), el modelo de operación derivada (`ejecucion_origen_id
 `Orquestador.ejecutar_reverso_financiero`, B7). DE90 investigado dos veces (B6/B7) y **no
 implementado** (falta institución receptora/DE33 en el perfil).
 
-**Fase C — Secuencias transaccionales:** **C1** (infraestructura mínima) integrado a `main`
-(merge `989991e`): lista de pasos DEPENDIENTES -a diferencia de una Suite, cuyos escenarios son
-independientes-. Primer caso real: paso 1 = compra financiera (escenario guardado), paso 2 = su
-reverso, automático (`PasoSecuencia.origen_tipo="derivado"` + `origen_paso_orden`).
-`ContextoSecuencia` + `EjecutorDeSecuencia` reutilizan tal cual `EjecutorDeEscenarios` y
-`Orquestador.ejecutar_reverso_financiero` (B6/B7). Nuevo estado `BLOQUEADO`: un paso derivado
-cuyo origen no produjo una ejecución elegible -nunca se finge FAIL/ERROR-.
+**Fase C — Secuencias transaccionales:** **C1** y **C2** integrados a `main` (merges `989991e`,
+`04372ba`). C1: lista de pasos DEPENDIENTES -a diferencia de una Suite, cuyos escenarios son
+independientes-, primer caso real compra financiera → su reverso automático
+(`PasoSecuencia.origen_tipo="derivado"` + `origen_paso_orden`), nuevo estado `BLOQUEADO` (un paso
+derivado cuyo origen no produjo una ejecución elegible -nunca se finge FAIL/ERROR-). C2:
+`{{step.<paso_id>.request|response.deNN}}`/`{{step.<paso_id>.execution_id}}` -SEGUNDO reconocedor
+(`application/variables_secuencia.py`), `paso_id` estable distinto de `orden`, seguridad
+(`perfil.es_sensible()` siempre primero), validación de referencias al guardar la definición.
 
-**C2** (`feature/secuencias-c2-contexto-variables`, commits `3fef508`/`754d1c3`/`6f0cd77`/
-`e4e0208`, sin mergear todavía): generaliza el acceso a datos de un paso anterior más allá del
-vínculo estructural fijo de C1. Sintaxis: `{{step.<paso_id>.request|response.deNN}}` y
-`{{step.<paso_id>.execution_id}}` -mismo `{{...}}` de Fase A, un SEGUNDO reconocedor
-(`application/variables_secuencia.py`) porque resuelve en otro momento del flujo, nunca una
-extensión del regex de Fase A ni un lenguaje paralelo-. `PasoSecuencia.paso_id` (identificador
-ESTABLE, distinto de `orden`) es la llave de referencia; `orden` sigue siendo la autoridad de
-precedencia temporal. Seguridad: `perfil.es_sensible()` siempre primero (DE2/DE35/DE45
-rechazados incluso si el perfil no los declara); validación de referencias (existencia,
-precedencia) al GUARDAR la definición, con defensa en profundidad en tiempo de ejecución. E2E
-real: un paso transmite de verdad, en su propio DE37, un DE38 producido por otro paso. Sin UI
-dedicada (decisión explícita: tampoco la tiene Fase A hoy).
+**B8 — Aviso de reverso (0420/0430)** (`feature/multi-mti-b8-reversal-advice-0420`, commits
+`cc2479e`/`b298ee7`/`a242bc5`/`6add431`, sin mergear todavía): segunda operación derivada del
+laboratorio. Investigada primero (Agente A, ISO 8583 genérico): un *reversal* (0400) es una
+SOLICITUD que el receptor puede negar; un *reversal advice* (0420) NOTIFICA un reverso ya
+ocurrido, que el receptor debe aceptar (0430) -diferencia de contrato, no de campos, que
+justifica dos operaciones derivadas separadas (`OPERACION_AVISO_REVERSO = "reversal_advice"`,
+misma disciplina operación≠MTI). Builder (`application/armado_operacion_derivada.py`) extraído
+por duplicación MEDIDA con el de 0400, no anticipada; perfil de 0420/0430 declarado de cero (sin
+referenciar el de 0400). Reutilizado SIN CAMBIOS: `ReferenciaEjecucion`, elegibilidad (misma regla
+de 0200 aprobada), núcleo del `Orquestador`, generador de STAN, `HostSimulado` (cero líneas).
+Hallazgo real: `domain.validacion.mti_de_respuesta` calculaba mal `0420→0410` (siempre mapeaba a
+`0->1`); corregido con la tabla genérica de función de mensaje (`0->1`/`2->3`), confirmado con
+TCP real antes de seguir. Secuencias: `PasoSecuencia.operacion_derivada` (default preserva C1),
+probada una secuencia real `0200→0420` -origen resuelto vía `ContextoSecuencia`, nunca variables
+de paso de C2 (protegido explícitamente)-. Interactivo: dos botones diferenciados desde
+Historial, tabla de derivadas distingue cada operación. Sin UI de secuencias para esto (mismo
+criterio que C2).
 
-Detalle completo (reportes A-N/A-L) en `docs/roadmap/SIBU_3.md` secciones 9, 10 y 11; decisiones
-de gobernanza en `BITACORA.md`. Suite completa: **1355 passed, 0 skipped**.
+Detalle completo (reportes A-N/A-L/A-O) en `docs/roadmap/SIBU_3.md` secciones 9, 10, 11 y 12;
+decisiones de gobernanza en `BITACORA.md`. Suite completa: **1391 passed, 0 skipped**.
 
 **Estado anterior a Fase B (2026-09-09):**
 
@@ -388,6 +394,13 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 **Enunciado autoritativo en `PROYECTO.md` §4.**
 
 ## Próximo paso
+
+**B8 (aviso de reverso, 0420/0430) está completo en `feature/multi-mti-b8-reversal-advice-0420`,
+sin mergear a `main` — pendiente de aprobación del propietario.** Recomendación del checkpoint
+(`docs/roadmap/SIBU_3.md` sección 12.O): **C3** (control de flujo avanzado del motor de
+secuencias: CONTINUE_ON_FAILURE, retries/timeout por paso) sobre Fase D (Host Simulator 2.0) —
+B8 no tocó `HostSimulado` en absoluto, señal de que el simulador actual todavía tiene margen.
+Decisión pendiente del propietario; ninguna de las dos bloqueada por la otra.
 
 Las cinco mejoras funcionales pedidas el 2026-09-07 (ver «Estado actual» e «Historial de
 avances») están implementadas y verificadas, pero **sin commit ni push todavía** -queda para
