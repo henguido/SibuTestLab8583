@@ -31,6 +31,35 @@ sensible (`perfil.es_sensible()`, misma autoridad que ya usa
 `resolver_referencia_de_paso`/`campos_permitidos_expectativa` -C2/B6-, nunca
 una lista nueva). Se rechaza al VALIDAR la regla (`validar_regla`), nunca en
 tiempo de evaluacion silenciosamente.
+
+ESTADO LIMITADO (Fase D2, 2026-09-14)
+=======================================
+`ReglaHost.max_aplicaciones` (opcional, `None` = ilimitada -comportamiento
+D1 exacto, investigado y confirmado como el unico default que preserva
+compatibilidad) permite expresar "esta regla gana como maximo N veces".
+Es CONFIGURACION (parte de la definicion de la regla); el CONTADOR real de
+cuantas veces ya gano (`EstadoReglaHost.aplicaciones_consumidas`) es ESTADO
+OPERACIONAL, deliberadamente en una clase/tabla separada -mismo principio
+que ya separa `reglas_host` (configuracion) de `reglas_host_eventos`
+(auditoria), investigado explicitamente antes de implementar: mezclar
+configuracion y estado en un unico lugar dificulta auditoria/atomicidad,
+y el lifecycle de ambos es distinto (duplicar una regla copia su
+configuracion pero NUNCA su estado; editar la configuracion no deberia
+tocar el contador salvo un reset explicito).
+
+`agotada(regla, estado)` es una propiedad DERIVADA, nunca un booleano
+persistido (evita desincronizarse del contador real tras un edit o un
+reset). Una regla agotada sigue `activa=True` conceptualmente -solo deja
+de ser CANDIDATA en la evaluacion, nunca se desactiva a si misma-.
+
+Ni una condicion ni una regla stateful pueden evadir la prohibicion de
+campos sensibles (punto 32 del checkpoint D2): el contador nunca lee ni
+guarda el valor de ningun campo del mensaje, solo cuenta CUANTAS VECES
+coincidio, exactamente igual de "ciego" al contenido que D1.
+
+D2 NO agrega scripting, variables arbitrarias, estado por campo/tarjeta/
+STAN, ni maquinas de estado genericas -el UNICO estado nuevo es un
+contador entero por regla (punto 31 del checkpoint).
 """
 
 from __future__ import annotations
@@ -219,6 +248,13 @@ class ReglaHost:
     equivalente a "coincide siempre", indistinguible de un default oculto;
     quien quiera un default explicito debe declararlo como tal (ver
     `application.reglas_host`, done en integracion con `HostSimulado`).
+
+    `max_aplicaciones` (D2, opcional): cuantas veces esta regla puede GANAR
+    la evaluacion antes de dejar de ser candidata -`None` es ilimitada,
+    exactamente el comportamiento D1, el unico default que preserva
+    compatibilidad total. El CONTADOR de cuantas veces ya gano vive aparte
+    (`EstadoReglaHost`, estado operacional, nunca en esta clase -ver
+    docstring del modulo).
     """
 
     nombre: str
@@ -228,6 +264,7 @@ class ReglaHost:
     respuesta: RespuestaRegla
     comportamiento: ComportamientoRegla = ComportamientoRegla()
     regla_id: str | None = None
+    max_aplicaciones: int | None = None
 
     def __post_init__(self) -> None:
         if not self.nombre.strip():
@@ -236,6 +273,8 @@ class ReglaHost:
             raise ValueError("la prioridad no puede ser negativa")
         if not self.condiciones:
             raise ValueError("una regla necesita al menos una condicion")
+        if self.max_aplicaciones is not None and self.max_aplicaciones < 1:
+            raise ValueError("max_aplicaciones debe ser mayor o igual que 1, o ausente (ilimitada)")
         object.__setattr__(self, "condiciones", tuple(self.condiciones))
 
 
@@ -287,15 +326,27 @@ def regla_coincide(regla: ReglaHost, campos_mensaje: Mapping[str, str], mti: str
 
 
 def evaluar_reglas(
-    reglas: Sequence[ReglaHost], campos_mensaje: Mapping[str, str], mti: str
+    reglas: Sequence[ReglaHost],
+    campos_mensaje: Mapping[str, str],
+    mti: str,
+    estados: Mapping[str, "EstadoReglaHost"] | None = None,
 ) -> ReglaHost | None:
     """La PRIMERA regla activa, en orden de prioridad ascendente (menor
-    primero, punto 6), cuyas condiciones coincidan TODAS. `None` si ninguna
-    coincide -el llamador decide el comportamiento default (punto 7), esta
-    funcion nunca inventa uno."""
+    primero, punto 6), cuyas condiciones coincidan TODAS Y que no este
+    agotada (D2: `es_agotada`, usando el estado ya obtenido en `estados` -
+    esta funcion sigue siendo PURA, sin I/O; el llamador es quien
+    obtiene/actualiza el estado real, ver `adapters.host_simulado.servidor`).
+    `None` si ninguna coincide (o todas las que coincidieron ya estaban
+    agotadas) -el llamador decide el comportamiento default (punto 7), esta
+    funcion nunca inventa uno. Sin `estados` (default, D1), ninguna regla
+    puede estar agotada -mismo comportamiento exacto que antes de D2."""
+    estados = estados or {}
     for regla in sorted((r for r in reglas if r.activa), key=lambda r: r.prioridad):
-        if regla_coincide(regla, campos_mensaje, mti):
-            return regla
+        if not regla_coincide(regla, campos_mensaje, mti):
+            continue
+        if es_agotada(regla, estados.get(regla.regla_id) if regla.regla_id else None):
+            continue
+        return regla
     return None
 
 
@@ -356,6 +407,12 @@ class EventoReglaHost:
 
     `regla_id`/`regla_nombre`/`prioridad` son `None` cuando NINGUNA regla
     coincidio -el comportamiento default tambien es evidencia (punto 7).
+
+    `match_number` (D2): en que numero de aplicacion goberno esta regla
+    -`1` la primera vez, `2` la segunda, etc.-, `None` si la regla no tiene
+    `max_aplicaciones` (ilimitada) o si ninguna regla coincidio. Permite
+    reconstruir despues "por que el segundo intento recibio otra respuesta"
+    sin adivinar (punto 12 del checkpoint D2).
     """
 
     mti_solicitud: str
@@ -365,5 +422,34 @@ class EventoReglaHost:
     prioridad: int | None = None
     de39_respuesta: str | None = None
     delay_ms: int = 0
+    match_number: int | None = None
     evento_id: int | None = None
     creado_en: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class EstadoReglaHost:
+    """ESTADO OPERACIONAL de una regla -deliberadamente separado de
+    `ReglaHost` (configuracion), ver docstring del modulo. Es lo unico que
+    un `reset` toca; duplicar una regla NUNCA copia esto (la copia arranca
+    en 0, como si nunca hubiera aplicado)."""
+
+    regla_id: str
+    aplicaciones_consumidas: int = 0
+    actualizado_en: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        if self.aplicaciones_consumidas < 0:
+            raise ValueError("aplicaciones_consumidas no puede ser negativo")
+
+
+def es_agotada(regla: ReglaHost, estado: EstadoReglaHost | None) -> bool:
+    """`True` si `regla` ya alcanzo su `max_aplicaciones` -propiedad
+    DERIVADA, nunca persistida (punto 14 del checkpoint D2: evita
+    desincronizarse del contador real tras un edit o un reset). Una regla
+    sin `max_aplicaciones` (ilimitada) nunca esta agotada, sin importar el
+    estado -ni siquiera necesita `estado is not None`-."""
+    if regla.max_aplicaciones is None:
+        return False
+    consumidas = estado.aplicaciones_consumidas if estado is not None else 0
+    return consumidas >= regla.max_aplicaciones
