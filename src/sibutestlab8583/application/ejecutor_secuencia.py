@@ -55,6 +55,7 @@ from ..domain.modelos import (
     DestinoTcp,
     EstadoCorridaSuite,
     EstadoPasoSecuencia,
+    IntentoPasoSecuencia,
     PasoCorridaSecuencia,
     PasoSecuencia,
     PoliticaContinuacion,
@@ -212,7 +213,7 @@ class EjecutorDeSecuencia:
                 evaluacion_json = None
             else:
                 resultado, ejecucion_id, detalle, evaluacion_json = await self._ejecutar_paso(
-                    paso, contexto
+                    paso, contexto, corrida_id
                 )
                 if resultado is EstadoPasoSecuencia.ERROR and paso.on_error == PoliticaContinuacion.DETENER.value:
                     detenido_por = (paso.orden, "ERROR")
@@ -272,10 +273,10 @@ class EjecutorDeSecuencia:
         return nombres
 
     async def _ejecutar_paso(
-        self, paso: PasoSecuencia, contexto: ContextoSecuencia
+        self, paso: PasoSecuencia, contexto: ContextoSecuencia, corrida_id: int
     ) -> tuple[EstadoPasoSecuencia, int | None, str | None, str | None]:
         if paso.origen_tipo == ORIGEN_PASO_INDEPENDIENTE:
-            return await self._ejecutar_paso_independiente(paso, contexto)
+            return await self._ejecutar_paso_independiente(paso, contexto, corrida_id)
         return await self._ejecutar_paso_derivado(paso, contexto)
 
     async def _resolver_referencias_de_paso(
@@ -302,7 +303,7 @@ class EjecutorDeSecuencia:
         return resueltos
 
     async def _ejecutar_paso_independiente(
-        self, paso: PasoSecuencia, contexto: ContextoSecuencia
+        self, paso: PasoSecuencia, contexto: ContextoSecuencia, corrida_id: int
     ) -> tuple[EstadoPasoSecuencia, int | None, str | None, str | None]:
         """Delega enteramente en `EjecutorDeEscenarios`: mismo mecanismo que
         ya usa `CorredorDeSuites._ejecutar_item` para un escenario suelto.
@@ -310,7 +311,19 @@ class EjecutorDeSecuencia:
         escenario tenga guardada en sus campos manuales -la EXPRESION queda
         intacta en el escenario (Fase A: nunca se congela un valor
         resuelto); solo esta ejecucion concreta recibe el valor ya literal.
-        """
+
+        C3: si `paso.max_retries > 0` (hoy solo posible para un escenario
+        Echo, validado al guardar la secuencia -`application.secuencias.
+        _validar_pasos`-), reintenta hasta `max_retries` veces cuando el
+        intento anterior fallo TECNICAMENTE (timeout, error de conexion/
+        transmision -`es_estado_tecnico`, mismo criterio que `_clasificar`-).
+        Nunca reintenta un error de configuracion (escenario/tarjeta
+        inexistente, referencia de paso invalida): reintentar eso repetiria
+        el mismo fallo sin ninguna posibilidad de exito. CADA intento se
+        registra por separado (`IntentoPasoSecuencia`, nunca se sobrescribe
+        el anterior) -el resultado devuelto es el del ULTIMO intento (el
+        primero que tuvo una respuesta real, o el ultimo si todos
+        fallaron)."""
         escenario = await self._escenarios.obtener(paso.escenario_id)
         if escenario is None:
             return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_ENCONTRADO, None
@@ -329,24 +342,50 @@ class EjecutorDeSecuencia:
         ):
             return EstadoPasoSecuencia.ERROR, None, _MOTIVO_REFERENCIA_DE_PASO_INVALIDA, None
 
-        try:
-            resultado = await self._ejecutor_escenarios.ejecutar(
-                paso.escenario_id,
-                campos_manuales_extra=campos_resueltos or None,
-            )
-        except EscenarioNoEncontrado:
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_ENCONTRADO, None
-        except EscenarioNoEjecutable:
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_EJECUTABLE, None
-        except TarjetaDesconocida:
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_TARJETA_DESCONOCIDA, None
-        except ErrorDelSimulador:
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ERROR_DEL_SIMULADOR, None
-        except Exception:
-            # Excepcion no contemplada: nunca su texto, nunca traceback.
-            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_FALLO_INESPERADO, None
+        total_intentos = paso.max_retries + 1
+        for numero_intento in range(1, total_intentos + 1):
+            try:
+                resultado = await self._ejecutor_escenarios.ejecutar(
+                    paso.escenario_id,
+                    campos_manuales_extra=campos_resueltos or None,
+                )
+            except EscenarioNoEncontrado:
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_ENCONTRADO, None
+            except EscenarioNoEjecutable:
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_EJECUTABLE, None
+            except TarjetaDesconocida:
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_TARJETA_DESCONOCIDA, None
+            except ErrorDelSimulador:
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ERROR_DEL_SIMULADOR, None
+            except Exception:
+                # Excepcion no contemplada: nunca su texto, nunca traceback.
+                return EstadoPasoSecuencia.ERROR, None, _MOTIVO_FALLO_INESPERADO, None
 
-        return _clasificar(resultado.ejecucion)
+            estado, ejecucion_id, detalle, evaluacion_json = _clasificar(resultado.ejecucion)
+
+            if paso.max_retries > 0:
+                await self._corridas.registrar_intento(
+                    IntentoPasoSecuencia(
+                        corrida_id=corrida_id,
+                        orden=paso.orden,
+                        numero_intento=numero_intento,
+                        resultado=estado,
+                        ejecucion_id=ejecucion_id,
+                        detalle=detalle,
+                        creado_en=self._reloj(),
+                    )
+                )
+
+            es_reintentable = (
+                estado is EstadoPasoSecuencia.ERROR
+                and ejecucion_id is not None
+                and es_estado_tecnico(resultado.ejecucion.estado)
+            )
+            if not (es_reintentable and numero_intento < total_intentos):
+                return estado, ejecucion_id, detalle, evaluacion_json
+
+        # Inalcanzable: el bucle siempre retorna dentro del for.
+        raise AssertionError("_ejecutar_paso_independiente: bucle de reintentos sin retorno")
 
     async def _ejecutar_paso_derivado(
         self, paso: PasoSecuencia, contexto: ContextoSecuencia
