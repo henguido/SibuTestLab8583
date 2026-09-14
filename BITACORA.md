@@ -3044,5 +3044,52 @@ ambos navegables.
 aditiva (`operacion_derivada`) aplicada con backup contra la base de desarrollo real
 (`sibutestlab8583.db.bak-preB8-migracion-*`), 10 pasos existentes retro-completados a su
 significado real, `PRAGMA foreign_key_check` vacío. Commits: `cc2479e`/`b298ee7`/`a242bc5`/
-`6add431`. Sin merge a `main` — pendiente de aprobación del propietario. Reporte completo
-(secciones A-O) en `docs/roadmap/SIBU_3.md` sección 12.
+`6add431`. Reporte completo (secciones A-O) en `docs/roadmap/SIBU_3.md` sección 12. Integrado a
+`main` en `9a7dd32` tras la aprobación del propietario (2026-09-14).
+
+## 2026-09-14 — C3: Control de flujo avanzado de secuencias
+
+**Hallazgo real que cambió el diseño, no anticipado:** antes de escribir código, un agente de
+investigación read-only auditó `EjecutorDeSecuencia._correr` y confirmó que el bucle NUNCA se
+detuvo por sí mismo desde C1 -lo que parecía "detenerse" era siempre el efecto emergente de un
+paso DERIVADO sin contexto válido (`BLOQUEADO` por precondición), nunca una decisión de flujo
+real-. Esto contradecía la premisa inicial del propietario ("hoy C1 tiene stop_on_failure"), y
+cambió el default correcto: `CONTINUAR`, no `DETENER`, es el único valor que preserva el
+comportamiento observable de una secuencia definida antes de C3. Documentado explícitamente en
+vez de resuelto en silencio -mismo criterio de "verificación antes de afirmar" que ya rigió el
+descubrimiento de `mti_de_respuesta` en B8-.
+
+**Otro hallazgo real, expuesto por la propia corrección de C3:** al distinguir un desenlace
+TÉCNICO de uno transaccional real sin expectativas (`es_estado_tecnico`), dos pruebas de C2
+(`test_e2e_variables_secuencia.py`) empezaron a fallar -revelaron que referenciaban un valor
+corto (STAN/execution_id) hacia un campo ISO de longitud FIJA incompatible (DE37 fijo en 12, DE41
+fijo en 8), lo que producía `NO_ENVIADA` (el codec rechaza la longitud) silenciosamente
+clasificado como `SIN_EXPECTATIVAS` antes de C3. Corregidas usando DE32 (opcional, de longitud
+variable), que sí acepta el valor: las pruebas ahora demuestran la transmisión real que sus
+docstrings siempre afirmaron, en vez de un falso positivo heredado de C2.
+
+**Política de flujo:** `PoliticaContinuacion` (CONTINUAR/DETENER) en `on_error`/`on_qa_fail` de
+cada paso. `DETENER` bloquea TODOS los pasos siguientes (independientes y derivados) sin
+intentarlos, con un motivo explícito distinto del de "origen no elegible" -mismo estado
+`BLOQUEADO`, nunca un enum nuevo-. La política de flujo nunca puede saltarse una precondición de
+dominio: confirmado con E2E real, `CONTINUAR` tras un FAIL QA no vuelve elegible a un reverso
+derivado. `SIN_EXPECTATIVAS` nunca activa `on_qa_fail`.
+
+**Expectativas dinámicas:** el mismo lenguaje `{{step...}}` de C2 ahora también sirve como valor
+esperado en un paso derivado, resuelto después de que el origen tiene su respuesta pero antes de
+evaluar la respuesta actual. Auditoría: expresión y valor efectivo quedan juntos en el `detalle`
+de la corrida, sin reemplazar nunca la expresión que la definición guarda.
+
+**Retry:** investigado antes de implementar -un timeout después de enviar 0200/0400/0420 no
+permite demostrar si el host ya procesó el mensaje, así que se rechazó cualquier retry automático
+de esas operaciones a nivel de dominio-. Solo se admite `max_retries > 0` para un paso Echo
+(0800, sin efecto de negocio). Cada intento se registra por separado (tabla nueva
+`corrida_secuencia_paso_intentos`), probado con un timeout real inducido en el primer intento y
+éxito real en el segundo, sin tocar `HostSimulado`.
+
+**Tests:** 1393 passed al abrir C3 (tras integrar B8) → 1421 passed / 0 skipped al cerrar (46
+nuevos). Migración aditiva (`on_error`/`on_qa_fail`/`max_retries` + tabla de intentos) aplicada
+con backup contra la base de desarrollo real (`sibutestlab8583.db.bak-preC3-*`), 9 secuencias y
+11 corridas existentes preservadas, `PRAGMA foreign_key_check` vacío. Commits:
+`f5c9821`/`aa972c6`/`171129d`/`ec7bd2b`/`282fcab`. Sin merge a `main` — pendiente de aprobación
+del propietario. Reporte completo (secciones A-N) en `docs/roadmap/SIBU_3.md` sección 13.
