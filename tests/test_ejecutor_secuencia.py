@@ -81,7 +81,7 @@ def _servicios(base, transporte):
     corridas = RepositorioCorridasSecuenciaSQLite(base)
     ejecuciones = RepositorioEjecucionesSQLite(base)
     ejecutor_secuencia = EjecutorDeSecuencia(
-        secuencias, escenarios, ejecutor_escenarios, ejecuciones, corridas, fabrica
+        secuencias, escenarios, ejecutor_escenarios, ejecuciones, corridas, fabrica, PERFIL_GENERICO
     )
     return conexiones, escenarios, secuencias, ejecutor_secuencia, corridas
 
