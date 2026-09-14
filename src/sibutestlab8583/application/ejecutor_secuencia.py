@@ -57,7 +57,9 @@ from ..domain.modelos import (
     EstadoPasoSecuencia,
     PasoCorridaSecuencia,
     PasoSecuencia,
+    PoliticaContinuacion,
     Secuencia,
+    es_estado_tecnico,
 )
 from ..domain.puertos import RepositorioCorridasSecuencia, RepositorioEjecuciones
 from ..domain.secuencias import calcular_resultado_global_secuencia
@@ -102,6 +104,23 @@ _MOTIVO_REFERENCIA_DE_PASO_INVALIDA = (
 )
 _MOTIVO_REFERENCIA_DE_PASO_SIN_ORIGEN = (
     "Este paso referencia un valor de otro paso que no llegó a producir ninguna ejecución."
+)
+#: C3: motivo especifico por cada estado TECNICO (nunca aplanados a un unico
+#: texto generico -punto 22 del checkpoint: "timeout" conserva su propia
+#: categoria de auditoria, aunque a nivel de EstadoPasoSecuencia siga siendo
+#: ERROR-). Se usa SOLO cuando la ejecucion se completo (hay `Ejecucion`
+#: persistida) pero su desenlace transaccional nunca fue una respuesta real
+#: -ver `domain.modelos.es_estado_tecnico`-.
+_MOTIVO_TECNICO_POR_ESTADO = {
+    "timeout": "La transacción se transmitió pero no llegó respuesta dentro del límite (timeout).",
+    "error_conexion": "No se pudo establecer la sesión TCP con el destino.",
+    "error_transmision": "El intercambio con el destino quedó indeterminado (no se puede demostrar qué se transmitió).",
+    "no_enviada": "La transacción no llegó a intentar transmisión por la red.",
+    "invalida": "La respuesta recibida no correspondía a la solicitud enviada.",
+}
+_MOTIVO_DETENIDO_POR_POLITICA = (
+    "No se ejecutó: el paso {orden} terminó en {causa} y su política de continuación "
+    "es DETENER."
 )
 
 #: Etiqueta para MOSTRAR de cada operacion derivada soportada (B8). Ampliable
@@ -174,10 +193,30 @@ class EjecutorDeSecuencia:
 
         contexto = ContextoSecuencia()
         conteos: dict[EstadoPasoSecuencia, int] = {estado: 0 for estado in EstadoPasoSecuencia}
+        #: C3: distinto de `None` en cuanto un paso con `on_error`/`on_qa_fail`
+        #: = DETENER termina en ERROR/FAIL. A partir de ahi, TODOS los pasos
+        #: siguientes -independientes Y derivados- quedan BLOQUEADO sin
+        #: intentarse (nunca se llama a `_ejecutar_paso`): la politica de
+        #: flujo detiene la SECUENCIA, nunca inventa un resultado distinto de
+        #: BLOQUEADO para lo que no se llego a intentar (mismo estado que ya
+        #: usa C1 para "precondicion no cumplida" -diferenciado por
+        #: `detalle`, nunca un enum nuevo, ver `PoliticaContinuacion`).
+        detenido_por: tuple[int, str] | None = None
         for paso in pasos_ordenados:
-            resultado, ejecucion_id, detalle, evaluacion_json = await self._ejecutar_paso(
-                paso, contexto
-            )
+            if detenido_por is not None:
+                orden_causante, causa = detenido_por
+                resultado = EstadoPasoSecuencia.BLOQUEADO
+                ejecucion_id = None
+                detalle = _MOTIVO_DETENIDO_POR_POLITICA.format(orden=orden_causante, causa=causa)
+                evaluacion_json = None
+            else:
+                resultado, ejecucion_id, detalle, evaluacion_json = await self._ejecutar_paso(
+                    paso, contexto
+                )
+                if resultado is EstadoPasoSecuencia.ERROR and paso.on_error == PoliticaContinuacion.DETENER.value:
+                    detenido_por = (paso.orden, "ERROR")
+                elif resultado is EstadoPasoSecuencia.FAIL and paso.on_qa_fail == PoliticaContinuacion.DETENER.value:
+                    detenido_por = (paso.orden, "FAIL de QA")
             if ejecucion_id is not None:
                 contexto.registrar(paso.orden, ejecucion_id, paso_id=paso.paso_id)
             conteos[resultado] += 1
@@ -355,9 +394,25 @@ def _clasificar(
     """Clasifica una `Ejecucion` ya persistida en su `EstadoPasoSecuencia` -
     mismo criterio que `CorredorDeSuites._ejecutar_item`: nunca recalcula
     Expected vs Actual, solo lee `evaluacion_estado`/`evaluacion_json`.
+
+    C3: cuando NO hay expectativas (`evaluacion_estado` es `None`), ya no se
+    asume automaticamente `SIN_EXPECTATIVAS` -antes de C3, una 0200 aprobada
+    sin expectativas y una 0200 con TIMEOUT sin expectativas caian en el
+    MISMO estado, perdiendo la diferencia entre "no habia nada que
+    reportar" y "algo se rompio tecnicamente". Ahora se distingue por
+    `es_estado_tecnico(ejecucion.estado)`: un desenlace TECNICO (timeout,
+    error de conexion/transmision, no enviada, invalida) sin expectativas es
+    `ERROR` -activa `on_error`, nunca `on_qa_fail`-; un desenlace
+    TRANSACCIONAL real (aprobada o rechazada) sin expectativas sigue siendo
+    `SIN_EXPECTATIVAS`, exactamente como antes -un rechazo transaccional
+    (DE39 negativo) sin expectativa que lo contradiga NUNCA es FAIL QA ni
+    ERROR, sigue sin ser un fallo (punto 3/20 del checkpoint B8->C3).
     """
     if ejecucion.evaluacion_estado == "pass":
         return EstadoPasoSecuencia.PASS, ejecucion.id, None, ejecucion.evaluacion_json
     if ejecucion.evaluacion_estado == "fail":
         return EstadoPasoSecuencia.FAIL, ejecucion.id, None, ejecucion.evaluacion_json
+    if es_estado_tecnico(ejecucion.estado):
+        motivo = _MOTIVO_TECNICO_POR_ESTADO.get(ejecucion.estado.value, _MOTIVO_FALLO_INESPERADO)
+        return EstadoPasoSecuencia.ERROR, ejecucion.id, motivo, None
     return EstadoPasoSecuencia.SIN_EXPECTATIVAS, ejecucion.id, None, None

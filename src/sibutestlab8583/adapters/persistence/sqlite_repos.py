@@ -30,10 +30,13 @@ from ...domain.modelos import (
     EstadoItemCorrida,
     EstadoPasoSecuencia,
     FiltroHistorial,
+    IntentoPasoSecuencia,
     ItemCorridaSuite,
+    MAX_RETRIES_MINIMO,
     OPERACION_COMPRA,
     OPERACION_REVERSO_FINANCIERO,
     PasoCorridaSecuencia,
+    PoliticaContinuacion,
     PasoSecuencia,
     ResultadoGlobalSuite,
     Secuencia,
@@ -786,8 +789,9 @@ class RepositorioSecuenciasSQLite(_RepositorioSQLite):
                 await conexion.executemany(
                     "INSERT INTO secuencia_transaccional_pasos"
                     " (secuencia_id, orden, origen_tipo, escenario_id, origen_paso_orden,"
-                    "  expectativas_json, paso_id, operacion_derivada)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "  expectativas_json, paso_id, operacion_derivada, on_error, on_qa_fail,"
+                    "  max_retries)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [
                         (
                             secuencia.secuencia_id,
@@ -802,6 +806,9 @@ class RepositorioSecuenciasSQLite(_RepositorioSQLite):
                             ),
                             paso.paso_id,
                             paso.operacion_derivada,
+                            paso.on_error,
+                            paso.on_qa_fail,
+                            paso.max_retries,
                         )
                         for paso in secuencia.pasos
                     ],
@@ -953,6 +960,36 @@ class RepositorioCorridasSecuenciaSQLite(_RepositorioSQLite):
                 filas = await cursor.fetchall()
         return [_a_paso_corrida_secuencia(f) for f in filas]
 
+    async def registrar_intento(self, intento: IntentoPasoSecuencia) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute("PRAGMA foreign_keys = ON")
+            await conexion.execute(
+                "INSERT INTO corrida_secuencia_paso_intentos"
+                " (corrida_id, orden, numero_intento, resultado, ejecucion_id, detalle, creado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    intento.corrida_id,
+                    intento.orden,
+                    intento.numero_intento,
+                    intento.resultado.value,
+                    intento.ejecucion_id,
+                    intento.detalle,
+                    intento.creado_en.isoformat(),
+                ),
+            )
+            await conexion.commit()
+
+    async def obtener_intentos(self, corrida_id: int, orden: int) -> Sequence[IntentoPasoSecuencia]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM corrida_secuencia_paso_intentos"
+                " WHERE corrida_id = ? AND orden = ? ORDER BY numero_intento",
+                (corrida_id, orden),
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_intento_paso_secuencia(f) for f in filas]
+
 
 def _a_secuencia(fila: aiosqlite.Row, pasos: tuple[PasoSecuencia, ...]) -> Secuencia:
     return Secuencia(
@@ -974,6 +1011,14 @@ def _a_paso_secuencia(fila: aiosqlite.Row) -> PasoSecuencia:
     # paso por `inicializar()` (mismo caso limite de las demas columnas
     # opcionales), y `PasoSecuencia` no acepta None para este campo.
     operacion_derivada = _opcional(fila, "operacion_derivada") or OPERACION_REVERSO_FINANCIERO
+    # `on_error`/`on_qa_fail`/`max_retries` (C3): mismo caso limite que
+    # `operacion_derivada` arriba -la migracion las agrega con DEFAULT, pero
+    # `_opcional` puede devolver `None` contra una base que no paso por
+    # `inicializar()`.
+    on_error = _opcional(fila, "on_error") or PoliticaContinuacion.CONTINUAR.value
+    on_qa_fail = _opcional(fila, "on_qa_fail") or PoliticaContinuacion.CONTINUAR.value
+    max_retries = _opcional(fila, "max_retries")
+    max_retries = max_retries if max_retries is not None else MAX_RETRIES_MINIMO
     return PasoSecuencia(
         orden=fila["orden"],
         origen_tipo=fila["origen_tipo"],
@@ -984,6 +1029,9 @@ def _a_paso_secuencia(fila: aiosqlite.Row) -> PasoSecuencia:
         ),
         paso_id=_opcional(fila, "paso_id"),
         operacion_derivada=operacion_derivada,
+        on_error=on_error,
+        on_qa_fail=on_qa_fail,
+        max_retries=max_retries,
     )
 
 
@@ -1023,6 +1071,18 @@ def _a_paso_corrida_secuencia(fila: aiosqlite.Row) -> PasoCorridaSecuencia:
         detalle=fila["detalle"],
         evaluacion_json=fila["evaluacion_json"],
         paso_id=_opcional(fila, "paso_id"),
+    )
+
+
+def _a_intento_paso_secuencia(fila: aiosqlite.Row) -> IntentoPasoSecuencia:
+    return IntentoPasoSecuencia(
+        corrida_id=fila["corrida_id"],
+        orden=fila["orden"],
+        numero_intento=fila["numero_intento"],
+        resultado=EstadoPasoSecuencia(fila["resultado"]),
+        ejecucion_id=fila["ejecucion_id"],
+        detalle=fila["detalle"],
+        creado_en=datetime.fromisoformat(fila["creado_en"]),
     )
 
 

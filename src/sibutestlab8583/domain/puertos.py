@@ -21,6 +21,7 @@ from .modelos import (
     FalloDeConexion,
     FalloDeTransmision,
     FiltroHistorial,
+    IntentoPasoSecuencia,
     ItemCorridaSuite,
     PasoCorridaSecuencia,
     Secuencia,
@@ -288,6 +289,17 @@ class RepositorioCorridasSecuencia(Protocol):
     ) -> Sequence[CorridaSecuencia]: ...
 
     async def obtener_pasos(self, corrida_id: int) -> Sequence[PasoCorridaSecuencia]: ...
+
+    async def registrar_intento(self, intento: IntentoPasoSecuencia) -> None:
+        """Agrega UN intento de retry (C3) sin tocar los anteriores -nunca
+        un UPDATE, siempre un INSERT nuevo (`numero_intento` es parte de la
+        clave)."""
+        ...
+
+    async def obtener_intentos(self, corrida_id: int, orden: int) -> Sequence[IntentoPasoSecuencia]:
+        """Todos los intentos de UN paso, en orden -vacio si el paso nunca
+        tuvo retry (`max_retries == 0`, el caso normal)."""
+        ...
 
 
 @runtime_checkable

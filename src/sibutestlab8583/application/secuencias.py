@@ -22,11 +22,14 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 from ..domain.modelos import (
+    MAX_RETRIES_MINIMO,
+    MTI_ECHO,
     ORIGEN_PASO_DERIVADO,
     ORIGEN_PASO_INDEPENDIENTE,
     OPERACION_REVERSO_FINANCIERO,
     Expectativas,
     PasoSecuencia,
+    PoliticaContinuacion,
     Secuencia,
 )
 from ..domain.puertos import RepositorioEscenarios, RepositorioSecuencias
@@ -48,6 +51,11 @@ class DatosPaso:
     `operacion_derivada` (B8) solo aplica a un paso derivado -ver
     `domain.modelos.PasoSecuencia`-, mismo default que alla
     (`OPERACION_REVERSO_FINANCIERO`) para no romper C1.
+
+    `on_error`/`on_qa_fail`/`max_retries` (C3): mismos campos y mismos
+    defaults que `domain.modelos.PasoSecuencia` -ver ese docstring para la
+    justificacion completa de por que `CONTINUAR`/`0` son los defaults que
+    preservan el comportamiento de C1.
     """
 
     origen_tipo: str
@@ -56,6 +64,9 @@ class DatosPaso:
     expectativas: Expectativas | None = None
     paso_id: str | None = None
     operacion_derivada: str = OPERACION_REVERSO_FINANCIERO
+    on_error: str = PoliticaContinuacion.CONTINUAR.value
+    on_qa_fail: str = PoliticaContinuacion.CONTINUAR.value
+    max_retries: int = MAX_RETRIES_MINIMO
 
 
 @dataclass(frozen=True)
@@ -117,6 +128,13 @@ async def _validar_pasos(
             _validar_referencias_de_paso(
                 orden, escenario.campos_manuales, paso_ids_por_orden
             )
+            if datos.max_retries > MAX_RETRIES_MINIMO and escenario.mti != MTI_ECHO:
+                raise ValueError(
+                    f"paso {orden}: max_retries solo se admite hoy para un escenario Echo "
+                    f"(0800) -este escenario es {escenario.mti!r}. Un reintento automatico de "
+                    "una operacion con efecto de negocio podria duplicarlo si el estado remoto "
+                    "del intento anterior es incierto."
+                )
         elif datos.origen_tipo == ORIGEN_PASO_DERIVADO:
             if datos.origen_paso_orden is None:
                 raise ValueError(f"paso {orden}: indique de qué paso anterior deriva.")
@@ -124,6 +142,10 @@ async def _validar_pasos(
                 raise ValueError(
                     f"paso {orden}: solo puede derivar de un paso ANTERIOR de esta secuencia "
                     f"(1..{orden - 1})."
+                )
+            if datos.expectativas is not None:
+                _validar_referencias_de_paso(
+                    orden, datos.expectativas.campos, paso_ids_por_orden, es_expectativa=True
                 )
         else:
             raise ValueError(f"paso {orden}: tipo de origen desconocido {datos.origen_tipo!r}.")
@@ -139,16 +161,28 @@ async def _validar_pasos(
                 expectativas=datos.expectativas,
                 paso_id=paso_ids_por_orden[orden],
                 operacion_derivada=datos.operacion_derivada,
+                on_error=datos.on_error,
+                on_qa_fail=datos.on_qa_fail,
+                max_retries=datos.max_retries,
             )
         )
     return tuple(construidos)
 
 
 def _validar_referencias_de_paso(
-    orden_actual: int, campos_manuales, paso_ids_por_orden: dict[int, str]
+    orden_actual: int, campos, paso_ids_por_orden: dict[int, str], *, es_expectativa: bool = False
 ) -> None:
+    """Valida toda referencia `{{step.<id>...}}` presente en `campos` -mapa
+    numero->valor de `campos_manuales` (paso independiente) o `numero->
+    ExpectativaCampo` (expectativa de un paso derivado, C3, punto 16 del
+    checkpoint: una expectativa dinamica tampoco puede apuntar a un paso
+    posterior o a si misma, misma regla que ya aplicaba a `campos_manuales`).
+    """
     ordenes_por_paso_id = {v: k for k, v in paso_ids_por_orden.items()}
-    for numero, valor in campos_manuales.items():
+    for numero, entrada in campos.items():
+        valor = entrada.valor if es_expectativa else entrada
+        if valor is None:
+            continue
         referencia = _paso_id_referenciado(valor)
         if referencia is None:
             continue
