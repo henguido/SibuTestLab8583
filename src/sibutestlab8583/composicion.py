@@ -229,6 +229,7 @@ class Composicion:
             self._ejecuciones,
             self._corridas_secuencia,
             lambda destino, tiempo_limite: self.orquestador(destino, tiempo_limite=tiempo_limite),
+            self._perfil,
         )
 
     @property

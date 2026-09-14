@@ -35,9 +35,14 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable, Sequence
 
 from ..domain.errores import (
+    CampoDeEjecucionNoDisponible,
+    CampoDeEjecucionSensible,
     EjecucionOrigenNoElegible,
     EjecucionOrigenNoEncontrada,
     ErrorDelSimulador,
+    ExpresionDePasoMalformada,
+    MetadataDeEjecucionDesconocida,
+    PasoDeSecuenciaNoEjecutado,
 )
 from ..domain.modelos import (
     ORIGEN_PASO_DERIVADO,
@@ -58,6 +63,11 @@ from .ejecutor_escenarios import EjecutorDeEscenarios, EscenarioNoEjecutable
 from .escenarios import EscenarioNoEncontrado, ServicioEscenarios
 from .orquestador import Orquestador, TarjetaDesconocida
 from .secuencias import ServicioSecuencias
+from .variables_secuencia import (
+    es_referencia_de_paso,
+    parece_referencia_de_paso_malformada,
+    resolver_referencia_de_paso,
+)
 
 #: Mensajes seguros y controlados, mismo criterio que `corredor_suites.py`:
 #: nunca `str(excepcion)` ni traceback.
@@ -83,6 +93,13 @@ _MOTIVO_ORIGEN_NO_ELEGIBLE = (
 _MOTIVO_ORIGEN_SIN_DESTINO = (
     "La ejecución origen no registra un destino de transmisión: no se puede reversar."
 )
+_MOTIVO_REFERENCIA_DE_PASO_INVALIDA = (
+    "Este paso referencia un campo de otro paso que no existe, es sensible, o no está "
+    "disponible en ese mensaje. Revise la configuración del escenario."
+)
+_MOTIVO_REFERENCIA_DE_PASO_SIN_ORIGEN = (
+    "Este paso referencia un valor de otro paso que no llegó a producir ninguna ejecución."
+)
 
 
 class SecuenciaNoEjecutable(Exception):
@@ -98,6 +115,7 @@ class EjecutorDeSecuencia:
         repositorio_ejecuciones: RepositorioEjecuciones,
         repositorio_corridas: RepositorioCorridasSecuencia,
         fabrica_orquestador: Callable[[DestinoTcp, float | None], Awaitable[Orquestador]],
+        perfil,
         reloj: Callable[[], datetime] | None = None,
     ) -> None:
         self._secuencias = administracion_secuencias
@@ -106,6 +124,7 @@ class EjecutorDeSecuencia:
         self._ejecuciones = repositorio_ejecuciones
         self._corridas = repositorio_corridas
         self._fabrica_orquestador = fabrica_orquestador
+        self._perfil = perfil
         self._reloj = reloj or (lambda: datetime.now(timezone.utc))
 
     async def ejecutar(self, secuencia_id: str) -> CorridaSecuencia:
@@ -129,6 +148,7 @@ class EjecutorDeSecuencia:
                 escenario_id=paso.escenario_id,
                 escenario_nombre=nombres_escenario.get(paso.orden),
                 origen_paso_orden=paso.origen_paso_orden,
+                paso_id=paso.paso_id,
             )
             for paso in pasos_ordenados
         ]
@@ -148,7 +168,7 @@ class EjecutorDeSecuencia:
                 paso, contexto
             )
             if ejecucion_id is not None:
-                contexto.registrar(paso.orden, ejecucion_id)
+                contexto.registrar(paso.orden, ejecucion_id, paso_id=paso.paso_id)
             conteos[resultado] += 1
             await self._corridas.actualizar_paso(
                 PasoCorridaSecuencia(
@@ -162,6 +182,7 @@ class EjecutorDeSecuencia:
                     ejecucion_id=ejecucion_id,
                     detalle=detalle,
                     evaluacion_json=evaluacion_json,
+                    paso_id=paso.paso_id,
                 )
             )
 
@@ -199,17 +220,65 @@ class EjecutorDeSecuencia:
         self, paso: PasoSecuencia, contexto: ContextoSecuencia
     ) -> tuple[EstadoPasoSecuencia, int | None, str | None, str | None]:
         if paso.origen_tipo == ORIGEN_PASO_INDEPENDIENTE:
-            return await self._ejecutar_paso_independiente(paso)
+            return await self._ejecutar_paso_independiente(paso, contexto)
         return await self._ejecutar_paso_derivado(paso, contexto)
 
+    async def _resolver_referencias_de_paso(
+        self, campos_manuales, contexto: ContextoSecuencia
+    ) -> dict[str, str]:
+        """Resuelve TODA referencia `{{step...}}` (C2) presente en
+        `campos_manuales`, ANTES de que el paso llegue al orquestador -que
+        sigue sin saber que "step.*" existe (ver docstring de
+        `application.variables_secuencia`). Un campo que no es una
+        referencia de paso -incluido `{{stan}}`/`{{amount}}`, Fase A- se
+        deja intacto: lo resuelve, como siempre, `domain.variables` dentro
+        de `armar_compra`/`armar_compra_financiera`.
+        """
+        resueltos: dict[str, str] = {}
+        for numero, valor in campos_manuales.items():
+            if es_referencia_de_paso(valor):
+                resueltos[numero] = await resolver_referencia_de_paso(
+                    valor, contexto, self._ejecuciones, self._perfil
+                )
+            elif parece_referencia_de_paso_malformada(valor):
+                raise ExpresionDePasoMalformada(
+                    f"el campo {numero} tiene una referencia de paso con forma invalida: {valor!r}"
+                )
+        return resueltos
+
     async def _ejecutar_paso_independiente(
-        self, paso: PasoSecuencia
+        self, paso: PasoSecuencia, contexto: ContextoSecuencia
     ) -> tuple[EstadoPasoSecuencia, int | None, str | None, str | None]:
         """Delega enteramente en `EjecutorDeEscenarios`: mismo mecanismo que
         ya usa `CorredorDeSuites._ejecutar_item` para un escenario suelto.
+        Antes de delegar, resuelve cualquier referencia de paso (C2) que el
+        escenario tenga guardada en sus campos manuales -la EXPRESION queda
+        intacta en el escenario (Fase A: nunca se congela un valor
+        resuelto); solo esta ejecucion concreta recibe el valor ya literal.
         """
+        escenario = await self._escenarios.obtener(paso.escenario_id)
+        if escenario is None:
+            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_ENCONTRADO, None
+
         try:
-            resultado = await self._ejecutor_escenarios.ejecutar(paso.escenario_id)
+            campos_resueltos = await self._resolver_referencias_de_paso(
+                escenario.campos_manuales, contexto
+            )
+        except PasoDeSecuenciaNoEjecutado:
+            return EstadoPasoSecuencia.BLOQUEADO, None, _MOTIVO_REFERENCIA_DE_PASO_SIN_ORIGEN, None
+        except (
+            ExpresionDePasoMalformada,
+            CampoDeEjecucionSensible,
+            CampoDeEjecucionNoDisponible,
+            MetadataDeEjecucionDesconocida,
+        ):
+            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_REFERENCIA_DE_PASO_INVALIDA, None
+
+        try:
+            resultado = await self._ejecutor_escenarios.ejecutar(
+                paso.escenario_id,
+                campos_manuales_extra=campos_resueltos or None,
+            )
         except EscenarioNoEncontrado:
             return EstadoPasoSecuencia.ERROR, None, _MOTIVO_ESCENARIO_NO_ENCONTRADO, None
         except EscenarioNoEjecutable:

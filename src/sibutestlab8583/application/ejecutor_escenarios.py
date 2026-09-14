@@ -23,7 +23,8 @@ ResultadoCompra`, nunca `DatosCompra`/`DatosEcho` directamente.
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+import dataclasses
+from typing import Awaitable, Callable, Mapping
 
 from ..domain.modelos import (
     DatosCompra,
@@ -96,7 +97,18 @@ class EjecutorDeEscenarios:
         self._conexiones = administracion_conexiones
         self._fabrica_orquestador = fabrica_orquestador
 
-    async def ejecutar(self, escenario_id: str) -> ResultadoCompra:
+    async def ejecutar(
+        self, escenario_id: str, *, campos_manuales_extra: Mapping[str, str] | None = None
+    ) -> ResultadoCompra:
+        """`campos_manuales_extra` (C2, opcional): valores YA RESUELTOS que
+        pisan los del escenario para ESTA ejecucion concreta, sin alterar lo
+        guardado -exclusivo para que `EjecutorDeSecuencia` inyecte una
+        referencia de paso ya resuelta (`{{step.<id>...}}`,
+        `application.variables_secuencia`) antes de armar el mensaje. Ningun
+        otro llamador de este metodo (la pantalla de escenarios,
+        `CorredorDeSuites`) lo usa: por eso el default es `None`, cero
+        cambio de comportamiento fuera de una secuencia.
+        """
         escenario = await self._escenarios.obtener(escenario_id)
         if escenario is None:
             raise EscenarioNoEncontrado(escenario_id)
@@ -121,6 +133,10 @@ class EjecutorDeEscenarios:
         conexion = await self._conexiones.obtener_activa(escenario.conexion_id)
         destino = DestinoTcp(host=conexion.host, puerto=conexion.puerto)
         datos = construir_datos(escenario)
+        if campos_manuales_extra:
+            campos_fusionados = dict(datos.campos_manuales)
+            campos_fusionados.update(campos_manuales_extra)
+            datos = dataclasses.replace(datos, campos_manuales=campos_fusionados)
         orquestador = await self._fabrica_orquestador(destino, conexion.timeout)
         metodo = getattr(orquestador, nombre_metodo)
         return await metodo(
