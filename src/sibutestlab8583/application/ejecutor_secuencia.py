@@ -71,6 +71,7 @@ from .secuencias import ServicioSecuencias
 from .variables_secuencia import (
     es_referencia_de_paso,
     parece_referencia_de_paso_malformada,
+    resolver_expectativas_de_paso,
     resolver_referencia_de_paso,
 )
 
@@ -356,6 +357,11 @@ class EjecutorDeSecuencia:
         mano: `Orquestador.ejecutar_reverso_financiero`/
         `ejecutar_aviso_reverso` ya hacen toda la resolucion/validacion
         segura (B6/B7/B8) -este metodo solo elige CUAL de las dos llamar.
+
+        C3: antes de invocar al orquestador, resuelve cualquier expectativa
+        DINAMICA que este paso tenga (`{{step...}}` como valor esperado,
+        punto 12 del checkpoint) -mismo mecanismo y mismos errores que ya
+        usa `_resolver_referencias_de_paso` para `campos_manuales`.
         """
         ejecucion_origen_id = contexto.ejecucion_id_de(paso.origen_paso_orden)
         if ejecucion_origen_id is None:
@@ -365,18 +371,32 @@ class EjecutorDeSecuencia:
         if origen is None or not origen.destino_host:
             return EstadoPasoSecuencia.BLOQUEADO, None, _MOTIVO_ORIGEN_SIN_DESTINO, None
 
+        try:
+            expectativas_resueltas, resoluciones = await resolver_expectativas_de_paso(
+                paso.expectativas, contexto, self._ejecuciones, self._perfil
+            )
+        except PasoDeSecuenciaNoEjecutado:
+            return EstadoPasoSecuencia.BLOQUEADO, None, _MOTIVO_REFERENCIA_DE_PASO_SIN_ORIGEN, None
+        except (
+            ExpresionDePasoMalformada,
+            CampoDeEjecucionSensible,
+            CampoDeEjecucionNoDisponible,
+            MetadataDeEjecucionDesconocida,
+        ):
+            return EstadoPasoSecuencia.ERROR, None, _MOTIVO_REFERENCIA_DE_PASO_INVALIDA, None
+
         destino = DestinoTcp(host=origen.destino_host, puerto=origen.destino_puerto)
         try:
             orquestador = await self._fabrica_orquestador(destino, None)
             if paso.operacion_derivada == OPERACION_AVISO_REVERSO:
                 resultado = await orquestador.ejecutar_aviso_reverso(
                     DatosAvisoReverso(ejecucion_origen_id=ejecucion_origen_id),
-                    expectativas=paso.expectativas,
+                    expectativas=expectativas_resueltas,
                 )
             else:
                 resultado = await orquestador.ejecutar_reverso_financiero(
                     DatosReversoFinanciero(ejecucion_origen_id=ejecucion_origen_id),
-                    expectativas=paso.expectativas,
+                    expectativas=expectativas_resueltas,
                 )
         except (EjecucionOrigenNoEncontrada, EjecucionOrigenNoElegible):
             return EstadoPasoSecuencia.BLOQUEADO, None, _MOTIVO_ORIGEN_NO_ELEGIBLE, None
@@ -385,7 +405,18 @@ class EjecutorDeSecuencia:
         except Exception:
             return EstadoPasoSecuencia.ERROR, None, _MOTIVO_FALLO_INESPERADO, None
 
-        return _clasificar(resultado.ejecucion)
+        estado, ejecucion_id, detalle, evaluacion_json = _clasificar(resultado.ejecucion)
+        if resoluciones:
+            # Auditoria (punto 14): la expresion Y el valor efectivamente
+            # usado quedan escritos en `detalle`, nunca solo uno de los dos
+            # -incluso cuando el paso resulto PASS/FAIL, donde `detalle`
+            # normalmente queda en None.
+            nota = "; ".join(
+                f"expectativa dinámica DE{numero}: {expresion} → {valor}"
+                for numero, expresion, valor in resoluciones
+            )
+            detalle = f"{detalle} ({nota})" if detalle else nota
+        return estado, ejecucion_id, detalle, evaluacion_json
 
 
 def _clasificar(

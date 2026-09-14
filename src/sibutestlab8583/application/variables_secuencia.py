@@ -55,9 +55,11 @@ import re
 from ..domain.errores import (
     CampoDeEjecucionNoDisponible,
     CampoDeEjecucionSensible,
+    ExpresionDePasoMalformada,
     MetadataDeEjecucionDesconocida,
     PasoDeSecuenciaNoEjecutado,
 )
+from ..domain.modelos import Expectativas, ExpectativaCampo
 from ..domain.puertos import RepositorioEjecuciones
 from .contexto_secuencia import ContextoSecuencia
 from .serializacion import interpretar
@@ -158,3 +160,62 @@ async def resolver_referencia_de_paso(
             f"el paso {paso_id!r} no tiene DE{numero} en su {namespace}"
         )
     return valor_campo
+
+
+async def resolver_expectativas_de_paso(
+    expectativas: Expectativas | None,
+    contexto: ContextoSecuencia,
+    repositorio_ejecuciones: RepositorioEjecuciones,
+    perfil,
+) -> tuple[Expectativas | None, tuple[tuple[str, str, str], ...]]:
+    """Expectativas dinamicas (C3, 2026-09-14, punto 12 del checkpoint): un
+    VALOR ESPERADO puede depender de la respuesta de un paso anterior -
+    `{{step.purchase.response.de38}}` como `ExpectativaCampo.valor`-, usando
+    el MISMO motor de arriba, nunca un lenguaje nuevo. Solo aplica a
+    `PasoSecuencia.expectativas` (paso DERIVADO): un paso independiente
+    sigue tomando sus expectativas del ESCENARIO, que es reusable fuera de
+    cualquier secuencia y por eso nunca resuelve `{{step...}}` (ver
+    `domain.modelos.PasoSecuencia`, docstring de `expectativas`).
+
+    Se llama DESPUES de que el paso de origen ya tiene su respuesta
+    persistida, pero ANTES de evaluar la respuesta de ESTE paso -simetrico a
+    `EjecutorDeSecuencia._resolver_referencias_de_paso`, que resuelve
+    `campos_manuales` ANTES de enviar, nunca en el mismo momento.
+
+    Devuelve la `Expectativas` con cada valor dinamico YA resuelto a un
+    literal -la definicion de la secuencia sigue guardando la EXPRESION,
+    nunca el valor resuelto, misma filosofia que Fase A/C2- mas una tupla
+    `(numero, expresion, valor_resuelto)` por cada campo que si era dinamico,
+    para que quien llama pueda dejar constancia de auditoria (punto 14:
+    expresion Y valor efectivo, nunca solo uno de los dos).
+
+    Puede lanzar las mismas excepciones que `resolver_referencia_de_paso`
+    (incluida `CampoDeEjecucionSensible`: DE2/DE35/DE45 tampoco pueden
+    referenciarse aqui, ni siquiera solo para comparar) y
+    `ExpresionDePasoMalformada` si algun valor "parece" una referencia de
+    paso pero no calza ninguna forma reconocida.
+    """
+    if expectativas is None or not expectativas.campos:
+        return expectativas, ()
+
+    campos_resueltos: dict[str, ExpectativaCampo] = {}
+    resoluciones: list[tuple[str, str, str]] = []
+    for numero, campo in expectativas.campos.items():
+        valor = campo.valor
+        if valor is not None and es_referencia_de_paso(valor):
+            valor_resuelto = await resolver_referencia_de_paso(
+                valor, contexto, repositorio_ejecuciones, perfil
+            )
+            campos_resueltos[numero] = ExpectativaCampo(tipo=campo.tipo, valor=valor_resuelto)
+            resoluciones.append((numero, valor, valor_resuelto))
+        elif valor is not None and parece_referencia_de_paso_malformada(valor):
+            raise ExpresionDePasoMalformada(
+                f"la expectativa del campo {numero} tiene una referencia de paso con forma "
+                f"invalida: {valor!r}"
+            )
+        else:
+            campos_resueltos[numero] = campo
+
+    if not resoluciones:
+        return expectativas, ()
+    return Expectativas(estado=expectativas.estado, campos=campos_resueltos), tuple(resoluciones)
