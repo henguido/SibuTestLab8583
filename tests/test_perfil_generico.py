@@ -32,12 +32,13 @@ def test_solo_soporta_los_mti_del_alcance_aprobado():
     assert perfil.soporta(MTI_COMPRA)
     assert perfil.soporta(MTI_RESPUESTA_COMPRA)
     # 0800/0810 (Network Management/Echo, B2), 0200/0210 (compra financiera,
-    # B4) y 0400/0410 (reverso financiero, B7) se autorizaron e
-    # implementaron -ver PROYECTO.md seccion 0.1 y docs/roadmap/SIBU_3.md-.
-    # Pruebas dedicadas en test_perfil_echo.py, test_perfil_compra_financiera.py
-    # y test_perfil_reverso_financiero.py. El resto sigue fuera de alcance:
-    # 0420/0430, retiro, consulta de saldo.
-    for mti in ("0420", "0430"):
+    # B4), 0400/0410 (reverso financiero, B7) y 0420/0430 (aviso de reverso,
+    # B8) se autorizaron e implementaron -ver PROYECTO.md seccion 0.1 y
+    # docs/roadmap/SIBU_3.md-. Pruebas dedicadas en test_perfil_echo.py,
+    # test_perfil_compra_financiera.py, test_perfil_reverso_financiero.py y
+    # test_perfil_aviso_reverso.py. El resto sigue fuera de alcance: retiro,
+    # consulta de saldo.
+    for mti in ("0500", "0600"):
         assert not perfil.soporta(mti)
         with pytest.raises(ValueError):
             perfil.obligatorios(mti)

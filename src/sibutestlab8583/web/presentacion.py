@@ -24,6 +24,7 @@ from ..domain.errores import ErrorDeCodec, ErrorDeFraming
 from ..domain.expectativas import campos_permitidos_expectativa
 from ..domain.modelos import (
     CAMPOS_SENSIBLES,
+    OPERACION_AVISO_REVERSO,
     OPERACION_ECHO,
     OPERACION_REVERSO_FINANCIERO,
     EstadoEjecucion,
@@ -57,6 +58,8 @@ ETIQUETAS_OPERACION: dict[str, str] = {
     #: una pantalla de constructor con tarjeta/monto (ver
     #: `web/operaciones.py`)-, asi que su etiqueta se agrega aqui aparte.
     OPERACION_REVERSO_FINANCIERO: "Reverso financiero",
+    #: Aviso de reverso (B8): mismo criterio que el reverso financiero.
+    OPERACION_AVISO_REVERSO: "Aviso de reverso",
 }
 
 

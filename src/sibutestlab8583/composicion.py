@@ -50,6 +50,7 @@ from .application.suites import ServicioSuites
 from .application.tarjetas import ServicioTarjetas
 from .application.vista_previa import (
     ServicioVistaPrevia,
+    ServicioVistaPreviaAvisoReverso,
     ServicioVistaPreviaCompraFinanciera,
     ServicioVistaPreviaEcho,
     ServicioVistaPreviaReversoFinanciero,
@@ -157,6 +158,13 @@ class Composicion:
         snapshot seguro de la ejecucion origen -no hay tarjeta que buscar,
         ver `application.armado_reverso`."""
         return ServicioVistaPreviaReversoFinanciero(self._ejecuciones, self._codec, self._perfil)
+
+    @property
+    def vista_previa_aviso_reverso(self) -> ServicioVistaPreviaAvisoReverso:
+        """Arma la vista previa del 0420 (aviso de reverso, B8), mismo
+        criterio que `vista_previa_reverso_financiero` con su propio builder
+        (`application.armado_aviso_reverso`)."""
+        return ServicioVistaPreviaAvisoReverso(self._ejecuciones, self._codec, self._perfil)
 
     @property
     def administracion_conexiones(self) -> ServicioConexiones:

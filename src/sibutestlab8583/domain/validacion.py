@@ -15,6 +15,8 @@ Reparto de las reglas:
 
 from __future__ import annotations
 
+from typing import Mapping
+
 from .catalogo import CatalogoDeRespuestas
 from .modelos import EstadoEjecucion, MensajeIso, ResultadoValidacion
 
@@ -142,17 +144,30 @@ def _interpretar_codigo(
     return EstadoEjecucion.RECHAZADA, (f"{codigo}: {catalogo.descripcion(codigo)}",)
 
 
+#: Tercer digito del MTI (funcion del mensaje) -> tercer digito de su
+#: respuesta, segun la convencion generica de ISO 8583: 0 (request) responde
+#: con 1 (request response); 2 (advice) responde con 3 (advice response).
+#: B8 (2026-09-14, aviso de reverso): completa lo que la version anterior de
+#: esta funcion dejaba pendiente ("los reversos con correlacion cruzada
+#: -0420/0430- son un caso distinto, fuera de esta funcion") -no es una
+#: regla nueva inventada para este laboratorio, es la misma tabla de
+#: funciones que el estandar ya define para cualquier MTI.
+_TERCER_DIGITO_DE_RESPUESTA: Mapping[str, str] = {"0": "1", "2": "3"}
+
+
 def mti_de_respuesta(mti_solicitud: str) -> str:
-    """En ISO 8583 la respuesta a un 0x00 es su 0x10 correspondiente.
+    """En ISO 8583 la respuesta a un mensaje se deriva cambiando el tercer
+    digito (funcion) segun `_TERCER_DIGITO_DE_RESPUESTA`: 0x00 -> 0x10
+    (request -> request response), 0x20 -> 0x30 (advice -> advice response).
 
     Publica (sin guion bajo) a partir de B1: ademas de usarla este modulo
     para RN-3, `application/orquestador.py` la usa para derivar el MTI de
     respuesta esperado en vez de asumir el literal de compra -es la misma
     regla generica de ISO 8583, no una segunda definicion-. Verificada
-    genericamente para 0200/0210, 0400/0410 y 0800/0810 ademas de 0100/0110
-    (jornada de agentes, 2026-09-12): el tercer digito 0->1 es correcto para
-    cualquier MTI de solicitud/respuesta sincrono; los reversos con
-    correlacion cruzada (0420/0430) son un caso distinto, fuera de esta
-    funcion.
+    genericamente para 0100/0110, 0200/0210, 0400/0410 y 0800/0810 (jornada
+    de agentes, 2026-09-12), y para 0420/0430 (B8, 2026-09-14, aviso de
+    reverso): ambos casos son la misma regla de digito-de-funcion, no dos
+    reglas distintas.
     """
-    return mti_solicitud[:2] + "1" + mti_solicitud[3:]
+    tercer_digito = mti_solicitud[2]
+    return mti_solicitud[:2] + _TERCER_DIGITO_DE_RESPUESTA[tercer_digito] + mti_solicitud[3:]

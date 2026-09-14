@@ -82,3 +82,34 @@ async def test_la_migracion_es_idempotente(base):
             "              'corridas_secuencia', 'corrida_secuencia_pasos')"
         ).fetchone()[0]
     assert tablas == 4
+
+
+async def test_operacion_derivada_existe_con_default_reverso_financiero(base):
+    """B8: `operacion_derivada` es aditiva sobre `secuencia_transaccional_pasos`
+    (ya existente desde C1) -una fila insertada ANTES de B8 (o por cualquier
+    INSERT que no la mencione) debe leerse como reverso financiero, nunca
+    como NULL ni como un valor inventado."""
+    with sqlite3.connect(base) as conexion:
+        columnas = {
+            fila[1] for fila in conexion.execute(
+                "PRAGMA table_info(secuencia_transaccional_pasos)"
+            ).fetchall()
+        }
+        assert "operacion_derivada" in columnas
+
+        conexion.execute(
+            "INSERT INTO secuencias_transaccionales"
+            " (secuencia_id, nombre, descripcion, activa, creado_en, actualizado_en)"
+            " VALUES ('SEQ-MIGRACION', 'x', '', 1, '2026-01-01', '2026-01-01')"
+        )
+        conexion.execute(
+            "INSERT INTO secuencia_transaccional_pasos"
+            " (secuencia_id, orden, origen_tipo, origen_paso_orden)"
+            " VALUES ('SEQ-MIGRACION', 1, 'derivado', 1)"
+        )
+        conexion.commit()
+        valor = conexion.execute(
+            "SELECT operacion_derivada FROM secuencia_transaccional_pasos"
+            " WHERE secuencia_id = 'SEQ-MIGRACION'"
+        ).fetchone()[0]
+    assert valor == "financial_reversal"

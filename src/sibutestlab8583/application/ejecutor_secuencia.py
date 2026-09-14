@@ -47,7 +47,10 @@ from ..domain.errores import (
 from ..domain.modelos import (
     ORIGEN_PASO_DERIVADO,
     ORIGEN_PASO_INDEPENDIENTE,
+    OPERACION_AVISO_REVERSO,
+    OPERACION_REVERSO_FINANCIERO,
     CorridaSecuencia,
+    DatosAvisoReverso,
     DatosReversoFinanciero,
     DestinoTcp,
     EstadoCorridaSuite,
@@ -100,6 +103,14 @@ _MOTIVO_REFERENCIA_DE_PASO_INVALIDA = (
 _MOTIVO_REFERENCIA_DE_PASO_SIN_ORIGEN = (
     "Este paso referencia un valor de otro paso que no llegó a producir ninguna ejecución."
 )
+
+#: Etiqueta para MOSTRAR de cada operacion derivada soportada (B8). Ampliable
+#: -agregar una operacion derivada nueva es agregar su entrada aqui, nunca
+#: reescribir `_resolver_nombres_escenario`.
+_ETIQUETAS_OPERACION_DERIVADA = {
+    OPERACION_REVERSO_FINANCIERO: "Reverso",
+    OPERACION_AVISO_REVERSO: "Aviso de reverso",
+}
 
 
 class SecuenciaNoEjecutable(Exception):
@@ -204,7 +215,8 @@ class EjecutorDeSecuencia:
         """Nombre para MOSTRAR de cada paso -resuelto ANTES de correr, igual
         criterio que `CorredorDeSuites._resolver_nombres`-: un paso
         independiente muestra el nombre del escenario; uno derivado muestra
-        una etiqueta fija ("Reverso del paso N"), porque no tiene escenario
+        una etiqueta fija segun su `operacion_derivada` (B8: "Reverso del
+        paso N" o "Aviso de reverso del paso N"), porque no tiene escenario
         propio.
         """
         nombres: dict[int, str | None] = {}
@@ -213,7 +225,10 @@ class EjecutorDeSecuencia:
                 escenario = await self._escenarios.obtener(paso.escenario_id)
                 nombres[paso.orden] = escenario.nombre if escenario is not None else paso.escenario_id
             else:
-                nombres[paso.orden] = f"Reverso del paso {paso.origen_paso_orden}"
+                etiqueta = _ETIQUETAS_OPERACION_DERIVADA.get(
+                    paso.operacion_derivada, "Operación derivada"
+                )
+                nombres[paso.orden] = f"{etiqueta} del paso {paso.origen_paso_orden}"
         return nombres
 
     async def _ejecutar_paso(
@@ -296,11 +311,12 @@ class EjecutorDeSecuencia:
     async def _ejecutar_paso_derivado(
         self, paso: PasoSecuencia, contexto: ContextoSecuencia
     ) -> tuple[EstadoPasoSecuencia, int | None, str | None, str | None]:
-        """Construye un reverso financiero derivado del paso
-        `paso.origen_paso_orden` -la UNICA operacion derivada que C1
-        soporta (punto 20 del checkpoint)-. Nunca reconstruye la referencia
-        a mano: `Orquestador.ejecutar_reverso_financiero` ya hace toda la
-        resolucion/validacion segura (B6/B7).
+        """Construye la operacion derivada de `paso.operacion_derivada`
+        (reverso financiero o aviso de reverso, B8) sobre la ejecucion del
+        paso `paso.origen_paso_orden`. Nunca reconstruye la referencia a
+        mano: `Orquestador.ejecutar_reverso_financiero`/
+        `ejecutar_aviso_reverso` ya hacen toda la resolucion/validacion
+        segura (B6/B7/B8) -este metodo solo elige CUAL de las dos llamar.
         """
         ejecucion_origen_id = contexto.ejecucion_id_de(paso.origen_paso_orden)
         if ejecucion_origen_id is None:
@@ -313,10 +329,16 @@ class EjecutorDeSecuencia:
         destino = DestinoTcp(host=origen.destino_host, puerto=origen.destino_puerto)
         try:
             orquestador = await self._fabrica_orquestador(destino, None)
-            resultado = await orquestador.ejecutar_reverso_financiero(
-                DatosReversoFinanciero(ejecucion_origen_id=ejecucion_origen_id),
-                expectativas=paso.expectativas,
-            )
+            if paso.operacion_derivada == OPERACION_AVISO_REVERSO:
+                resultado = await orquestador.ejecutar_aviso_reverso(
+                    DatosAvisoReverso(ejecucion_origen_id=ejecucion_origen_id),
+                    expectativas=paso.expectativas,
+                )
+            else:
+                resultado = await orquestador.ejecutar_reverso_financiero(
+                    DatosReversoFinanciero(ejecucion_origen_id=ejecucion_origen_id),
+                    expectativas=paso.expectativas,
+                )
         except (EjecucionOrigenNoEncontrada, EjecucionOrigenNoElegible):
             return EstadoPasoSecuencia.BLOQUEADO, None, _MOTIVO_ORIGEN_NO_ELEGIBLE, None
         except ErrorDelSimulador:

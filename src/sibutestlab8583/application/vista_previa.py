@@ -42,6 +42,7 @@ from ..domain.errores import ErrorDeCodificacion
 from ..domain.modelos import DatosCompra, DatosCompraFinanciera, DatosEcho
 from ..domain.puertos import RepositorioEjecuciones, RepositorioTarjetas
 from ..domain.variables import ContextoResolucion, resolver_campos_manuales
+from .armado_aviso_reverso import armar_aviso_reverso
 from .armado_reverso import armar_reverso_financiero
 from .referencia_ejecucion import referencia_origen_elegible
 
@@ -294,4 +295,38 @@ class ServicioVistaPreviaReversoFinanciero:
         # politica ya marca DE3/DE7/DE11 como `automatico` -eso solo basta
         # para que `_vista_previa_de_mensaje` los muestre como "se generará
         # al enviar", sin necesitar nada mas aqui.
+        return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, frozenset())
+
+
+class ServicioVistaPreviaAvisoReverso:
+    """Vista previa del 0420 (aviso de reverso, B8): mismo principio que
+    `ServicioVistaPreviaReversoFinanciero` -construida desde el snapshot
+    seguro de la ejecucion origen, nunca desde un constructor libre-, con su
+    propio builder (`armar_aviso_reverso`) porque es una operacion
+    funcionalmente distinta (ver `domain.modelos.MTI_AVISO_REVERSO`).
+    """
+
+    def __init__(
+        self,
+        repositorio_ejecuciones: RepositorioEjecuciones,
+        codec,
+        perfil,
+        *,
+        reloj: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._ejecuciones = repositorio_ejecuciones
+        self._codec = codec
+        self._perfil = perfil
+        self._reloj = reloj or (lambda: datetime.now(timezone.utc))
+
+    async def construir(self, ejecucion_origen_id: int) -> VistaPreviaMensaje:
+        """Puede lanzar `EjecucionOrigenNoEncontrada`/`EjecucionOrigenNoElegible`
+        -mismos motivos por los que la ejecucion real del aviso de reverso
+        lo rechazaria despues-.
+        """
+        referencia = await referencia_origen_elegible(ejecucion_origen_id, self._ejecuciones)
+        momento = self._reloj()
+        mensaje = armar_aviso_reverso(
+            referencia, stan_nuevo=STAN_MARCADOR, momento_nuevo=momento
+        )
         return _vista_previa_de_mensaje(mensaje, self._perfil, self._codec, frozenset())

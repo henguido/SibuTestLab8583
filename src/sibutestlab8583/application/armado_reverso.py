@@ -25,16 +25,24 @@ tiene. La correlacion origen<->reverso se apoya en DE37 (RRN, cuando el
 original lo tuvo) a nivel de protocolo, y en `Ejecucion.ejecucion_origen_id`
 (B6) a nivel de aplicacion -nunca en STAN/RRN como identidad exclusiva,
 ver `domain/modelos.py`.
+
+COMPOSICION COMPARTIDA CON EL AVISO DE REVERSO (B8, 2026-09-14)
+================================================================
+`armar_reverso_financiero` delega en
+`application.armado_operacion_derivada.componer_operacion_derivada_financiera`
+-la composicion resulto identica a la del aviso de reverso (0420, B8) al
+compararlas campo por campo, asi que se extrajo una unica funcion comun en
+vez de mantener dos copias-. Esta funcion sigue siendo la API publica: nadie
+fuera de este modulo debe llamar a la funcion compartida directamente.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from ..domain.armado import formatear_monto
-from ..domain.errores import ReferenciaOrigenIncompleta
 from ..domain.modelos import MTI_REVERSO_FINANCIERO, MensajeIso
 from ..profiles.generico import CODIGO_PROCESO_REVERSO_FINANCIERO
+from .armado_operacion_derivada import componer_operacion_derivada_financiera
 from .referencia_ejecucion import ReferenciaEjecucion
 
 
@@ -58,21 +66,10 @@ def armar_reverso_financiero(
     señalaria un snapshot corrupto, no un caso de negocio valido-. DE37
     (RRN) es la unica excepcion: se incluye solo si el original lo tenia.
     """
-    if referencia_original.monto is None:
-        raise ReferenciaOrigenIncompleta("la ejecución origen no tiene monto registrado")
-    if not referencia_original.moneda:
-        raise ReferenciaOrigenIncompleta("la ejecución origen no tiene moneda registrada")
-    if not referencia_original.terminal:
-        raise ReferenciaOrigenIncompleta("la ejecución origen no tiene terminal registrado")
-
-    campos = {
-        "3": CODIGO_PROCESO_REVERSO_FINANCIERO,
-        "7": momento_nuevo.strftime("%m%d%H%M%S"),
-        "11": stan_nuevo,
-        "4": formatear_monto(referencia_original.monto),
-        "41": referencia_original.terminal,
-        "49": referencia_original.moneda,
-    }
-    if referencia_original.rrn:
-        campos["37"] = referencia_original.rrn
-    return MensajeIso(mti=MTI_REVERSO_FINANCIERO, campos=campos)
+    return componer_operacion_derivada_financiera(
+        MTI_REVERSO_FINANCIERO,
+        referencia_original,
+        stan_nuevo=stan_nuevo,
+        momento_nuevo=momento_nuevo,
+        codigo_proceso=CODIGO_PROCESO_REVERSO_FINANCIERO,
+    )

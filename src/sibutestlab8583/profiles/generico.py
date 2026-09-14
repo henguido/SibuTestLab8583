@@ -30,6 +30,8 @@ from ..domain.modelos import (
     MTI_ECHO,
     MTI_RESPUESTA_COMPRA,
     MTI_RESPUESTA_COMPRA_FINANCIERA,
+    MTI_AVISO_REVERSO,
+    MTI_RESPUESTA_AVISO_REVERSO,
     MTI_RESPUESTA_ECHO,
     MTI_RESPUESTA_REVERSO_FINANCIERO,
     MTI_REVERSO_FINANCIERO,
@@ -490,6 +492,43 @@ _POLITICA_REVERSO_FINANCIERO = PoliticaCamposMti(
     automaticos=frozenset({"3", "7", "11"}),
 )
 
+# ------------------------------------------- Aviso de reverso (0420/0430, B8) --
+#
+# Un aviso de reverso NOTIFICA que una 0200 ya aprobada se revirtio -no lo
+# SOLICITA, a diferencia del 0400 (ver `domain/modelos.py::MTI_AVISO_REVERSO`
+# para la diferencia funcional completa, investigada con Agente A-. Esa
+# diferencia es de CONTRATO de mensaje (solicitud-que-puede-fallar vs
+# aviso-que-debe-aceptarse), no de que campos porta: campo por campo, este
+# laboratorio no tiene ninguna fuente que distinga los campos de un 0420 de
+# los de un 0400 (mismo perfil generico, mismo `ReferenciaEjecucion` como
+# origen de datos) -por eso la composicion de campos es identica a la del
+# 0400 (ver `application/armado_operacion_derivada.py`), pero la POLITICA se
+# declara aqui de cero, sin importar ni heredar `_POLITICA_REVERSO_FINANCIERO`
+# (B8, punto 7): son dos MTI distintos, y que hoy compartan forma no significa
+# que compartan definicion -maniana uno podria declarar un campo que el otro
+# no admite, y una referencia cruzada lo ocultaria-.
+#
+# DE90 -mismo analisis y misma decision que 0400/0410 (ver
+# `application/armado_operacion_derivada.py`): NO implementado, sin fuente
+# para DE33.
+CODIGO_PROCESO_AVISO_REVERSO = "000000"
+
+# Obligatorios de la solicitud: mismo conjunto que OBLIGATORIOS_0400 -DE37
+# fuera por la misma razon (el original puede no haberlo tenido)-, declarado
+# de cero como constante propia (no una referencia a OBLIGATORIOS_0400).
+OBLIGATORIOS_0420 = frozenset({"3", "4", "7", "11", "41", "49"})
+
+# Obligatorios de la respuesta: mismo criterio que OBLIGATORIOS_0410.
+OBLIGATORIOS_0430 = frozenset({"3", "4", "7", "11", "39", "41"})
+
+#: Politica de campos del aviso de reverso (0420, B8). Misma forma que
+#: `_POLITICA_REVERSO_FINANCIERO`, declarada aparte a proposito (ver
+#: comentario de seccion arriba).
+_POLITICA_AVISO_REVERSO = PoliticaCamposMti(
+    derivados=frozenset({"4", "37", "41", "49"}),
+    automaticos=frozenset({"3", "7", "11"}),
+)
+
 PERFIL_GENERICO = PerfilDeMarca(
     nombre=NOMBRE_PERFIL_GENERICO,
     especificacion=ESPECIFICACION_GENERICA,
@@ -502,12 +541,15 @@ PERFIL_GENERICO = PerfilDeMarca(
         MTI_RESPUESTA_COMPRA_FINANCIERA: OBLIGATORIOS_0210,
         MTI_REVERSO_FINANCIERO: OBLIGATORIOS_0400,
         MTI_RESPUESTA_REVERSO_FINANCIERO: OBLIGATORIOS_0410,
+        MTI_AVISO_REVERSO: OBLIGATORIOS_0420,
+        MTI_RESPUESTA_AVISO_REVERSO: OBLIGATORIOS_0430,
     },
     politica_por_mti={
         MTI_COMPRA: _POLITICA_COMPRA,
         MTI_ECHO: _POLITICA_ECHO,
         MTI_COMPRA_FINANCIERA: _POLITICA_COMPRA_FINANCIERA,
         MTI_REVERSO_FINANCIERO: _POLITICA_REVERSO_FINANCIERO,
+        MTI_AVISO_REVERSO: _POLITICA_AVISO_REVERSO,
     },
 )
 
