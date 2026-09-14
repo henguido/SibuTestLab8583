@@ -1487,6 +1487,16 @@ select:hover {
   border-color: var(--linea);
 }
 
+/* "Agotada" (D2, Reglas del Host): una regla sigue ACTIVA -no es
+   "inactiva"-, solo dejo de ser candidata al consumir su limite de
+   aplicaciones. Pregunta distinta de activa/inactiva, mismo criterio que
+   ya separa chip--pass/chip--fail de chip--activa/chip--inactiva arriba. */
+.chip--agotada {
+  color: var(--est-timeout);
+  background: var(--est-timeout-f);
+  border-color: var(--est-timeout-b);
+}
+
 /* Veredicto de expectativa en una celda de tabla (historial, corridas). Sus
    propios tonos -ver seccion 1-, nunca `chip--activa`/`chip--inactiva`: esas
    dicen "administrativamente activo", esto dice "cumplió lo esperado", y son

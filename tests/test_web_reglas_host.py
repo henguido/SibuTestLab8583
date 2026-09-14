@@ -131,3 +131,85 @@ async def test_editar_una_regla_inexistente_da_404(base):
     ) as cliente:
         respuesta = await cliente.get("/reglas-host/RULE-fantasma/editar")
     assert respuesta.status_code == 404
+
+
+async def test_crear_una_regla_con_max_aplicaciones_y_ver_el_progreso_en_la_lista(base):
+    """Fase D2: el campo vacio significa ilimitada; con un valor, la lista
+    muestra "0 / N" apenas se crea (todavia sin ningun match)."""
+    composicion = _composicion(base)
+    app = crear_app(composicion)
+
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://prueba"
+    ) as cliente:
+        respuesta = await cliente.post(
+            "/reglas-host/nueva",
+            data={
+                "nombre": "Timeout limitado", "prioridad": "1", "activa": "on",
+                "condicion_campo_1": "mti", "condicion_operador_1": "igual", "condicion_valor_1": "0800",
+                "de39": "00", "max_aplicaciones": "1",
+            },
+        )
+        assert respuesta.status_code == 303
+
+        listado = await cliente.get("/reglas-host")
+    assert "0 / 1" in listado.text
+
+    reglas = await composicion.administracion_reglas_host.listar()
+    assert reglas[0].max_aplicaciones == 1
+
+
+async def test_regla_sin_max_aplicaciones_muestra_simbolo_ilimitado(base):
+    app = crear_app(_composicion(base))
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://prueba"
+    ) as cliente:
+        await cliente.post(
+            "/reglas-host/nueva",
+            data={
+                "nombre": "Ilimitada", "prioridad": "1",
+                "condicion_campo_1": "mti", "condicion_operador_1": "igual", "condicion_valor_1": "0800",
+                "de39": "00",
+            },
+        )
+        listado = await cliente.get("/reglas-host")
+    assert "∞" in listado.text
+    assert "Reiniciar contador" not in listado.text
+
+
+async def test_reiniciar_contador_desde_la_web_pone_el_progreso_en_cero(base):
+    composicion = _composicion(base)
+    app = crear_app(composicion)
+
+    from sibutestlab8583.application.reglas_host import DatosNuevaRegla
+    from sibutestlab8583.domain.reglas_host import CAMPO_MTI, CondicionRegla
+
+    creada = await composicion.administracion_reglas_host.crear(
+        DatosNuevaRegla(
+            nombre="Con contador", prioridad=1,
+            condiciones=[CondicionRegla(CAMPO_MTI, "igual", "0800")],
+            de39="00", max_aplicaciones=2,
+        )
+    )
+    await composicion.estado_reglas_host.incrementar_si_no_agotada(creada.regla_id, 2)
+
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://prueba"
+    ) as cliente:
+        antes = await cliente.get("/reglas-host")
+        assert "1 / 2" in antes.text
+
+        reinicio = await cliente.post(f"/reglas-host/{creada.regla_id}/reiniciar-contador")
+        assert reinicio.status_code == 303
+
+        despues = await cliente.get("/reglas-host")
+    assert "0 / 2" in despues.text
+
+
+async def test_reiniciar_contador_de_una_regla_inexistente_da_404(base):
+    app = crear_app(_composicion(base))
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://prueba"
+    ) as cliente:
+        respuesta = await cliente.post("/reglas-host/RULE-fantasma/reiniciar-contador")
+    assert respuesta.status_code == 404

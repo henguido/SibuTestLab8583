@@ -27,6 +27,7 @@ from .adapters.persistence.sqlite_repos import (
     RepositorioDestinosSQLite,
     RepositorioEjecucionesSQLite,
     RepositorioEscenariosSQLite,
+    RepositorioEstadoReglasHostSQLite,
     RepositorioEventosReglasHostSQLite,
     RepositorioReglasHostSQLite,
     RepositorioSecuenciasSQLite,
@@ -124,6 +125,7 @@ class Composicion:
         self._corridas_secuencia = RepositorioCorridasSecuenciaSQLite(configuracion.ruta_base_datos)
         self._reglas_host = RepositorioReglasHostSQLite(configuracion.ruta_base_datos)
         self._eventos_reglas_host = RepositorioEventosReglasHostSQLite(configuracion.ruta_base_datos)
+        self._estado_reglas_host = RepositorioEstadoReglasHostSQLite(configuracion.ruta_base_datos)
         self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
@@ -185,11 +187,15 @@ class Composicion:
 
     @property
     def administracion_reglas_host(self) -> ServicioReglasHost:
-        return ServicioReglasHost(self._reglas_host, self._perfil)
+        return ServicioReglasHost(self._reglas_host, self._perfil, self._estado_reglas_host)
 
     @property
     def eventos_reglas_host(self) -> RepositorioEventosReglasHostSQLite:
         return self._eventos_reglas_host
+
+    @property
+    def estado_reglas_host(self) -> RepositorioEstadoReglasHostSQLite:
+        return self._estado_reglas_host
 
     @property
     def ejecutor_escenarios(self) -> EjecutorDeEscenarios:

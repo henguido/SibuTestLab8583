@@ -143,6 +143,14 @@
              value="{{ v.get('comportamiento_delay_ms', r.comportamiento.delay_ms if r else '0') }}">
     </div>
 
+    <h2>Límite de aplicaciones</h2>
+    <div class="campo">
+      <label class="campo__rotulo" for="max_aplicaciones">Número máximo de aplicaciones</label>
+      <input type="text" id="max_aplicaciones" name="max_aplicaciones" inputmode="numeric"
+             value="{{ v.get('max_aplicaciones', r.max_aplicaciones if (r and r.max_aplicaciones is not none) else '') }}">
+      <p class="campo__pista">Vacío = sin límite. Editar este valor conserva el contador ya acumulado -si eso deja la regla agotada de inmediato, la lista lo mostrará.</p>
+    </div>
+
     <button class="boton" type="submit">Guardar</button>
   </div>
 </form>
