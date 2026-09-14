@@ -24,6 +24,7 @@ from typing import Sequence
 from ..domain.modelos import (
     ORIGEN_PASO_DERIVADO,
     ORIGEN_PASO_INDEPENDIENTE,
+    OPERACION_REVERSO_FINANCIERO,
     Expectativas,
     PasoSecuencia,
     Secuencia,
@@ -43,6 +44,10 @@ class DatosPaso:
 
     `paso_id` (C2) es opcional: si no se indica, `ServicioSecuencias` genera
     uno estable (`paso{N}`) -nunca lo deja vacio en lo que persiste-.
+
+    `operacion_derivada` (B8) solo aplica a un paso derivado -ver
+    `domain.modelos.PasoSecuencia`-, mismo default que alla
+    (`OPERACION_REVERSO_FINANCIERO`) para no romper C1.
     """
 
     origen_tipo: str
@@ -50,6 +55,7 @@ class DatosPaso:
     origen_paso_orden: int | None = None
     expectativas: Expectativas | None = None
     paso_id: str | None = None
+    operacion_derivada: str = OPERACION_REVERSO_FINANCIERO
 
 
 @dataclass(frozen=True)
@@ -132,6 +138,7 @@ async def _validar_pasos(
                 ),
                 expectativas=datos.expectativas,
                 paso_id=paso_ids_por_orden[orden],
+                operacion_derivada=datos.operacion_derivada,
             )
         )
     return tuple(construidos)

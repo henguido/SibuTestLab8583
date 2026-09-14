@@ -917,12 +917,22 @@ class ItemCorridaSuite:
 #: que cualquier item de una suite hoy. 'derivado' no tiene escenario que
 #: armar libremente: se construye enteramente desde la ejecucion que produjo
 #: OTRO paso anterior de la MISMA secuencia (ver `PasoSecuencia.
-#: origen_paso_orden`) -en C1, el unico caso derivado real es un reverso
-#: financiero (`OPERACION_REVERSO_FINANCIERO`), automatico por construccion:
-#: el usuario nunca elige "que operacion" para un paso derivado, la decide
-#: la elegibilidad de la ejecucion origen (`domain.elegibilidad_reverso`).
+#: origen_paso_orden`) -en C1, el unico caso derivado real era un reverso
+#: financiero (`OPERACION_REVERSO_FINANCIERO`); B8 agrega el aviso de
+#: reverso (`OPERACION_AVISO_REVERSO`) como segunda opcion -ver
+#: `PasoSecuencia.operacion_derivada`-. Lo que SIGUE siendo automatico por
+#: construccion es la elegibilidad del origen (`domain.elegibilidad_reverso`):
+#: el usuario elige QUE operacion derivada quiere, nunca si la ejecucion
+#: origen califica.
 ORIGEN_PASO_INDEPENDIENTE = "independiente"
 ORIGEN_PASO_DERIVADO = "derivado"
+
+#: Operaciones derivadas que un paso derivado puede pedir (B8). Ampliable
+#: -agregar una operacion derivada nueva es agregar su clave aqui, nunca
+#: reescribir `PasoSecuencia.__post_init__`.
+_OPERACIONES_DERIVADAS_VALIDAS = frozenset(
+    {OPERACION_REVERSO_FINANCIERO, OPERACION_AVISO_REVERSO}
+)
 
 
 @dataclass(frozen=True)
@@ -953,6 +963,14 @@ class PasoSecuencia:
     obligatorio- para no romper la definicion de C1 (que nunca lo
     necesito): `ServicioSecuencias` genera uno estable (`paso{orden}`) si
     falta, nunca lo deja vacio en lo que persiste.
+
+    `operacion_derivada` (B8, 2026-09-14): solo aplica a un paso DERIVADO,
+    identifica CUAL operacion derivada ejecuta -`OPERACION_REVERSO_FINANCIERO`
+    (0400, C1) u `OPERACION_AVISO_REVERSO` (0420, B8)-, la misma separacion
+    operacion-vs-MTI del resto del proyecto. Default
+    `OPERACION_REVERSO_FINANCIERO` para no romper ninguna definicion de C1
+    (que nunca supo de otra operacion derivada): una secuencia guardada
+    antes de B8 sigue significando exactamente lo mismo sin migrarse.
     """
 
     orden: int
@@ -961,6 +979,7 @@ class PasoSecuencia:
     origen_paso_orden: int | None = None
     expectativas: Expectativas | None = None
     paso_id: str | None = None
+    operacion_derivada: str = OPERACION_REVERSO_FINANCIERO
 
     def __post_init__(self) -> None:
         if self.origen_tipo == ORIGEN_PASO_INDEPENDIENTE:
@@ -982,6 +1001,11 @@ class PasoSecuencia:
             if self.escenario_id:
                 raise ValueError(
                     f"paso {self.orden}: un paso derivado no puede tener escenario_id"
+                )
+            if self.operacion_derivada not in _OPERACIONES_DERIVADAS_VALIDAS:
+                raise ValueError(
+                    f"paso {self.orden}: operacion_derivada desconocida "
+                    f"{self.operacion_derivada!r}"
                 )
         else:
             raise ValueError(f"paso {self.orden}: origen_tipo desconocido {self.origen_tipo!r}")

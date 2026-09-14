@@ -479,8 +479,17 @@ COLUMNAS_AGREGADAS_ESCENARIOS: tuple[tuple[str, str], ...] = (
 #: una secuencia guardada antes de C2 simplemente no tiene id estable en
 #: sus pasos hasta que se vuelva a guardar (`ServicioSecuencias` lo genera
 #: si falta, ver domain/modelos.py::PasoSecuencia).
+#:
+#: B8 (2026-09-14): `operacion_derivada` -cual operacion derivada ejecuta un
+#: paso DERIVADO (reverso financiero o aviso de reverso)- es posterior a C1,
+#: que solo conocia una. Aditiva, con el mismo default que
+#: `PasoSecuencia.operacion_derivada` ("financial_reversal"): una secuencia
+#: guardada antes de B8 significa exactamente lo mismo que antes (su unico
+#: paso derivado posible ya era un reverso financiero), sin necesitar
+#: migrar datos.
 COLUMNAS_AGREGADAS_SECUENCIA_TRANSACCIONAL_PASOS: tuple[tuple[str, str], ...] = (
     ("paso_id", "TEXT"),
+    ("operacion_derivada", "TEXT NOT NULL DEFAULT 'financial_reversal'"),
 )
 
 #: Lo mismo para `corrida_secuencia_pasos`: copia historica del `paso_id`

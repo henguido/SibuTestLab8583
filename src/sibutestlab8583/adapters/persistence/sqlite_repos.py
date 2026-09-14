@@ -32,6 +32,7 @@ from ...domain.modelos import (
     FiltroHistorial,
     ItemCorridaSuite,
     OPERACION_COMPRA,
+    OPERACION_REVERSO_FINANCIERO,
     PasoCorridaSecuencia,
     PasoSecuencia,
     ResultadoGlobalSuite,
@@ -785,8 +786,8 @@ class RepositorioSecuenciasSQLite(_RepositorioSQLite):
                 await conexion.executemany(
                     "INSERT INTO secuencia_transaccional_pasos"
                     " (secuencia_id, orden, origen_tipo, escenario_id, origen_paso_orden,"
-                    "  expectativas_json, paso_id)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "  expectativas_json, paso_id, operacion_derivada)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     [
                         (
                             secuencia.secuencia_id,
@@ -800,6 +801,7 @@ class RepositorioSecuenciasSQLite(_RepositorioSQLite):
                                 else None
                             ),
                             paso.paso_id,
+                            paso.operacion_derivada,
                         )
                         for paso in secuencia.pasos
                     ],
@@ -966,6 +968,12 @@ def _a_secuencia(fila: aiosqlite.Row, pasos: tuple[PasoSecuencia, ...]) -> Secue
 
 def _a_paso_secuencia(fila: aiosqlite.Row) -> PasoSecuencia:
     expectativas_json = _opcional(fila, "expectativas_json")
+    # `operacion_derivada` (B8): la migracion siempre agrega la columna con
+    # DEFAULT 'financial_reversal', asi que una fila real nunca la trae en
+    # None -pero `_opcional` si puede devolver None contra una base que no
+    # paso por `inicializar()` (mismo caso limite de las demas columnas
+    # opcionales), y `PasoSecuencia` no acepta None para este campo.
+    operacion_derivada = _opcional(fila, "operacion_derivada") or OPERACION_REVERSO_FINANCIERO
     return PasoSecuencia(
         orden=fila["orden"],
         origen_tipo=fila["origen_tipo"],
@@ -975,6 +983,7 @@ def _a_paso_secuencia(fila: aiosqlite.Row) -> PasoSecuencia:
             expectativas_desde_dict(json.loads(expectativas_json)) if expectativas_json else None
         ),
         paso_id=_opcional(fila, "paso_id"),
+        operacion_derivada=operacion_derivada,
     )
 
 
