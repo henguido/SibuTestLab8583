@@ -44,34 +44,46 @@
   </div>
 </section>
 
-{# B6/B7: modelo de operacion derivada. "Elegible para reverso" describe una
-   propiedad de esta ejecucion (0200 aprobada, ver
-   domain/elegibilidad_reverso.py); "Crear reverso" (B7) es la unica accion
-   que aparece junto al chip, y NUNCA ejecuta directamente -lleva a una
-   pantalla de vista previa (B7, punto 3): la persona ve que se va a enviar
-   antes de confirmar. #}
+{# B6/B7/B8: modelo de operacion derivada. "Elegible para reverso" describe
+   una propiedad de esta ejecucion (0200 aprobada, ver
+   domain/elegibilidad_reverso.py). Dos acciones distintas pueden aparecer
+   junto al chip -"Crear reverso" (0400, B7) y "Crear aviso de reverso"
+   (0420, B8)-, ninguna ejecuta directamente: cada una lleva a su propia
+   pantalla de vista previa (B7 punto 3), y ambas pueden crearse sobre el
+   mismo origen -este laboratorio no bloquea una porque la otra ya exista
+   (B8, punto 5). #}
 {% if elegible_para_derivada or derivadas %}
 <section class="panel">
   <div class="panel__cabecera">
     <h2 class="panel__titulo">Operaciones derivadas</h2>
     {% if elegible_para_derivada %}
-    <span class="chip chip--qa" title="Cumple la regla de elegibilidad para un reverso (0400/0410)">
+    <span class="chip chip--qa" title="Cumple la regla de elegibilidad para un reverso (0400/0410) o un aviso de reverso (0420/0430)">
       Elegible para reverso
     </span>
     <a class="boton boton--sm" href="/historial/{{ ejecucion.id }}/reverso">Crear reverso</a>
+    <a class="boton boton--sm" href="/historial/{{ ejecucion.id }}/aviso-reverso">Crear aviso de reverso</a>
     {% endif %}
   </div>
   <div class="panel__cuerpo">
+    {% if elegible_para_derivada %}
+    <p class="campo__pista">
+      Un reverso (0400) SOLICITA deshacer esta transacción -el receptor puede negarlo-; un aviso
+      de reverso (0420) NOTIFICA que ya se revirtió -el receptor solo confirma haberlo recibido.
+      Son dos operaciones distintas y pueden coexistir sobre esta misma ejecución.
+    </p>
+    {% endif %}
     {% if derivadas %}
     <div class="desplazable" tabindex="0" role="region" aria-label="Ejecuciones derivadas">
       <table class="tabla">
         <thead>
-          <tr><th>Ejecución</th><th>Fecha y hora (UTC)</th><th>Estado</th></tr>
+          <tr><th>Ejecución</th><th>Operación</th><th>Fecha y hora (UTC)</th><th>Estado</th></tr>
         </thead>
         <tbody>
           {% for derivada in derivadas %}
           <tr>
             <td><a href="/historial/{{ derivada.id }}">#{{ derivada.id }}</a></td>
+            <td>{{ etiqueta_operacion(operacion_por_mti.get(derivada.mti_solicitud, derivada.mti_solicitud)) }}
+              <span class="mono">· {{ derivada.mti_solicitud }}</span></td>
             <td class="mono">{{ derivada.creada_en.strftime('%Y-%m-%d %H:%M:%S') }}</td>
             <td>{{ derivada.estado.value }}</td>
           </tr>
