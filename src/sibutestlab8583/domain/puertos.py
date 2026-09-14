@@ -303,6 +303,31 @@ class RepositorioCorridasSecuencia(Protocol):
 
 
 @runtime_checkable
+class RepositorioReglasHost(Protocol):
+    """Catalogo de Reglas del Host Simulado (Fase D1). Misma forma minima
+    que `RepositorioEscenarios`: la CONFIGURACION vive aqui, nunca el
+    evento de que una regla coincidio (ver `RepositorioEventosReglasHost`,
+    punto 20 del checkpoint: no mezclar definicion y corrida)."""
+
+    async def obtener(self, regla_id: str) -> "ReglaHost | None": ...
+
+    async def listar(self) -> Sequence["ReglaHost"]: ...
+
+    async def guardar(self, regla: "ReglaHost") -> None: ...
+
+
+@runtime_checkable
+class RepositorioEventosReglasHost(Protocol):
+    """Evidencia, del lado del simulador, de que regla (o ninguna) goberno
+    una respuesta real -nunca el valor de ningun campo del mensaje, ver
+    `application.reglas_host_eventos` o quien construya el evento."""
+
+    async def registrar(self, evento: "EventoReglaHost") -> None: ...
+
+    async def listar(self, limite: int = 50) -> Sequence["EventoReglaHost"]: ...
+
+
+@runtime_checkable
 class VerificadorDeConexion(Protocol):
     """Comprobacion TCP puntual de "Probar conexion", ajena al recorrido de compra.
 

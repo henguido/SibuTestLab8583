@@ -36,6 +36,7 @@ tiempo de evaluacion silenciosamente.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from types import MappingProxyType
@@ -340,3 +341,29 @@ def _validar_campo_regla(campo: str, perfil, *, contexto: str) -> None:
         )
     if campo not in perfil.especificacion:
         raise ValueError(f"el campo DE{campo} no existe en el perfil activo")
+
+
+@dataclass(frozen=True)
+class EventoReglaHost:
+    """Evidencia, del lado del HOST, de que una regla (o ninguna) goberno
+    una respuesta real (punto 21 del checkpoint). Deliberadamente sin
+    ninguna referencia a `Ejecucion` (tabla del cliente) -conectar ambos
+    lados queda para cuando haya evidencia real de que hace falta (punto 21
+    lo autoriza explicitamente)-, y NUNCA guarda el valor de un campo del
+    mensaje que causo la coincidencia: solo que regla goberno, con que
+    prioridad, y que respondio (punto 35: nunca datos sensibles en un
+    mensaje de auditoria).
+
+    `regla_id`/`regla_nombre`/`prioridad` son `None` cuando NINGUNA regla
+    coincidio -el comportamiento default tambien es evidencia (punto 7).
+    """
+
+    mti_solicitud: str
+    comportamiento: str
+    regla_id: str | None = None
+    regla_nombre: str | None = None
+    prioridad: int | None = None
+    de39_respuesta: str | None = None
+    delay_ms: int = 0
+    evento_id: int | None = None
+    creado_en: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
