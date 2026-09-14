@@ -445,6 +445,13 @@ class ComposicionFalsa:
 
         self.comparador_corridas = ServicioComparacionCorridas(self._repositorio_corridas_suite)
 
+        from sibutestlab8583.adapters.persistence.sqlite_repos import RepositorioReglasHostSQLite
+        from sibutestlab8583.application.reglas_host import ServicioReglasHost
+
+        # Fase D1: mismo criterio -SQLite real sobre el mismo espejo-.
+        self._repositorio_reglas_host = RepositorioReglasHostSQLite(self._ruta_suites)
+        self.administracion_reglas_host = ServicioReglasHost(self._repositorio_reglas_host, self.perfil)
+
     def bitmap_hex(self, mensaje):
         try:
             return self._codec_real.bitmap_hex(mensaje, self.perfil)

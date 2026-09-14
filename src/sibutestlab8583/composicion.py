@@ -27,6 +27,8 @@ from .adapters.persistence.sqlite_repos import (
     RepositorioDestinosSQLite,
     RepositorioEjecucionesSQLite,
     RepositorioEscenariosSQLite,
+    RepositorioEventosReglasHostSQLite,
+    RepositorioReglasHostSQLite,
     RepositorioSecuenciasSQLite,
     RepositorioSuitesSQLite,
     RepositorioTarjetasSQLite,
@@ -45,6 +47,7 @@ from .application.ejecutor_escenarios import EjecutorDeEscenarios
 from .application.ejecutor_secuencia import EjecutorDeSecuencia
 from .application.escenarios import ServicioEscenarios
 from .application.orquestador import Orquestador
+from .application.reglas_host import ServicioReglasHost
 from .application.secuencias import ServicioSecuencias
 from .application.suites import ServicioSuites
 from .application.tarjetas import ServicioTarjetas
@@ -119,6 +122,8 @@ class Composicion:
         self._corridas_suite = RepositorioCorridasSuiteSQLite(configuracion.ruta_base_datos)
         self._secuencias = RepositorioSecuenciasSQLite(configuracion.ruta_base_datos)
         self._corridas_secuencia = RepositorioCorridasSecuenciaSQLite(configuracion.ruta_base_datos)
+        self._reglas_host = RepositorioReglasHostSQLite(configuracion.ruta_base_datos)
+        self._eventos_reglas_host = RepositorioEventosReglasHostSQLite(configuracion.ruta_base_datos)
         self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
@@ -177,6 +182,14 @@ class Composicion:
     @property
     def administracion_suites(self) -> ServicioSuites:
         return ServicioSuites(self._suites, self._escenarios)
+
+    @property
+    def administracion_reglas_host(self) -> ServicioReglasHost:
+        return ServicioReglasHost(self._reglas_host, self._perfil)
+
+    @property
+    def eventos_reglas_host(self) -> RepositorioEventosReglasHostSQLite:
+        return self._eventos_reglas_host
 
     @property
     def ejecutor_escenarios(self) -> EjecutorDeEscenarios:

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal, encabezado_pagina %}
+{% block titulo %}Reglas del Host · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+{{ encabezado_pagina(
+  'Reglas del Host',
+  'Cómo responde el Host Simulado a un mensaje real, evaluadas en orden de prioridad hasta la primera coincidencia. Sin ninguna regla activa, el host conserva su comportamiento de siempre.',
+  'Nueva regla', '/reglas-host/nueva'
+) }}
+
+<section class="panel">
+  {% if filas %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Reglas del Host">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th class="num">Prioridad</th>
+          <th>Nombre</th>
+          <th>Condiciones</th>
+          <th>Respuesta</th>
+          <th>Comportamiento</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr>
+          <td class="num mono">{{ fila.prioridad }}</td>
+          <td>{{ fila.nombre }}</td>
+          <td class="mono">{{ fila.resumen_condiciones }}</td>
+          <td class="mono">{{ fila.resumen_respuesta }}</td>
+          <td>{{ fila.comportamiento }}</td>
+          <td>
+            {% if fila.activa %}
+            <span class="chip chip--activa">Activa</span>
+            {% else %}
+            <span class="chip chip--inactiva">Inactiva</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="tabla-acciones">
+              <a href="/reglas-host/{{ fila.regla_id }}/editar">Editar</a>
+              <form method="post" action="/reglas-host/{{ fila.regla_id }}/duplicar">
+                <button class="enlace-boton" type="submit">Duplicar</button>
+              </form>
+              <form method="post" action="/reglas-host/{{ fila.regla_id }}/estado">
+                <input type="hidden" name="activa" value="{{ '0' if fila.activa else '1' }}">
+                <button class="enlace-boton" type="submit">
+                  {{ 'Desactivar' if fila.activa else 'Reactivar' }}
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="estado-vacio">Todavía no hay ninguna regla. El host responde con su comportamiento de siempre.</p>
+  {% endif %}
+</section>
+{% endblock %}
