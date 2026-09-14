@@ -32,17 +32,42 @@ que fije `--codigo`/`codigo_respuesta` explicitamente a un valor distinto de
 "00" sigue ganando siempre -mismo mecanismo ya usado por compra para forzar
 un codigo en pruebas-, asi que esta regla nunca le quita a nadie la
 capacidad de forzar un codigo especifico a mano.
+
+D1 (2026-09-14): `reglas` (opcional) permite reemplazar el comportamiento
+FIJO de arriba por un conjunto de `domain.reglas_host.ReglaHost` evaluadas
+en orden de prioridad -ver `domain.reglas_host.evaluar_reglas`-. SIN
+`reglas` (el default, `None`/vacio), el host se comporta EXACTAMENTE igual
+que antes de D1 -el `if/elif` de `_construir_respuesta` nunca se toco-
+(punto 33 del checkpoint: "sin reglas personalizadas, 0100/0200/0400/0420/
+0800 deben seguir funcionando igual que hoy"). Con `reglas`, cada mensaje
+se evalua contra ellas; si ninguna coincide, el mismo `_construir_respuesta`
+de siempre sigue siendo el comportamiento DEFAULT (punto 7: "preservar la
+respuesta actual como fallback mientras migramos"). Cada mensaje -con regla
+ganadora o sin ella- se registra en `reglas_host_eventos` si se paso un
+`repositorio_eventos` (auditoria del lado del simulador, nunca con el valor
+de ningun campo del mensaje, punto 21/35 del checkpoint).
 """
 
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from ...domain.armado import formatear_monto
 from ...domain.errores import ErrorDeFraming
 from ...domain.modelos import MTI_COMPRA, MTI_COMPRA_FINANCIERA, MTI_ECHO, MensajeIso
+from ...domain.reglas_host import (
+    CAMPO_MTI,
+    CondicionRegla,
+    GeneradorValor,
+    ReglaHost,
+    RespuestaRegla,
+    TipoComportamiento,
+    evaluar_reglas,
+    generador_referenciado,
+)
 from ...domain.validacion import CAMPO_CODIGO_RESPUESTA, campos_de_correlacion, mti_de_respuesta
 
 #: Campo que el autorizador agrega cuando aprueba una compra (o una compra
@@ -80,6 +105,8 @@ class HostSimulado:
         codigo_respuesta: str = "00",
         responder: bool = True,
         campos_alterados: Mapping[str, str] | None = None,
+        reglas: Sequence[ReglaHost] | None = None,
+        repositorio_eventos=None,
     ) -> None:
         self._codec = codec
         self._perfil = perfil
@@ -87,6 +114,8 @@ class HostSimulado:
         self._codigo = codigo_respuesta
         self._responder = responder
         self._alterados = dict(campos_alterados or {})
+        self._reglas = tuple(reglas) if reglas else ()
+        self._repositorio_eventos = repositorio_eventos
         self._servidor: asyncio.AbstractServer | None = None
         self._apagado: asyncio.Event | None = None
         self.host: str | None = None
@@ -147,10 +176,114 @@ class HostSimulado:
             return
 
         solicitud = self._codec.decodificar(payload, self._perfil).como_mensaje()
-        respuesta = self._construir_respuesta(solicitud)
+
+        regla_ganadora = (
+            evaluar_reglas(self._reglas, solicitud.campos, solicitud.mti) if self._reglas else None
+        )
+        await self._registrar_evento(regla_ganadora, solicitud.mti)
+
+        comportamiento = (
+            regla_ganadora.comportamiento.tipo if regla_ganadora is not None
+            else TipoComportamiento.NORMAL.value
+        )
+
+        if comportamiento == TipoComportamiento.TIMEOUT.value:
+            # Mismo mecanismo que `responder=False` (RN-2): la conexion queda
+            # abierta esperando el apagado del host, nunca un plazo fijo -para
+            # que detener el host sea inmediato y la prueba no dependa de un
+            # temporizador. Aqui es una decision POR MENSAJE (la regla
+            # ganadora), no una bandera fija de todo el host.
+            try:
+                if self._apagado is not None:
+                    await self._apagado.wait()
+            except asyncio.CancelledError:
+                pass
+            finally:
+                escritor.close()
+            return
+
+        if comportamiento == TipoComportamiento.DISCONNECT.value:
+            # DISTINTO de TIMEOUT (punto 14 del checkpoint): cierra el socket
+            # DE INMEDIATO, sin esperar nada -un cliente real ve la conexion
+            # cerrarse, nunca un timeout silencioso.
+            escritor.close()
+            return
+
+        if comportamiento == TipoComportamiento.DELAY.value:
+            await asyncio.sleep(regla_ganadora.comportamiento.delay_ms / 1000)
+
+        if regla_ganadora is not None:
+            respuesta = self._aplicar_regla(solicitud, regla_ganadora)
+        else:
+            respuesta = self._construir_respuesta(solicitud)
         escritor.write(self._framing.preparar(self._codec.codificar(respuesta, self._perfil)))
         await escritor.drain()
         escritor.close()
+
+    async def _registrar_evento(self, regla_ganadora: ReglaHost | None, mti_solicitud: str) -> None:
+        """Auditoria del lado del simulador (punto 21 del checkpoint): que
+        regla -o ninguna, comportamiento default- goberno este mensaje.
+        NUNCA guarda el valor de ningun campo del mensaje -solo que regla,
+        con que prioridad, y que respondio (punto 35: nunca datos sensibles
+        en un mensaje de auditoria)."""
+        if self._repositorio_eventos is None:
+            return
+        from ...domain.reglas_host import EventoReglaHost
+
+        if regla_ganadora is not None:
+            evento = EventoReglaHost(
+                mti_solicitud=mti_solicitud,
+                comportamiento=regla_ganadora.comportamiento.tipo,
+                regla_id=regla_ganadora.regla_id,
+                regla_nombre=regla_ganadora.nombre,
+                prioridad=regla_ganadora.prioridad,
+                de39_respuesta=regla_ganadora.respuesta.de39,
+                delay_ms=regla_ganadora.comportamiento.delay_ms,
+                creado_en=datetime.now(timezone.utc),
+            )
+        else:
+            evento = EventoReglaHost(
+                mti_solicitud=mti_solicitud,
+                comportamiento=TipoComportamiento.NORMAL.value,
+                creado_en=datetime.now(timezone.utc),
+            )
+        await self._repositorio_eventos.registrar(evento)
+
+    def _aplicar_regla(self, solicitud, regla: ReglaHost):
+        """Construye la respuesta de la regla GANADORA sobre la misma base
+        correlacionada que ya usa `_construir_respuesta` -la regla solo
+        declara las DIFERENCIAS (DE39, campos adicionales), nunca reconstruye
+        los campos de correlacion (punto 9 del checkpoint)."""
+        mti_respuesta = mti_de_respuesta(solicitud.mti)
+        campos = self._campos_base_correlacionados(solicitud, mti_respuesta)
+        campos[CAMPO_CODIGO_RESPUESTA] = regla.respuesta.de39
+        for numero, valor in regla.respuesta.campos_adicionales.items():
+            campos[numero] = self._resolver_valor_respuesta(valor, solicitud)
+        campos.update(self._alterados)
+        return MensajeIso(mti=mti_respuesta, campos=campos)
+
+    def _resolver_valor_respuesta(self, valor: str, solicitud) -> str:
+        """Un literal se usa tal cual; una referencia a `GeneradorValor`
+        (prefijo `@`, ya validada por `validar_regla` al guardar la regla)
+        se resuelve con una funcion Python fija -nunca `eval`, nunca una
+        expresion arbitraria (ver docstring de `domain.reglas_host`)."""
+        generador = generador_referenciado(valor)
+        if generador is None:
+            return valor
+        if generador == GeneradorValor.STAN_REQUEST.value:
+            return solicitud.campos.get("11", "000000")
+        if generador == GeneradorValor.AUTORIZACION_DESDE_STAN.value:
+            return solicitud.campos.get("11", "000000")
+        # DATETIME_NOW: mismo formato que declara el perfil para DE7
+        # (MMDDhhmmss) -no un ISO 8601 generico que el perfil no espera.
+        return datetime.now(timezone.utc).strftime("%m%d%H%M%S")
+
+    def _campos_base_correlacionados(self, solicitud, mti_respuesta: str) -> dict[str, str]:
+        return {
+            numero: solicitud.campos[numero]
+            for numero in campos_de_correlacion(self._perfil, mti_respuesta)
+            if numero in solicitud.campos
+        }
 
     def _construir_respuesta(self, solicitud):
         """Devuelve la respuesta con los campos de correlacion copiados de la
@@ -159,11 +292,7 @@ class HostSimulado:
         perfil declare, no solo compra.
         """
         mti_respuesta = mti_de_respuesta(solicitud.mti)
-        campos = {
-            numero: solicitud.campos[numero]
-            for numero in campos_de_correlacion(self._perfil, mti_respuesta)
-            if numero in solicitud.campos
-        }
+        campos = self._campos_base_correlacionados(solicitud, mti_respuesta)
         if solicitud.mti == MTI_ECHO:
             # Un echo siempre "responde bien" en esta primera entrega: no hay
             # concepto de rechazo ni de codigo de autorizacion para el.
@@ -191,3 +320,43 @@ class HostSimulado:
                 campos[CAMPO_AUTORIZACION] = solicitud.campos.get("11", "000000")
         campos.update(self._alterados)
         return MensajeIso(mti=mti_respuesta, campos=campos)
+
+
+def regla_migrada_rechazo_sintetico_financiero() -> tuple[ReglaHost, ReglaHost]:
+    """La regla sintetica de rechazo por monto (B4, ver docstring del
+    modulo) EXPRESADA en el motor declarativo de D1 (punto 18 del
+    checkpoint: "el resultado externo debe mantenerse identico").
+
+    Son DOS reglas -no una- porque el `if/elif` original decide con un
+    UNICO umbral (mayor->rechaza, resto->aprueba): la primera (prioridad 1)
+    cubre "mayor que el umbral" (DE39=51, sin DE38 -un rechazo nunca trae
+    codigo de autorizacion-); la segunda (prioridad 2, sin condicion de
+    monto) cubre TODO lo demas para 0200 -igual o por debajo del umbral-
+    (DE39=00, DE38=el STAN del propio request). El orden de prioridad hace
+    el trabajo de un `else` sin necesitar un operador "menor o igual".
+
+    Esta funcion NO se usa automaticamente en ningun lado todavia -queda
+    disponible para quien quiera demostrar equivalencia (ver
+    `tests/test_migracion_regla_sintetica.py`) o adoptarla explicitamente
+    mas adelante; el fallback DEFAULT del host (sin `reglas`, o con
+    `reglas` que no incluyan esta) sigue siendo `_construir_respuesta` tal
+    cual, sin ningun cambio de comportamiento (punto 33)-.
+    """
+    rechazo = ReglaHost(
+        nombre="Rechazo sintetico por monto (migrada de B4)", prioridad=1, activa=True,
+        condiciones=(
+            CondicionRegla(CAMPO_MTI, "igual", MTI_COMPRA_FINANCIERA),
+            CondicionRegla("4", "mayor_que", _MONTO_UMBRAL_RECHAZO_FINANCIERO),
+        ),
+        respuesta=RespuestaRegla(de39=CODIGO_RECHAZO_MONTO_SINTETICO),
+    )
+    aprobacion = ReglaHost(
+        nombre="Aprobacion por defecto de compra financiera (migrada de B4)",
+        prioridad=2, activa=True,
+        condiciones=(CondicionRegla(CAMPO_MTI, "igual", MTI_COMPRA_FINANCIERA),),
+        respuesta=RespuestaRegla(
+            de39="00",
+            campos_adicionales={CAMPO_AUTORIZACION: f"@{GeneradorValor.AUTORIZACION_DESDE_STAN.value}"},
+        ),
+    )
+    return rechazo, aprobacion

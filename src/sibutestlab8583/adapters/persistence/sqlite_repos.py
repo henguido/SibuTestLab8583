@@ -8,7 +8,7 @@ eso PostgreSQL podria sustituirlo sin tocar la logica de negocio.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Sequence
@@ -42,6 +42,13 @@ from ...domain.modelos import (
     Secuencia,
     Suite,
     TarjetaPrueba,
+)
+from ...domain.reglas_host import (
+    ComportamientoRegla,
+    CondicionRegla,
+    EventoReglaHost,
+    ReglaHost,
+    RespuestaRegla,
 )
 from .esquema import SECUENCIA_STAN, ruta_base_datos
 
@@ -1224,4 +1231,140 @@ def _a_ejecucion(fila: aiosqlite.Row) -> Ejecucion:
         evaluacion_json=_opcional(fila, "evaluacion_json"),
         motivo_detalle=_opcional(fila, "motivo_detalle"),
         ejecucion_origen_id=_opcional(fila, "ejecucion_origen_id"),
+    )
+
+
+class RepositorioReglasHostSQLite(_RepositorioSQLite):
+    """Catalogo de Reglas del Host Simulado (Fase D1). `condiciones_json`/
+    `campos_adicionales_json` siguen el mismo criterio ya usado para
+    `expectativas_json` en `secuencia_transaccional_pasos`: JSON en una
+    columna para una estructura anidada que nunca se consulta por partes
+    fuera de cargar la regla completa.
+    """
+
+    async def obtener(self, regla_id: str) -> ReglaHost | None:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM reglas_host WHERE regla_id = ?", (regla_id,)
+            ) as cursor:
+                fila = await cursor.fetchone()
+        return _a_regla_host(fila) if fila else None
+
+    async def listar(self) -> Sequence[ReglaHost]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM reglas_host ORDER BY prioridad, nombre"
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_regla_host(f) for f in filas]
+
+    async def guardar(self, regla: ReglaHost) -> None:
+        ahora = datetime.now(timezone.utc).isoformat()
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "INSERT INTO reglas_host"
+                " (regla_id, nombre, prioridad, activa, condiciones_json, de39,"
+                "  campos_adicionales_json, comportamiento_tipo, comportamiento_delay_ms,"
+                "  creado_en, actualizado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(regla_id) DO UPDATE SET"
+                "   nombre = excluded.nombre,"
+                "   prioridad = excluded.prioridad,"
+                "   activa = excluded.activa,"
+                "   condiciones_json = excluded.condiciones_json,"
+                "   de39 = excluded.de39,"
+                "   campos_adicionales_json = excluded.campos_adicionales_json,"
+                "   comportamiento_tipo = excluded.comportamiento_tipo,"
+                "   comportamiento_delay_ms = excluded.comportamiento_delay_ms,"
+                "   actualizado_en = excluded.actualizado_en",
+                (
+                    regla.regla_id,
+                    regla.nombre,
+                    regla.prioridad,
+                    int(regla.activa),
+                    json.dumps([
+                        {"campo": c.campo, "operador": c.operador, "valor": c.valor}
+                        for c in regla.condiciones
+                    ]),
+                    regla.respuesta.de39,
+                    json.dumps(dict(regla.respuesta.campos_adicionales)),
+                    regla.comportamiento.tipo,
+                    regla.comportamiento.delay_ms,
+                    ahora,
+                    ahora,
+                ),
+            )
+            await conexion.commit()
+
+
+def _a_regla_host(fila: aiosqlite.Row) -> ReglaHost:
+    condiciones = tuple(
+        CondicionRegla(campo=c["campo"], operador=c["operador"], valor=c.get("valor"))
+        for c in json.loads(fila["condiciones_json"])
+    )
+    return ReglaHost(
+        regla_id=fila["regla_id"],
+        nombre=fila["nombre"],
+        prioridad=fila["prioridad"],
+        activa=bool(fila["activa"]),
+        condiciones=condiciones,
+        respuesta=RespuestaRegla(
+            de39=fila["de39"],
+            campos_adicionales=json.loads(fila["campos_adicionales_json"]),
+        ),
+        comportamiento=ComportamientoRegla(
+            tipo=fila["comportamiento_tipo"],
+            delay_ms=fila["comportamiento_delay_ms"],
+        ),
+    )
+
+
+class RepositorioEventosReglasHostSQLite(_RepositorioSQLite):
+    """Evidencia, del lado del simulador, de que regla (o ninguna) goberno
+    una respuesta real. Nunca guarda el valor de un campo del mensaje -solo
+    que regla goberno, con que prioridad, y que respondio."""
+
+    async def registrar(self, evento: EventoReglaHost) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "INSERT INTO reglas_host_eventos"
+                " (regla_id, regla_nombre, prioridad, mti_solicitud, de39_respuesta,"
+                "  comportamiento, delay_ms, creado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    evento.regla_id,
+                    evento.regla_nombre,
+                    evento.prioridad,
+                    evento.mti_solicitud,
+                    evento.de39_respuesta,
+                    evento.comportamiento,
+                    evento.delay_ms,
+                    evento.creado_en.isoformat(),
+                ),
+            )
+            await conexion.commit()
+
+    async def listar(self, limite: int = 50) -> Sequence[EventoReglaHost]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM reglas_host_eventos ORDER BY evento_id DESC LIMIT ?", (limite,)
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_evento_regla_host(f) for f in filas]
+
+
+def _a_evento_regla_host(fila: aiosqlite.Row) -> EventoReglaHost:
+    return EventoReglaHost(
+        evento_id=fila["evento_id"],
+        regla_id=fila["regla_id"],
+        regla_nombre=fila["regla_nombre"],
+        prioridad=fila["prioridad"],
+        mti_solicitud=fila["mti_solicitud"],
+        de39_respuesta=fila["de39_respuesta"],
+        comportamiento=fila["comportamiento"],
+        delay_ms=fila["delay_ms"],
+        creado_en=datetime.fromisoformat(fila["creado_en"]),
     )

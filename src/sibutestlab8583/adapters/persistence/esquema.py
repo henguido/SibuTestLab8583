@@ -368,6 +368,51 @@ CREATE TABLE IF NOT EXISTS secuencias (
     nombre  TEXT    PRIMARY KEY,
     valor   INTEGER NOT NULL
 );
+
+-- Reglas del Host Simulado (Fase D1, 2026-09-14). LA REGLA ES CONFIGURACION
+-- -esta tabla nunca se mezcla con el EVENTO de que una regla coincidio con
+-- un mensaje real (eso vive en reglas_host_eventos, mas abajo; punto 20 del
+-- checkpoint: "no guardar ambas cosas en la misma tabla"). `condiciones_json`
+-- y `campos_adicionales_json` siguen el mismo criterio ya establecido para
+-- estructuras anidadas en este proyecto (`expectativas_json` en
+-- secuencia_transaccional_pasos): JSON en una columna, nunca una tabla hija
+-- por condicion -no hay necesidad de consultar condiciones individualmente
+-- fuera de cargar la regla completa-.
+CREATE TABLE IF NOT EXISTS reglas_host (
+    regla_id                TEXT    PRIMARY KEY,
+    nombre                  TEXT    NOT NULL,
+    prioridad               INTEGER NOT NULL,
+    activa                  INTEGER NOT NULL,
+    condiciones_json        TEXT    NOT NULL,
+    de39                    TEXT    NOT NULL,
+    campos_adicionales_json TEXT    NOT NULL,
+    comportamiento_tipo     TEXT    NOT NULL,
+    comportamiento_delay_ms INTEGER NOT NULL,
+    creado_en               TEXT    NOT NULL,
+    actualizado_en          TEXT    NOT NULL
+);
+
+-- Evidencia, del lado del SIMULADOR, de que una regla (o ninguna) goberno
+-- una respuesta real (punto 21 del checkpoint). Deliberadamente SIN FK hacia
+-- `ejecuciones` (esa es la tabla del CLIENTE -Orquestador/EjecutorDeSecuencia-
+-- ; conectar ambos lados complicaria D1 sin necesidad real todavia, punto 21
+-- lo autoriza explicitamente: "no hace falta conectar aun con Ejecucion
+-- cliente si complica D1"). `regla_id` es NULL cuando NINGUNA regla coincidio
+-- (comportamiento default, punto 7) -tambien es evidencia valiosa. Nunca
+-- guarda el VALOR de ningun campo del mensaje que causo la coincidencia
+-- (punto 21/35: solo que regla goberno, con que prioridad, y que
+-- respondio) -ver `application/reglas_host.py::registrar_evento`.
+CREATE TABLE IF NOT EXISTS reglas_host_eventos (
+    evento_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    regla_id        TEXT,
+    regla_nombre    TEXT,
+    prioridad       INTEGER,
+    mti_solicitud   TEXT    NOT NULL,
+    de39_respuesta  TEXT,
+    comportamiento  TEXT    NOT NULL,
+    delay_ms        INTEGER NOT NULL DEFAULT 0,
+    creado_en       TEXT    NOT NULL
+);
 """
 
 #: Nombre de la secuencia del numero de trazabilidad.

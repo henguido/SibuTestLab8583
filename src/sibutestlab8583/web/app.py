@@ -53,6 +53,7 @@ from ..application.escenarios import (
     EscenarioNoEncontrado,
 )
 from ..application.orquestador import TarjetaDesconocida
+from ..application.reglas_host import DatosNuevaRegla, ReglaHostNoEncontrada
 from ..application.secuencias import DatosNuevaSecuencia, DatosPaso
 from ..application.suites import DatosEdicionSuite, DatosNuevaSuite, SuiteNoEncontrada
 from ..application.vista_previa import TarjetaNoDisponibleParaVistaPrevia
@@ -98,6 +99,11 @@ from ..domain.modelos import (
     ExpectativaCampo,
     Expectativas,
     MensajeIso,
+)
+from ..domain.reglas_host import (
+    ComportamientoRegla,
+    CondicionRegla,
+    TipoComportamiento,
 )
 from . import presentacion
 from .operaciones import (
@@ -2332,6 +2338,184 @@ async def _formulario_secuencia_nueva(
         },
         status_code=estado_http,
     )
+
+
+#: D1: numero maximo de filas de condicion/campo-de-respuesta que el
+#: formulario ofrece -primera version enfocada (punto 26 del checkpoint),
+#: sin "+Agregar campo" incremental: una fila vacia simplemente se ignora.
+_MAX_CONDICIONES_FORMULARIO = 4
+_MAX_CAMPOS_RESPUESTA_FORMULARIO = 4
+
+
+def _leer_condiciones_regla(formulario) -> tuple[CondicionRegla, ...]:
+    condiciones = []
+    for i in range(1, _MAX_CONDICIONES_FORMULARIO + 1):
+        campo = (formulario.get(f"condicion_campo_{i}") or "").strip()
+        operador = (formulario.get(f"condicion_operador_{i}") or "").strip()
+        if not campo or not operador:
+            continue
+        valor = (formulario.get(f"condicion_valor_{i}") or "").strip()
+        condiciones.append(CondicionRegla(campo=campo, operador=operador, valor=valor or None))
+    return tuple(condiciones)
+
+
+def _leer_campos_respuesta(formulario) -> dict[str, str]:
+    campos: dict[str, str] = {}
+    for i in range(1, _MAX_CAMPOS_RESPUESTA_FORMULARIO + 1):
+        campo = (formulario.get(f"respuesta_campo_{i}") or "").strip()
+        valor = (formulario.get(f"respuesta_valor_{i}") or "").strip()
+        if campo and valor:
+            campos[campo] = valor
+    return campos
+
+
+def _leer_datos_regla(formulario) -> DatosNuevaRegla:
+    tipo_comportamiento = (formulario.get("comportamiento_tipo") or TipoComportamiento.NORMAL.value).strip()
+    delay_bruto = (formulario.get("comportamiento_delay_ms") or "0").strip()
+    try:
+        delay_ms = int(delay_bruto) if delay_bruto else 0
+    except ValueError:
+        raise ValueError("El retardo (delay_ms) debe ser un número entero.")
+    try:
+        prioridad = int((formulario.get("prioridad") or "0").strip())
+    except ValueError:
+        raise ValueError("La prioridad debe ser un número entero.")
+    return DatosNuevaRegla(
+        nombre=(formulario.get("nombre") or "").strip(),
+        prioridad=prioridad,
+        activa=formulario.get("activa") == "on",
+        condiciones=_leer_condiciones_regla(formulario),
+        de39=(formulario.get("de39") or "").strip(),
+        campos_adicionales=_leer_campos_respuesta(formulario),
+        comportamiento=ComportamientoRegla(tipo=tipo_comportamiento, delay_ms=delay_ms),
+    )
+
+
+def _regla_host_no_encontrada(request: Request) -> HTMLResponse:
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="no_encontrado.html",
+        context={
+            "seccion": "reglas_host",
+            "titulo": "Regla no encontrada",
+            "detalle": "La regla solicitada no existe o ya no está disponible.",
+            "ruta_vuelta": "/reglas-host",
+            "texto_vuelta": "Volver a Reglas del Host",
+        },
+        status_code=404,
+    )
+
+
+async def _formulario_regla_host(
+    request: Request, composicion: Composicion, *,
+    regla_id: str | None = None, error: str | None = None,
+    valores: Mapping[str, str] | None = None, estado_http: int = 200,
+) -> HTMLResponse:
+    regla_existente = await composicion.administracion_reglas_host.obtener(regla_id) if regla_id else None
+    if regla_id and regla_existente is None:
+        return _regla_host_no_encontrada(request)
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="regla_host_form.html",
+        context={
+            "seccion": "reglas_host",
+            "regla_id": regla_id,
+            "regla": regla_existente,
+            "valores": valores or {},
+            "error": error,
+            "campos_disponibles": presentacion.campos_disponibles_para_reglas(
+                composicion.perfil, composicion.descripciones_de_campos
+            ),
+            "operadores": ["igual", "distinto", "mayor_que", "menor_que", "presente", "ausente"],
+            "comportamientos": [t.value for t in TipoComportamiento],
+            "rango_condiciones": range(1, _MAX_CONDICIONES_FORMULARIO + 1),
+            "rango_campos_respuesta": range(1, _MAX_CAMPOS_RESPUESTA_FORMULARIO + 1),
+        },
+        status_code=estado_http,
+    )
+
+
+@enrutador.get("/reglas-host", response_class=HTMLResponse)
+async def reglas_host_lista(request: Request, composicion: Composicion = Depends(obtener_composicion)):
+    reglas = await composicion.administracion_reglas_host.listar()
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="reglas_host.html",
+        context={
+            "seccion": "reglas_host",
+            "filas": [presentacion.fila_de_regla_host(r) for r in reglas],
+        },
+    )
+
+
+@enrutador.get("/reglas-host/nueva", response_class=HTMLResponse)
+async def regla_host_nueva(request: Request, composicion: Composicion = Depends(obtener_composicion)):
+    return await _formulario_regla_host(request, composicion)
+
+
+@enrutador.post("/reglas-host/nueva", response_class=HTMLResponse)
+async def regla_host_crear(request: Request, composicion: Composicion = Depends(obtener_composicion)):
+    formulario = await request.form()
+    try:
+        datos = _leer_datos_regla(formulario)
+        await composicion.administracion_reglas_host.crear(datos)
+    except ValueError as error:
+        return await _formulario_regla_host(
+            request, composicion, error=str(error), valores=formulario, estado_http=400
+        )
+    return RedirectResponse("/reglas-host", status_code=303)
+
+
+@enrutador.get("/reglas-host/{regla_id}/editar", response_class=HTMLResponse)
+async def regla_host_editar(
+    request: Request, regla_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    return await _formulario_regla_host(request, composicion, regla_id=regla_id)
+
+
+@enrutador.post("/reglas-host/{regla_id}/editar", response_class=HTMLResponse)
+async def regla_host_actualizar(
+    request: Request, regla_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    formulario = await request.form()
+    try:
+        datos = _leer_datos_regla(formulario)
+        await composicion.administracion_reglas_host.actualizar(regla_id, datos)
+    except ReglaHostNoEncontrada:
+        return _regla_host_no_encontrada(request)
+    except ValueError as error:
+        return await _formulario_regla_host(
+            request, composicion, regla_id=regla_id, error=str(error),
+            valores=formulario, estado_http=400,
+        )
+    return RedirectResponse("/reglas-host", status_code=303)
+
+
+@enrutador.post("/reglas-host/{regla_id}/estado", response_class=HTMLResponse)
+async def regla_host_estado(
+    request: Request, regla_id: str, activa: str = Form(""),
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    try:
+        activa_bool = presentacion.validar_activa(activa)
+    except ValueError:
+        return _regla_host_no_encontrada(request)
+    try:
+        await composicion.administracion_reglas_host.cambiar_estado(regla_id, activa=activa_bool)
+    except ReglaHostNoEncontrada:
+        return _regla_host_no_encontrada(request)
+    return RedirectResponse("/reglas-host", status_code=303)
+
+
+@enrutador.post("/reglas-host/{regla_id}/duplicar", response_class=HTMLResponse)
+async def regla_host_duplicar(
+    request: Request, regla_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    try:
+        await composicion.administracion_reglas_host.duplicar(regla_id)
+    except ReglaHostNoEncontrada:
+        return _regla_host_no_encontrada(request)
+    return RedirectResponse("/reglas-host", status_code=303)
 
 
 @enrutador.get("/secuencias", response_class=HTMLResponse)

@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-14 (C3 — Control de flujo avanzado de secuencias)
+**Última actualización:** 2026-09-14 (D1 — Motor de reglas del Host Simulado)
 
 ## Estado actual
 
@@ -43,8 +43,8 @@ de paso de C2 (protegido explícitamente)-. Interactivo: dos botones diferenciad
 Historial, tabla de derivadas distingue cada operación. Sin UI de secuencias para esto (mismo
 criterio que C2).
 
-**C3 — Control de flujo avanzado de secuencias** (`feature/secuencias-c3-control-flujo`, commits
-`f5c9821`/`aa972c6`/`171129d`/`ec7bd2b`/`282fcab`, sin mergear todavía): investigación previa
+**C3 — Control de flujo avanzado de secuencias** (integrado a `main`, merge `a7be884`; commits
+`f5c9821`/`aa972c6`/`171129d`/`ec7bd2b`/`282fcab`/`06e4957`): investigación previa
 (4 agentes read-only) reveló que el bucle de `EjecutorDeSecuencia._correr` nunca se detuvo por
 sí mismo desde C1 -lo que parecía "detenerse" era siempre el efecto emergente de un paso
 DERIVADO sin contexto válido (`BLOQUEADO`)-, lo que fija `CONTINUAR` (no `DETENER`) como default
@@ -61,8 +61,26 @@ tras timeout); solo admitido para un paso Echo, con auditoría de cada intento e
 UI: sin controles nuevos en `/secuencias/nueva` (mismo criterio que C2/B8); tabla nueva de
 intentos en el detalle de una corrida, verificada en navegador real.
 
-Detalle completo (reportes A-N/A-L/A-O/A-N) en `docs/roadmap/SIBU_3.md` secciones 9, 10, 11, 12
-y 13; decisiones de gobernanza en `BITACORA.md`. Suite completa: **1421 passed, 0 skipped**.
+**D1 — Motor de reglas del Host Simulado** (`feature/host-simulator-d1-rules-engine`, commits
+`8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`, sin mergear todavía): decisión de
+alcance explícita -el roadmap registraba un diseño previo (YAML, sin persistencia ni UI); el
+propietario confirmó, consultado antes de implementar, continuar con SQLite + UI dentro de D1,
+reemplazando esa nota-. `domain/reglas_host.py`: `ReglaHost`/`CondicionRegla`/`RespuestaRegla`/
+`ComportamientoRegla`, todo inmutable, reutilizando el vocabulario de `ExpectativaCampo`
+(igual/presente/ausente) + distinto/mayor_que/menor_que -nunca `eval`/scripting-. Reglas ordenadas
+por prioridad, primera coincidencia gana; sin coincidencia, cae al comportamiento hardcodeado de
+siempre (nunca un error). Persistencia SQLite (config vs. auditoría en tablas separadas, nunca
+mezcladas). Seguridad: `perfil.es_sensible()` prohíbe DE2/35/45 en condición o respuesta, sin
+mitigación, mismo criterio que C2/B6. Comportamientos NORMAL/DELAY/TIMEOUT/DISCONNECT -TIMEOUT
+reutiliza `responder=False`/`_apagado` ya existente; DISCONNECT cierra el socket de inmediato,
+distinto de timeout-. Migración de la regla sintética de rechazo por monto (B4) al motor nuevo,
+con test de caracterización (resultado idéntico, 5 montos incluido el límite exacto). Integración
+real con el retry de Echo de C3 (una regla de timeout lo activa de verdad, sin test doubles).
+Hallazgo corregido en la verificación de navegador: el selector de campo exponía claves
+estructurales del bitmap ("h"/"p"/"t") como si fueran campos ISO reales.
+
+Detalle completo (reportes A-N/A-L/A-O/A-N/A-O) en `docs/roadmap/SIBU_3.md` secciones 9, 10, 11,
+12, 13 y 14; decisiones de gobernanza en `BITACORA.md`. Suite completa: **1493 passed, 0 skipped**.
 
 **Estado anterior a Fase B (2026-09-09):**
 
@@ -413,13 +431,12 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-**C3 (control de flujo avanzado de secuencias) está completo en
-`feature/secuencias-c3-control-flujo`, sin mergear a `main` — pendiente de aprobación del
-propietario.** B8 ya fue aprobado e integrado a `main` (`9a7dd32`) antes de abrir C3. Próximo
-paso propuesto en el checkpoint (`docs/roadmap/SIBU_3.md` sección 13.N): **C4** (capacidades
-adicionales de secuencia) o **Fase D** (Host Simulator 2.0) — C3 tampoco tocó `HostSimulado`
-(salvo alternar, desde una prueba, un atributo ya existente), misma señal que B8 de que el
-simulador actual todavía tiene margen. Decisión pendiente del propietario.
+**D1 (motor de reglas del Host Simulado) está completo en
+`feature/host-simulator-d1-rules-engine`, sin mergear a `main` — pendiente de aprobación del
+propietario.** C3 ya fue aprobado e integrado a `main` (`a7be884`) antes de abrir D1. Próximo
+paso propuesto en el checkpoint (`docs/roadmap/SIBU_3.md` sección 14.O): **D2** (reglas con
+estado: `visto_antes`/contadores), **C4** (capacidades adicionales de secuencia), o **Fase E**
+(Client/Server/Proxy). Decisión pendiente del propietario.
 
 Las cinco mejoras funcionales pedidas el 2026-09-07 (ver «Estado actual» e «Historial de
 avances») están implementadas y verificadas, pero **sin commit ni push todavía** -queda para

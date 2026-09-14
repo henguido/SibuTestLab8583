@@ -33,6 +33,7 @@ from ..domain.modelos import (
     MensajeIso,
     ResultadoCompra,
 )
+from ..domain.reglas_host import CAMPO_MTI, ReglaHost
 from .operaciones import OPERACIONES_CON_TARJETA
 
 #: Valores admitidos para el filtro de evaluacion del historial. "" significa
@@ -185,6 +186,9 @@ GRUPOS_NAV: tuple[GrupoNav, ...] = (
         Seccion("corridas", "/suites/corridas", "Corridas"),
         Seccion("secuencias", "/secuencias", "Secuencias"),
         Seccion("corridas_secuencia", "/secuencias/corridas", "Corridas de secuencia"),
+    )),
+    GrupoNav("Host Simulado", (
+        Seccion("reglas_host", "/reglas-host", "Reglas del Host"),
     )),
     GrupoNav("Configuración", (
         Seccion("conexiones", "/configuracion/conexiones", "Conexiones"),
@@ -1415,3 +1419,91 @@ def contexto_de_comparacion(comparacion, descripciones: Mapping[str, str]) -> di
         ),
         "filas": [fila_de_comparacion_item(item, descripciones) for item in comparacion.items],
     }
+
+
+# ==================================================== REGLAS DEL HOST === #
+#
+# Fase D1 (2026-09-14). Mismo patron de traduccion dominio->plantilla que
+# el resto de este modulo: nunca se decide aqui si un campo es sensible o
+# si una regla es valida (eso es `domain.reglas_host`), solo se arma lo que
+# la plantilla necesita para mostrarse.
+
+#: Simbolo legible por operador -para el resumen de una regla en la lista,
+#: nunca para volver a evaluarla.
+_ETIQUETA_OPERADOR: Mapping[str, str] = {
+    "igual": "=",
+    "distinto": "≠",
+    "mayor_que": ">",
+    "menor_que": "<",
+    "presente": "presente",
+    "ausente": "ausente",
+}
+
+
+@dataclass(frozen=True)
+class CampoDisponibleParaRegla:
+    """Una opcion del <select> de "campo" en el editor de condiciones o de
+    respuesta -ya excluye campos sensibles, misma autoridad que
+    `perfil.es_sensible()` (nunca una lista propia)."""
+
+    numero: str
+    descripcion: str
+
+
+def campos_disponibles_para_reglas(
+    perfil, descripciones: Mapping[str, str]
+) -> Sequence[CampoDisponibleParaRegla]:
+    """Mismo criterio que `domain.expectativas.campos_permitidos_expectativa`:
+    solo campos ISO reales (`n.isdigit()`, nunca las claves estructurales
+    "h"/"t"/"p"/"1" del bitmap) y nunca sensibles (`perfil.es_sensible()`)."""
+    disponibles = [CampoDisponibleParaRegla(numero=CAMPO_MTI, descripcion="MTI (tipo de mensaje)")]
+    for numero in sorted(perfil.especificacion, key=lambda n: (len(n), n)):
+        if not numero.isdigit() or perfil.es_sensible(numero):
+            continue
+        disponibles.append(
+            CampoDisponibleParaRegla(numero=numero, descripcion=descripciones.get(numero, f"Campo {numero}"))
+        )
+    return disponibles
+
+
+def _etiqueta_campo(numero: str) -> str:
+    return "MTI" if numero == CAMPO_MTI else f"DE{numero}"
+
+
+@dataclass(frozen=True)
+class FilaReglaHost:
+    """Una fila de la lista de Reglas del Host -resumen de solo lectura,
+    nunca la fuente de verdad (esa es `ReglaHost`, ver `domain.reglas_host`)."""
+
+    regla_id: str
+    nombre: str
+    prioridad: int
+    activa: bool
+    resumen_condiciones: str
+    resumen_respuesta: str
+    comportamiento: str
+
+
+def fila_de_regla_host(regla: ReglaHost) -> FilaReglaHost:
+    resumen_condiciones = " Y ".join(
+        f"{_etiqueta_campo(c.campo)} {_ETIQUETA_OPERADOR.get(c.operador, c.operador)}"
+        + (f" {c.valor}" if c.valor is not None else "")
+        for c in regla.condiciones
+    )
+    resumen_respuesta = f"DE39={regla.respuesta.de39}"
+    if regla.respuesta.campos_adicionales:
+        resumen_respuesta += " + " + ", ".join(
+            f"DE{numero}={valor}" for numero, valor in regla.respuesta.campos_adicionales.items()
+        )
+    comportamiento = regla.comportamiento.tipo
+    if regla.comportamiento.tipo == "delay":
+        comportamiento = f"delay ({regla.comportamiento.delay_ms} ms)"
+    return FilaReglaHost(
+        regla_id=regla.regla_id,
+        nombre=regla.nombre,
+        prioridad=regla.prioridad,
+        activa=regla.activa,
+        resumen_condiciones=resumen_condiciones,
+        resumen_respuesta=resumen_respuesta,
+        comportamiento=comportamiento,
+    )

@@ -3091,5 +3091,50 @@ de esas operaciones a nivel de dominio-. Solo se admite `max_retries > 0` para u
 nuevos). Migración aditiva (`on_error`/`on_qa_fail`/`max_retries` + tabla de intentos) aplicada
 con backup contra la base de desarrollo real (`sibutestlab8583.db.bak-preC3-*`), 9 secuencias y
 11 corridas existentes preservadas, `PRAGMA foreign_key_check` vacío. Commits:
-`f5c9821`/`aa972c6`/`171129d`/`ec7bd2b`/`282fcab`. Sin merge a `main` — pendiente de aprobación
-del propietario. Reporte completo (secciones A-N) en `docs/roadmap/SIBU_3.md` sección 13.
+`f5c9821`/`aa972c6`/`171129d`/`ec7bd2b`/`282fcab`. Reporte completo (secciones A-N) en
+`docs/roadmap/SIBU_3.md` sección 13. Integrado a `main` en `a7be884` tras la aprobación del
+propietario (2026-09-14).
+
+## 2026-09-14 — D1: Motor de reglas del Host Simulado
+
+**Decisión de alcance, documentada explícitamente:** el roadmap ya registraba un diseño previo de
+una jornada anterior para Fase D (motor en YAML, sin persistencia ni UI en ninguna subfase). Antes
+de implementar, se consultó al propietario sobre este conflicto -el encargo actual pedía
+explícitamente evaluar SQLite y construir una UI dentro de D1-. El propietario confirmó continuar
+con el alcance del encargo actual, que reemplaza esa nota del roadmap. Se documenta aquí para que
+la razón del cambio quede trazable, no como una decisión tomada en silencio.
+
+**Modelo:** `domain/reglas_host.py` reutiliza el vocabulario de `ExpectativaCampo`
+(`igual`/`presente`/`ausente`) y agrega `distinto`/`mayor_que`/`menor_que` -sin regex, sin
+expresiones booleanas arbitrarias, sin `eval`/`exec`-. Reglas ordenadas por prioridad, primera
+coincidencia gana; sin ninguna coincidencia, el host cae al comportamiento hardcodeado de siempre
+(nunca un error). Persistencia en SQLite (dos tablas aditivas: configuración de la regla, y
+auditoría de qué regla gobernó cada mensaje real -deliberadamente separadas, nunca la misma
+tabla-).
+
+**Seguridad:** `perfil.es_sensible()` -misma autoridad que C2/B6- prohíbe cualquier condición o
+campo de respuesta sobre DE2/DE35/DE45, sin mitigación intermedia, verificado siempre al guardar
+la regla. Ningún mensaje de error ni evento de auditoría incluye el valor real de un campo.
+
+**Hallazgo real, corregido durante la verificación en navegador:** el selector de "campo" en el
+editor de condiciones ofrecía las claves estructurales del bitmap ("Campo h"/"Campo p"/"Campo t")
+como si fueran campos ISO reales -no filtraba por `numero.isdigit()`, a diferencia de
+`campos_permitidos_expectativa`, que sí lo hace-. Corregido antes de continuar.
+
+**Migración de la regla sintética existente** (rechazo por monto en compra financiera, B4):
+expresada como dos reglas del motor nuevo (rechazo + aprobación por defecto, usando el orden de
+prioridad para reemplazar el `else` original), con un test de caracterización que confirma
+resultado idéntico al camino hardcodeado en cinco montos, incluido el límite exacto del umbral. No
+se activó automáticamente en ningún lado -queda disponible para adopción explícita más adelante-.
+
+**Integración con C3:** una regla D1 de timeout activa de verdad el retry de Echo que C3 ya
+construyó (sin reglas con estado: se alterna la regla ya cargada en el host real entre intentos,
+mismo criterio ya usado para alternar `responder=False` en las pruebas de C3).
+
+**Tests:** 1426 passed al abrir D1 (tras integrar C3) → 1493 passed / 0 skipped al cerrar (67
+nuevos). Migración aditiva (dos tablas nuevas) aplicada con backup contra la base de desarrollo
+real (`sibutestlab8583.db.bak-preD1-*`), 10 secuencias y 12 corridas existentes preservadas,
+`PRAGMA foreign_key_check` vacío. Commits:
+`8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`. Sin merge a `main` — pendiente de
+aprobación del propietario. Reporte completo (secciones A-O) en `docs/roadmap/SIBU_3.md`
+sección 14.

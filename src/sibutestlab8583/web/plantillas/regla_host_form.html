@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal %}
+{% block titulo %}{{ 'Editar regla' if regla_id else 'Nueva regla' }} · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+<nav class="migas" aria-label="Ruta de navegación">
+  <a href="/reglas-host">Reglas del Host</a>
+  <span class="migas__separador" aria-hidden="true">/</span>
+  <span class="migas__actual">{{ 'Editar regla' if regla_id else 'Nueva regla' }}</span>
+</nav>
+<h1>{{ 'Editar regla' if regla_id else 'Nueva regla' }}</h1>
+<p class="encabezado__sub">
+  Todas las condiciones deben cumplirse a la vez (Y). La primera regla activa, en orden de
+  prioridad (menor primero), cuyas condiciones coincidan, gobierna la respuesta.
+</p>
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise la solicitud</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+{% set v = valores or {} %}
+{% set r = regla %}
+<form method="post" action="{{ '/reglas-host/' ~ regla_id ~ '/editar' if regla_id else '/reglas-host/nueva' }}" class="panel">
+  <div class="panel__cuerpo">
+    <div class="campo">
+      <label class="campo__rotulo" for="nombre">Nombre</label>
+      <input type="text" id="nombre" name="nombre" required
+             value="{{ v.get('nombre', r.nombre if r else '') }}">
+    </div>
+
+    <div class="campo">
+      <label class="campo__rotulo" for="prioridad">Prioridad (menor se evalúa primero)</label>
+      <input type="text" id="prioridad" name="prioridad" inputmode="numeric"
+             value="{{ v.get('prioridad', r.prioridad if r else '10') }}">
+    </div>
+
+    <div class="campo campo--casilla">
+      <input type="checkbox" id="activa" name="activa"
+             {% if (v.get('activa') == 'on') or (r.activa if r else true) %}checked{% endif %}>
+      <label for="activa">Activa</label>
+    </div>
+
+    <h2>Condiciones (todas deben cumplirse)</h2>
+    <div class="campo__pista">Dejar en blanco una fila la ignora. El campo "MTI" compara el tipo de mensaje.</div>
+    <div class="desplazable" tabindex="0" role="region" aria-label="Condiciones">
+      <table class="tabla">
+        <thead><tr><th>Campo</th><th>Operador</th><th>Valor</th></tr></thead>
+        <tbody>
+          {% for i in rango_condiciones %}
+          {% set cond = r.condiciones[i-1] if r and r.condiciones|length >= i else none %}
+          <tr>
+            <td>
+              <select name="condicion_campo_{{ i }}" class="campo-tabla">
+                <option value="">—</option>
+                {% for candidato in campos_disponibles %}
+                <option value="{{ candidato.numero }}"
+                  {{ 'selected' if v.get('condicion_campo_' ~ i, cond.campo if cond else '') == candidato.numero else '' }}>
+                  {{ candidato.descripcion }}
+                </option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <select name="condicion_operador_{{ i }}" class="campo-tabla">
+                <option value="">—</option>
+                {% for op in operadores %}
+                <option value="{{ op }}"
+                  {{ 'selected' if v.get('condicion_operador_' ~ i, cond.operador if cond else '') == op else '' }}>
+                  {{ op }}
+                </option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <input type="text" name="condicion_valor_{{ i }}" class="campo-tabla"
+                     value="{{ v.get('condicion_valor_' ~ i, (cond.valor or '') if cond else '') }}">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Respuesta</h2>
+    <div class="campo">
+      <label class="campo__rotulo" for="de39">Código de respuesta (DE39)</label>
+      <input type="text" id="de39" name="de39" required
+             value="{{ v.get('de39', r.respuesta.de39 if r else '00') }}">
+    </div>
+
+    <div class="campo__pista">
+      Campos adicionales de la respuesta (opcional). Un valor puede ser un literal, o
+      <span class="mono">@stan_request</span> / <span class="mono">@datetime_now</span> /
+      <span class="mono">@authorization_from_stan</span>.
+    </div>
+    <div class="desplazable" tabindex="0" role="region" aria-label="Campos de respuesta">
+      <table class="tabla">
+        <thead><tr><th>Campo</th><th>Valor</th></tr></thead>
+        <tbody>
+          {% for i in rango_campos_respuesta %}
+          {% set entradas = (r.respuesta.campos_adicionales.items()|list) if r else [] %}
+          {% set entrada = entradas[i-1] if entradas|length >= i else none %}
+          <tr>
+            <td>
+              <select name="respuesta_campo_{{ i }}" class="campo-tabla">
+                <option value="">—</option>
+                {% for candidato in campos_disponibles if candidato.numero != 'mti' %}
+                <option value="{{ candidato.numero }}"
+                  {{ 'selected' if v.get('respuesta_campo_' ~ i, entrada[0] if entrada else '') == candidato.numero else '' }}>
+                  {{ candidato.descripcion }}
+                </option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <input type="text" name="respuesta_valor_{{ i }}" class="campo-tabla"
+                     value="{{ v.get('respuesta_valor_' ~ i, (entrada[1] if entrada else '')) }}">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Comportamiento</h2>
+    <div class="campo">
+      <label class="campo__rotulo" for="comportamiento_tipo">Tipo</label>
+      <select id="comportamiento_tipo" name="comportamiento_tipo">
+        {% for c in comportamientos %}
+        <option value="{{ c }}" {{ 'selected' if v.get('comportamiento_tipo', r.comportamiento.tipo if r else 'normal') == c else '' }}>
+          {{ c }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo">
+      <label class="campo__rotulo" for="comportamiento_delay_ms">Retardo (ms, solo para "delay")</label>
+      <input type="text" id="comportamiento_delay_ms" name="comportamiento_delay_ms" inputmode="numeric"
+             value="{{ v.get('comportamiento_delay_ms', r.comportamiento.delay_ms if r else '0') }}">
+    </div>
+
+    <button class="boton" type="submit">Guardar</button>
+  </div>
+</form>
+<a class="volver" href="/reglas-host">&larr; Reglas del Host</a>
+{% endblock %}

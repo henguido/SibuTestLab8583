@@ -23,7 +23,8 @@ qué fase está en qué estado:
 | C — Secuencias transaccionales, subfase C1 (infraestructura mínima: 0200 → 0400 dependiente) | **IMPLEMENTADA**, integrada a `main` (merge `989991e`) |
 | C — Secuencias transaccionales, subfase C2 (contexto y variables entre pasos: `{{step.<id>...}}`) | **IMPLEMENTADA**, integrada a `main` (merge `04372ba`) |
 | B — Modelo multi-MTI, subfase B8 (aviso de reverso, 0420/0430) | **IMPLEMENTADA**, integrada a `main` (merge `9a7dd32`) |
-| C — Secuencias transaccionales, subfase C3 (política de continuación STOP/CONTINUE, expectativas dinámicas, retry mínimo seguro) | **IMPLEMENTADA** en `feature/secuencias-c3-control-flujo` (commits `f5c9821`/`aa972c6`/`171129d`/`ec7bd2b`/`282fcab`, sin mergear a `main`, en revisión) |
+| C — Secuencias transaccionales, subfase C3 (política de continuación STOP/CONTINUE, expectativas dinámicas, retry mínimo seguro) | **IMPLEMENTADA**, integrada a `main` (merge `a7be884`) |
+| D — Host Simulator 2.0, subfase D1 (motor de reglas declarativas, persistencia SQLite, UI) | **IMPLEMENTADA** en `feature/host-simulator-d1-rules-engine` (commits `8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`, sin mergear a `main`, en revisión) |
 | D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
@@ -460,31 +461,32 @@ pasos de un mismo flujo, ni un DSL completo de scripting.
 **Objetivo:** reglas declarativas por contenido de solicitud, en vez de un único comportamiento
 global fijo.
 
-**Diseño ya disponible** (Agente 4, sin código): motor de reglas en YAML, evaluado por conexión,
-primera-coincidencia-gana (sin pesos ni "más específica gana"); reutiliza el vocabulario de
-operadores ya existente en `domain/expectativas.py` (`igual`/`presente`/`ausente`), agrega
-`mayor_que`/`menor_que` para montos y `visto_antes` (con estado inyectado, nunca global) para
-duplicados; el modo actual (`--codigo`, sin archivo de reglas) sigue funcionando idéntico como
-caso particular de "una sola regla default".
+**Diseño previo** (Agente 4, jornada anterior, sin código): motor de reglas en YAML, sin
+persistencia ni UI en ninguna subfase. **Superado explícitamente por el propietario al abrir D1**
+(2026-09-14): D1 pasó a incluir modelo + matching + persistencia SQLite + UI + integración con
+`HostSimulado`, en un solo bloque -ver checkpoint D1, sección 14, punto B, para el detalle de la
+decisión-. Las subfases D2/D3 de abajo quedan como estaban, sin tocar todavía.
 
-**Prerrequisito bloqueante:** QA-002 (agregar test dedicado para `adapters/host_simulado/cli.py`
-antes de modificarlo) — único gap de cobertura real detectado en la auditoría de calidad.
+**Prerrequisito bloqueante (D0):** QA-002 (agregar test dedicado para `adapters/host_simulado/
+cli.py` antes de modificarlo) — **CERRADO**, ver tabla de fases arriba (`D0 — cobertura de
+host_simulado/cli.py`, IMPLEMENTADA).
 
 **Subfases:**
 
 | Subfase | Objetivo | Depende de |
 |---|---|---|
 | D0 | Cerrar QA-002: test de `_argumentos()` de `cli.py`, sin ningún cambio de comportamiento | Ninguno — puede hacerse ya, independiente de esta fase |
-| D1 | `domain/reglas_host.py` puro (`CondicionCampo`, `ReglaHost`, `evaluar_reglas`), solo operadores `igual`/`presente`/`ausente`/`mayor_que`/`menor_que` (sin `visto_antes` todavía) | D0 |
-| D2 | Carga/validación de YAML, wiring en `HostSimulado`/`cli.py` (`--reglas` opcional, compatibilidad total sin el flag) | D1 |
-| D3 | `visto_antes` (duplicados) y los 3 modos de falla que no requieren estado (`sin_respuesta`, `cerrar_sin_responder`, `bytes_invalidos`) | D2 |
+| D1 | Modelo de reglas (`domain/reglas_host.py`), matching, persistencia SQLite, integración con `HostSimulado`, UI, migración de la regla sintética existente | D0 |
+| D2 | `visto_antes` (duplicados) y reglas con estado -deliberadamente NO incluido en D1, ver checkpoint sección 14.G- | D1 |
+| D3 | Los 3 modos de falla que todavía no requieren estado y no se cubrieron en D1 (`bytes_invalidos`, remapeo de campo en `copiar`, regex/rangos combinados si hay necesidad demostrable) | D2 |
 
 **Confirmado por el diseño:** ninguno de los 5 fallos simulados requiere cambios en el lado
 cliente — `TiempoAgotado`, `FalloDeTransmision`, `ErrorDeDecodificacion`→`INVALIDA`, `RECHAZADA`
 vía catálogo ya cubren los 5 casos.
 
-**NO se implementa en Fase D:** regex/rangos combinados, prioridad por especificidad, remapeo de
-campo en `copiar`, persistir el archivo de reglas en SQLite, UI web de edición de reglas.
+**NO se implementó en D1:** regex/rangos combinados, prioridad por especificidad, remapeo de
+campo en `copiar`, reglas con estado (`visto_antes`/contadores), respuesta ISO malformada
+arbitraria, proxy, load, EMV, crypto -ver checkpoint sección 14 para el detalle completo-.
 
 ### Fase E — Client / Server / Proxy
 
@@ -1329,12 +1331,132 @@ seguridad. Fase A, B6, B7, C1, C2, B8 intactas (sus propias suites pasan sin mod
 
 **M. Commits:** `f5c9821` (C3.1-C3.2: modelo de política, migración, motor STOP/CONTINUE),
 `aa972c6` (C3.3: E2E real + tabla de verdad), `171129d` (C3.4: expectativas dinámicas), `ec7bd2b`
-(C3.5: retry mínimo seguro), `282fcab` (C3.6: UI de intentos). **No mergeado a `main`** — queda en
-`feature/secuencias-c3-control-flujo`, pendiente de revisión del propietario.
+(C3.5: retry mínimo seguro), `282fcab` (C3.6: UI de intentos), `06e4957` (C3.7: seguridad/docs).
+Integrado a `main` en `a7be884` tras la aprobación del propietario (2026-09-14).
 
-**N. Próximo paso:** dos caminos disponibles, ninguno bloqueado por el otro — **C4** (capacidades
-adicionales de secuencia: data-driven, comparación de corridas) o **Fase D — Host Simulator
-2.0**. C3 no tocó `HostSimulado` en absoluto (salvo alternar, desde una prueba, un atributo ya
-existente): la misma señal de B8 se repite — el motor de secuencias sigue generalizando bien,
-mientras el simulador actual sigue sin mostrar necesidad real de una versión 2.0. Decisión
-pendiente del propietario.
+**N. Próximo paso:** decidido por el propietario -**Fase D, Host Simulator 2.0**- sobre C4. Ver
+checkpoint D1 en la sección 14.
+
+## 14. Checkpoint D1 — Motor de reglas del Host Simulado
+
+**Estado: COMPLETO para el alcance acordado.** Rama `feature/host-simulator-d1-rules-engine`,
+commits `8fcbb36` (D1.1-D1.2: modelo puro + matching), `791fa6b` (D1.3: persistencia SQLite),
+`39c4215` (D1.4: integración en `HostSimulado`), `f6da670` (D1.5: migración de la regla sintética),
+`d4538f9` (D1.6: UI), `4a498bf` (D1.7a: integración con retry de C3). **No mergeado a `main`** —
+queda en la rama, pendiente de revisión del propietario.
+
+**A. Integración de C3:** confirmada antes de abrir D1 — `main`/`origin/main` en `a7be884`. Suite
+completa reconciliada: 1424 passed + 2 skipped (artefacto de `PATH` del shell sin `sibu-run-suite`
+instalado) = 1426 passed/0 skipped con el `PATH` corregido — mismo hallazgo ya documentado en
+C2/B8/C3, confirmado explícitamente de nuevo antes de continuar. Base de datos real verificada
+(columnas `on_error`/`on_qa_fail`/`max_retries` presentes, tabla de intentos presente, defaults
+`continuar`/`continuar` en pasos existentes, `PRAGMA foreign_key_check` vacío). Cuatro smokes
+reales post-merge: (1) secuencia 0200→0400, (2) STOP ante FAIL QA, (3) CONTINUE con paso posterior
+independiente (resultado global FAIL, no "el último paso gana"), (4) retry de Echo mostrando
+múltiples intentos. `git push origin main`: `HEAD` == `origin/main` == `a7be884`.
+
+**B. Investigación y una decisión de alcance explícita:** cuatro agentes read-only (host actual,
+diseño del motor de reglas, seguridad, UX) antes de escribir código. Hallazgo relevante del agente
+de diseño: el roadmap ya registraba un diseño previo de una jornada anterior para Fase D (YAML,
+sin persistencia ni UI en ninguna subfase). El propietario, consultado explícitamente sobre este
+conflicto de alcance antes de implementar, confirmó continuar con lo pedido en este encargo —D1
+incluye persistencia SQLite y UI, reemplazando esa nota del roadmap—, documentado aquí para que
+quede trazable la razón del cambio.
+
+**C. Modelo de reglas — entidades:** `domain/reglas_host.py` (nuevo). `CondicionRegla(campo,
+operador, valor)` reutiliza el vocabulario de `ExpectativaCampo` (`igual`/`presente`/`ausente`) y
+agrega `distinto`/`mayor_que`/`menor_que`. `RespuestaRegla(de39, campos_adicionales)` declara solo
+las diferencias sobre la base correlacionada que el host ya arma. `ComportamientoRegla(tipo,
+delay_ms)` con cuatro tipos (`normal`/`delay`/`timeout`/`disconnect`), límites explícitos
+(`delay_ms` entre 0 y 10 000, nunca negativo). `ReglaHost(nombre, prioridad, activa, condiciones,
+respuesta, comportamiento, regla_id)`, todo inmutable. Reglas como DATOS: sin `eval`/`exec`/
+scripting embebido — investigado y prohibido explícitamente, nunca solo una lista de cortesía.
+
+**D. Matching — operadores:** `evaluar_reglas` ordena por prioridad ascendente (menor primero) y
+devuelve la primera regla activa cuyas condiciones todas coincidan (AND implícito, sin OR/grupos/
+NOT complejo). `mayor_que`/`menor_que` comparan como `Decimal` (nunca lexicográfico); un campo no
+numérico o ausente simplemente no coincide, nunca una excepción sin controlar. El pseudo-campo
+`mti` compara el tipo de mensaje sin pasar por el perfil.
+
+**E. Prioridad/default:** determinista (orden ascendente de prioridad; una regla inactiva nunca
+gana). Sin ninguna regla coincidente, el host cae al comportamiento DEFAULT: el `if/elif`
+hardcodeado de siempre (`_construir_respuesta`), preservado sin ningún cambio — nunca un error.
+
+**F. Acciones — response/delay/timeout/disconnect:** `_aplicar_regla` construye la respuesta sobre
+la misma base correlacionada que ya usa el camino default (`campos_de_correlacion`, extraído a un
+helper compartido). `GeneradorValor` (`stan_request`/`datetime_now`/`authorization_from_stan`), un
+Enum cerrado marcado con prefijo `@`, nunca un lenguaje de templates. `TIMEOUT` reutiliza el
+mecanismo ya existente de `responder=False`/`_apagado` (nunca un `sleep` fijo, decisión por mensaje
+en vez de una bandera fija de todo el host); `DISCONNECT` cierra el socket de inmediato sin
+escribir nada — distinto de `TIMEOUT`, confirmado con un test que verifica que el cliente nunca lo
+confunde con una aprobación ni con un timeout.
+
+**G. Persistencia — decisión:** SQLite (autorizado explícitamente, ver punto B), no YAML. Dos
+tablas nuevas y aditivas: `reglas_host` (configuración; condiciones/campos adicionales en JSON,
+mismo criterio ya usado para `expectativas_json`) y `reglas_host_eventos` (auditoría de qué regla
+—o ninguna— gobernó una respuesta real, deliberadamente sin FK hacia `ejecuciones` del cliente y
+sin guardar nunca el valor de ningún campo del mensaje). Reglas con estado (`visto_antes`,
+contadores) NO se implementaron: es exactamente lo que el propietario pidió dejar fuera de D1
+(puntos 30/40 del encargo) para no deformar el alcance con complejidad de estado compartido entre
+intentos.
+
+**H. Seguridad — campos prohibidos:** `perfil.es_sensible()` (misma autoridad que C2/B6, nunca una
+lista nueva) gatea tanto condiciones como campos de respuesta, verificado SIEMPRE al guardar
+(`validar_regla`) — DE2/DE35/DE45 rechazados sin excepción, ni siquiera para comparar. Ningún
+mensaje de error incluye el valor real de un campo, solo el nombre y el motivo. El `<select>` de
+"elegir campo" en la UI excluye estructuralmente los mismos campos (nunca aparecen como opción).
+Los eventos de auditoría nunca registran el valor de ningún campo del mensaje — solo qué regla, con
+qué prioridad, y qué respondió.
+
+**I. UI — recorrido:** decisión deliberada (mismo criterio que C2/B8-secuencias/C3-intentos): un
+formulario enfocado, filas fijas para condiciones/campos de respuesta (sin "+Agregar campo"
+incremental), sin drag-and-drop (confirmado ausente del proyecto). Verificado en el navegador real
+contra la base de datos de desarrollo (migrada primero, backup `sibutestlab8583.db.bak-preD1-*`,
+10 secuencias y 12 corridas preservadas, `PRAGMA foreign_key_check` limpio): crear una regla real
+(rechazo por monto vía DE4), verla en la lista con su resumen de condiciones/respuesta,
+desactivarla y reactivarla — confirmado end-to-end. Hallazgo real corregido durante esa
+verificación: el `<select>` de campo ofrecía las claves estructurales del bitmap ("Campo h/p/t")
+como si fueran campos ISO reales; corregido para excluirlas (mismo criterio que
+`campos_permitidos_expectativa`).
+
+**J. Auditoría:** cada mensaje —con regla ganadora o sin ella— queda registrado en
+`reglas_host_eventos` si se configura un repositorio de eventos, con el nombre/prioridad/DE39/
+comportamiento de la regla que gobernó, nunca el contenido del mensaje.
+
+**K. E2E — casos realizados:** ocho casos reales contra `HostSimulado` (`test_host_simulado_
+reglas.py`): sin reglas el comportamiento es idéntico al de antes de D1; una regla ganadora
+gobierna la respuesta (rechazo dinámico que el umbral sintético no habría dado); ninguna regla
+coincidente cae al default; una regla inactiva nunca gana; delay real produce latencia observable;
+timeout por regla produce el mismo `TiempoAgotado` que `responder=False`; disconnect es distinto de
+timeout; los eventos quedan auditables. Cinco casos de caracterización (`test_migracion_regla_
+sintetica.py`) confirman que la regla sintética migrada produce el mismo resultado externo que el
+camino hardcodeado, incluido el límite exacto del umbral. Un caso de integración con C3 (`test_
+integracion_reglas_host_secuencias_c3.py`): una regla D1 de timeout activa de verdad el retry de
+Echo que C3 ya construyó, sin test doubles del núcleo.
+
+**L. Compatibilidad:** sin reglas configuradas (el default), `0100`/`0200`/`0400`/`0420`/`0800`
+siguen funcionando exactamente igual que antes de D1 — el `if/elif` de `_construir_respuesta` nunca
+se tocó, solo se extrajo un helper compartido (`_campos_base_correlacionados`) sin cambiar su
+comportamiento. `sibu-host-demo` sigue arrancando igual, sin argumentos nuevos —
+`composicion.host_simulado()` no se conectó a reglas todavía, decisión deliberada para esta entrega
+(punto 34 del encargo: "no romper el comando existente").
+
+**M. Tests:** 1426 passed/0 skipped al abrir D1 (tras integrar C3 y reconciliar el artefacto de
+`PATH`) → 1493 passed/0 skipped al cierre de D1 (67 nuevos: 40 de modelo/matching/seguridad puros,
+3 de migración de esquema, 7 de administración, 8 de integración con `HostSimulado`, 5 de migración
+de la regla sintética, 4 de UI web, 1 de integración con el retry de C3). Fase A, B6-B8, C1-C3
+intactas (sus propias suites pasan sin modificación).
+
+**N. Commits:** `8fcbb36` (D1.1-D1.2: modelo puro + matching), `791fa6b` (D1.3: persistencia),
+`39c4215` (D1.4: integración en `HostSimulado`), `f6da670` (D1.5: migración de la regla sintética),
+`d4538f9` (D1.6: UI), `4a498bf` (D1.7a: integración con retry de C3). No mergeado a `main` — queda
+en `feature/host-simulator-d1-rules-engine`, pendiente de revisión del propietario.
+
+**O. Próximo paso:** tres caminos disponibles, ninguno bloqueado por el otro — D2 (reglas con
+estado: `visto_antes`/contadores, simulación adversarial/stateful), C4 (data-driven u otras
+capacidades de secuencia), o Fase E (Client/Server/Proxy). D1 demostró que el motor de reglas
+generaliza bien sobre el `HostSimulado` existente sin romper ningún comportamiento previo (punto
+L), y que ya se integra de verdad con el retry de C3 (punto K) — señal de que el laboratorio tiene
+ahora una base declarativa real para simular comportamiento de host, con reglas con estado como la
+extensión natural más próxima si se necesita reproducir escenarios de duplicado/reintento más
+realistas. Decisión pendiente del propietario.
