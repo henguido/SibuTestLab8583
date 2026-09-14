@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-13 (C1 — Secuencias transaccionales, infraestructura mínima)
+**Última actualización:** 2026-09-14 (C2 — Contexto y variables entre pasos)
 
 ## Estado actual
 
@@ -16,20 +16,29 @@ tarjeta (`OperacionIso`), el modelo de operación derivada (`ejecucion_origen_id
 `Orquestador.ejecutar_reverso_financiero`, B7). DE90 investigado dos veces (B6/B7) y **no
 implementado** (falta institución receptora/DE33 en el perfil).
 
-**Fase C — Secuencias transaccionales (`feature/secuencias-c1-core`, commits `a81e080`/
-`e139522`/`f52eaf5`, sin mergear todavía):** infraestructura mínima (C1) para ejecutar una lista
-de pasos DEPENDIENTES -a diferencia de una Suite, cuyos escenarios son independientes-. Primer
-caso real soportado: paso 1 = compra financiera (escenario guardado), paso 2 = su reverso,
-automático (`PasoSecuencia.origen_tipo="derivado"` + `origen_paso_orden`). `ContextoSecuencia`
-(mapa `{orden: ejecucion_id}`, API explícita) + `EjecutorDeSecuencia` reutilizan tal cual
-`EjecutorDeEscenarios` (paso independiente) y `Orquestador.ejecutar_reverso_financiero` (paso
-derivado, B6/B7) — ningún sistema de referencias nuevo. Nuevo estado `BLOQUEADO`
-(`EstadoPasoSecuencia`): un paso derivado cuyo origen no produjo una ejecución elegible (0200
-rechazada, timeout, etc.) — nunca se finge FAIL/ERROR de algo que no se intentó. UI mínima:
-`/secuencias`, `/secuencias/nueva`, `/secuencias/corridas[/{id}]`.
+**Fase C — Secuencias transaccionales:** **C1** (infraestructura mínima) integrado a `main`
+(merge `989991e`): lista de pasos DEPENDIENTES -a diferencia de una Suite, cuyos escenarios son
+independientes-. Primer caso real: paso 1 = compra financiera (escenario guardado), paso 2 = su
+reverso, automático (`PasoSecuencia.origen_tipo="derivado"` + `origen_paso_orden`).
+`ContextoSecuencia` + `EjecutorDeSecuencia` reutilizan tal cual `EjecutorDeEscenarios` y
+`Orquestador.ejecutar_reverso_financiero` (B6/B7). Nuevo estado `BLOQUEADO`: un paso derivado
+cuyo origen no produjo una ejecución elegible -nunca se finge FAIL/ERROR-.
 
-Detalle completo (reporte A-N de B7 y de C1) en `docs/roadmap/SIBU_3.md` secciones 9 y 10;
-decisiones de gobernanza en `BITACORA.md`. Suite completa: **1330 passed, 0 skipped**.
+**C2** (`feature/secuencias-c2-contexto-variables`, commits `3fef508`/`754d1c3`/`6f0cd77`/
+`e4e0208`, sin mergear todavía): generaliza el acceso a datos de un paso anterior más allá del
+vínculo estructural fijo de C1. Sintaxis: `{{step.<paso_id>.request|response.deNN}}` y
+`{{step.<paso_id>.execution_id}}` -mismo `{{...}}` de Fase A, un SEGUNDO reconocedor
+(`application/variables_secuencia.py`) porque resuelve en otro momento del flujo, nunca una
+extensión del regex de Fase A ni un lenguaje paralelo-. `PasoSecuencia.paso_id` (identificador
+ESTABLE, distinto de `orden`) es la llave de referencia; `orden` sigue siendo la autoridad de
+precedencia temporal. Seguridad: `perfil.es_sensible()` siempre primero (DE2/DE35/DE45
+rechazados incluso si el perfil no los declara); validación de referencias (existencia,
+precedencia) al GUARDAR la definición, con defensa en profundidad en tiempo de ejecución. E2E
+real: un paso transmite de verdad, en su propio DE37, un DE38 producido por otro paso. Sin UI
+dedicada (decisión explícita: tampoco la tiene Fase A hoy).
+
+Detalle completo (reportes A-N/A-L) en `docs/roadmap/SIBU_3.md` secciones 9, 10 y 11; decisiones
+de gobernanza en `BITACORA.md`. Suite completa: **1355 passed, 0 skipped**.
 
 **Estado anterior a Fase B (2026-09-09):**
 

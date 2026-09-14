@@ -20,7 +20,8 @@ qué fase está en qué estado:
 | B — Modelo multi-MTI, subfase B5 (editor común de operaciones con tarjeta) | **IMPLEMENTADA**, integrada a `main` (merge `07b69f3`) |
 | B — Modelo multi-MTI, subfase B6 (modelo conceptual de operación derivada/reverso, SIN 0400/0410) | **IMPLEMENTADA**, integrada a `main` (merge `7c034ed`) |
 | B — Modelo multi-MTI, subfase B7 (reverso interactivo real, 0400/0410) | **IMPLEMENTADA**, integrada a `main` (merge `6a31ce3`) |
-| C — Secuencias transaccionales, subfase C1 (infraestructura mínima: 0200 → 0400 dependiente) | **IMPLEMENTADA** en `feature/secuencias-c1-core` (commits `a81e080`/`e139522`/`f52eaf5`, sin mergear a `main`, en revisión) |
+| C — Secuencias transaccionales, subfase C1 (infraestructura mínima: 0200 → 0400 dependiente) | **IMPLEMENTADA**, integrada a `main` (merge `989991e`) |
+| C — Secuencias transaccionales, subfase C2 (contexto y variables entre pasos: `{{step.<id>...}}`) | **IMPLEMENTADA** en `feature/secuencias-c2-contexto-variables` (commits `3fef508`/`754d1c3`/`6f0cd77`/`e4e0208`, sin mergear a `main`, en revisión) |
 | D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
@@ -411,12 +412,12 @@ en paralelo a B si conviene por capacidad disponible.
 
 **Subfases:**
 
-| Subfase | Objetivo | Depende de |
-|---|---|---|
-| C1 | Infraestructura mínima: `Secuencia`/`PasoSecuencia`, `ContextoSecuencia`, tablas nuevas, secuencia de 2 pasos DEPENDIENTES, sin CONTINUE_ON_FAILURE, sin retries, sin timeout de secuencia | Fase B (B6/B7 ya completas) |
-| C2 | Variables entre pasos (`{{step.N.campo}}` o sintaxis equivalente), CONTINUE_ON_FAILURE, retries por paso, timeout de paso | C1 |
-| C3 | Secuencias con más operaciones/MTIs (0420/0430 y automatización de reversos dentro de escenarios/suites) | C1, C2 si se necesitan variables |
-| C4 | Comparación de corridas de secuencia (equivalente a `comparacion_corridas.py`) | C1, al menos una corrida real que comparar |
+| Subfase | Objetivo | Depende de | Estado |
+|---|---|---|---|
+| C1 | Infraestructura mínima: `Secuencia`/`PasoSecuencia`, `ContextoSecuencia`, tablas nuevas, secuencia de 2 pasos DEPENDIENTES, sin CONTINUE_ON_FAILURE, sin retries, sin timeout de secuencia | Fase B (B6/B7 ya completas) | **COMPLETO**, integrado a `main` (`989991e`) |
+| C2 | Variables entre pasos (`{{step.<id>.request\|response.deNN}}`, `{{step.<id>.execution_id}}`) | C1 | **COMPLETO** en rama, ver checkpoint sección 11 |
+| C3 | CONTINUE_ON_FAILURE, retries por paso, timeout de paso, y/o secuencias con más operaciones/MTIs (0420/0430 y automatización de reversos dentro de escenarios/suites) | C1, C2 | Planificado — decisión de cuál priorizar pendiente (ver sección 11.L) |
+| C4 | Comparación de corridas de secuencia (equivalente a `comparacion_corridas.py`) | C1, al menos una corrida real que comparar | Planificado |
 
 **Actualización (C1, 2026-09-13): implementada, revisada contra el código real -no contra el
 diseño original de Agente 3-.** Decisión de orden del propietario: C1 se hizo **después** de B7
@@ -901,11 +902,143 @@ transaccional-vs-QA, punto priorizado tras revisar la Corrida #1 real-, 17 puros
 modelo/contexto/agregador, 5 de administración de secuencias, 2 web verticales, 2 web de humo).
 0 skipped. `git diff --check` limpio en cada commit.
 
-**M. Commits:** `a81e080` (C1.1), `e139522` (C1.2), `f52eaf5` (C1.3).
+**M. Commits:** `a81e080` (C1.1), `e139522` (C1.2), `f52eaf5` (C1.3), `69624d3` (cierre: protege
+la semántica transaccional-vs-QA, documenta la Corrida #1 real). **Integrado a `main` en el
+merge `989991e`** (2026-09-13), suite 1331 passed en verde antes y después, smoke real en
+navegador confirmado.
 
-**N. Próximo paso:** dos caminos disponibles, ninguno bloqueado por el otro — **C2** (variables
-entre pasos `{{step.N.campo}}`, CONTINUE_ON_FAILURE, retries/timeout de paso) o **0420/0430**
-sobre el motor de secuencias ya construido (reutilizaría `EjecutorDeSecuencia` con una tercera
-operación derivada, análoga a `financial_reversal`). La decisión de cuál priorizar es del
-propietario; ninguna de las dos requiere deshacer nada de C1. **No se avanzó a 0420/0430 ni a
-variables entre pasos todavía.**
+**N. Próximo paso (decidido, 2026-09-13):** el propietario eligió **C2** primero (variables
+entre pasos), dejando 0420/0430 para después. Ver checkpoint C2 en la sección 11.
+
+## 11. Checkpoint C2 — Contexto y variables entre pasos (`{{step.<id>...}}`)
+
+**Estado: COMPLETO para el alcance acordado.** Rama
+`feature/secuencias-c2-contexto-variables`, commits `3fef508` (C2.1 modelo+persistencia),
+`754d1c3` (C2.2 motor de resolución), `6f0cd77` (C2.3 integración), `e4e0208` (C2.4 tests).
+Sin mergear a `main`, pendiente de aprobación del propietario.
+
+**A. Integración C1:** confirmada antes de abrir C2 — `main`/`origin/main` en `989991e`, suite
+1331 passed en verde.
+
+**B. Sintaxis (decidida, no litigada por gusto):**
+
+```
+{{step.<paso_id>.request.<deNN>}}    campo tal como se ENVIÓ en ese paso
+{{step.<paso_id>.response.<deNN>}}   campo tal como VOLVIÓ en la respuesta
+{{step.<paso_id>.execution_id}}      metadata interna (id de fila en `ejecuciones`),
+                                       NUNCA un valor ISO — namespace separado
+```
+
+`request`/`response` son namespaces obligatorios y excluyentes (nunca ambiguo de dónde sale un
+valor, punto 7). `deNN` es el número de campo ISO en minúsculas (`de38`, nunca "DE38" ni un
+nombre de negocio). Misma gramática que Fase A: `{{` + expresión + `}}`, todo el campo o nada
+-nunca mezclado con texto literal (`ABC{{step...}}` es rechazado, igual que en Fase A)-. Vive en
+`application/variables_secuencia.py`, un SEGUNDO reconocedor (no una extensión del regex de
+`domain/variables.py`): resuelven en dos momentos distintos del flujo (referencias de paso
+ANTES de tocar el orquestador; `{{stan}}`/`{{amount}}` de siempre, DENTRO de él), nunca en el
+mismo campo a la vez.
+
+**Identidad estable de paso:** `PasoSecuencia.paso_id: str | None` (p. ej. `"purchase"`),
+DISTINTO de `orden` -si la secuencia se reordena en el futuro, una referencia por `paso_id`
+sigue apuntando al paso correcto, a diferencia de una referencia por número-. `orden` sigue
+siendo la autoridad de PRECEDENCIA temporal (una referencia solo es válida hacia un `paso_id`
+cuyo `orden` es estrictamente menor); `paso_id` es solo la llave de referencia. Generado
+automáticamente (`paso{N}`) si no se indica, para no romper la definición de C1.
+
+**C. Contexto:** `ContextoSecuencia` (C1) gana un segundo índice `{paso_id: ejecucion_id}`,
+además del `{orden: ejecucion_id}` original -coexisten a propósito, cada uno resuelve un
+mecanismo distinto (C1: `origen_paso_orden`, estructural; C2: `{{step...}}`, textual)-. API
+explícita sin cambios de filosofía: `registrar(orden, ejecucion_id, paso_id=...)` /
+`ejecucion_id_de_paso_id(paso_id)`.
+
+**D. Seguridad — whitelist:** `perfil.es_sensible(numero)` se comprueba SIEMPRE primero, antes
+de verificar si el campo está declarado en la especificación del perfil -así DE35/DE45 (ni
+siquiera declarados en `ESPECIFICACION_GENERICA`) se rechazan por `CampoDeEjecucionSensible`,
+nunca por "no existe", que sería un mensaje menos preciso para un campo que además es sensible
+por definición del estándar. Ninguna lista nueva de campos prohibidos: la misma autoridad
+consolidada en B3/B6/B7 (`domain.modelos.CAMPOS_SENSIBLES` + `perfil.campos_sensibles`).
+Adversariales reales (TCP/SQLite, `tests/test_resolver_referencia_de_paso.py`): DE2/DE35/DE45
+rechazados siempre, un campo no declarado en el perfil rechazado (`MetadataDeEjecucionDesconocida`),
+un campo ausente en ese mensaje concreto rechazado (`CampoDeEjecucionNoDisponible`, nunca
+cadena vacía), un paso inexistente rechazado (`PasoDeSecuenciaNoEjecutado`).
+
+**E. Validación de dependencias:** `ServicioSecuencias._validar_pasos` valida, AL GUARDAR la
+definición (nunca en ejecución): `paso_id` único por secuencia; toda referencia de paso
+(detectada escaneando `campos_manuales` del escenario referenciado) apunta a un `paso_id` que
+EXISTE y es ESTRICTAMENTE ANTERIOR -rechaza referencias hacia adelante, hacia sí mismo, o a un
+paso inexistente antes de que la secuencia pueda correr siquiera (puntos 10/11).
+`tests/test_validacion_referencias_de_paso.py` cubre las cinco combinaciones. Una referencia
+que se cuela DESPUÉS (un escenario editado fuera de este flujo, sin volver a pasar por
+`crear()`) sigue rechazándose en EJECUCIÓN por el motor (ver F) — defensa en profundidad, mismo
+criterio que `domain.armado.validar_campos_manuales` ya aplica para campos manuales comunes.
+
+**F. Persistencia — expresión vs. valor:** la definición (el escenario referenciado por un paso
+independiente) guarda la EXPRESIÓN `"{{step.purchase.response.de38}}"` tal cual -nunca el valor
+resuelto, misma filosofía que Fase A (`valores_efectivos_editables` ya congela expresiones sin
+resolver)-. El valor EFECTIVO que se transmitió queda auditable donde siempre: en el mensaje
+real persistido de la `Ejecucion` que produjo ese paso (`/historial/{id}`, Isoscopio). Limitación
+conocida y documentada, no resuelta en C2: la corrida no guarda aparte "qué expresión estaba
+configurada en el momento de correr" -si el escenario se edita después, la corrida histórica
+sigue mostrando el valor YA TRANSMITIDO (correcto, inmutable), pero no hay una segunda copia de
+la expresión textual en la fila de corrida. Mismo nivel de evidencia que ya acepta Suites hoy
+para escenarios reutilizados; no se amplía en C2 sin evidencia de que haga falta.
+
+**G. Ejecutor — clasificación de errores:** `EjecutorDeSecuencia._ejecutar_paso_independiente`
+resuelve toda referencia de paso ANTES de delegar en `EjecutorDeEscenarios` (que sigue sin saber
+que "step.*" existe). Un paso origen que no produjo ninguna ejecución
+(`PasoDeSecuenciaNoEjecutado`) clasifica como `BLOQUEADO` -precondición no cumplida, mismo
+criterio que C1 para un reverso sin origen elegible-; una referencia inválida (sensible,
+inexistente, malformada) clasifica como `ERROR` -un defecto de configuración, no una
+precondición de negocio sin cumplir-. Ambas rutas probadas con TCP/SQLite reales
+(`tests/test_e2e_variables_secuencia.py`), incluida la "referencia sensible colada" tras editar
+un escenario fuera del flujo de creación.
+
+**H. Compatibilidad con Fase A:** `domain/variables.py` no se tocó ni una línea. `{{stan}}`/
+`{{amount}}`/`{{transmission_datetime}}`/`{{local_time}}`/`{{local_date}}` siguen resolviéndose
+exactamente igual, dentro y fuera de una secuencia -un campo con una de estas expresiones nunca
+pasa por `application/variables_secuencia.py` (no matchea su gramática), así que llega intacto
+al orquestador, que las resuelve como siempre-. Confirmado por la suite completa en verde
+(1355 passed) sin ninguna regresión en `tests/test_variables.py` ni en ningún test de compra/
+echo/financiera/reverso ya existente.
+
+**I. E2E real (punto 24/25):**
+- `test_paso_2_transmite_de_verdad_un_valor_producido_por_el_paso_1`: dos compras financieras
+  independientes; el escenario del paso 2 tiene `DE37 = "{{step.purchase.response.de38}}"`.
+  TCP/codec/SQLite/host simulado reales: el 0200 del paso 2 transmite de verdad, en su propio
+  DE37, el DE38 (código de autorización) que el host asignó al paso 1 -confirmado leyendo el
+  mensaje REAL persistido, no solo el valor que el resolver devuelve-. El escenario sigue
+  guardando la expresión sin resolver.
+- `test_referencia_a_execution_id_no_necesita_enviarse_como_campo_iso`: la metadata
+  `execution_id` se resuelve y se usa en un campo de texto libre (DE41, terminal) sin que el
+  motor exija tratarla como un campo ISO -confirma el namespace separado del punto 6-.
+
+**J. UI:** **NO se agregó ninguna UI dedicada para C2**, decisión explícita. Ni Fase A
+(`{{stan}}`/`{{amount}}`, ya en producción) tiene ayuda en pantalla sobre su sintaxis hoy -no
+hay precedente en este proyecto de "ayuda de expresiones" en ningún editor-, así que agregar
+una solo para C2 habría sido inconsistente sin evidencia de que haga falta. El mecanismo se
+opera hoy vía la misma superficie que ya existe (el campo `campos_manuales` de un escenario,
+editable desde `editor_transaccion.html`): quien sepa la sintaxis puede escribir la expresión
+en cualquier campo editable de un escenario, igual que ya escribe `{{stan}}` hoy. La UI de
+creación de secuencias (C1) sigue limitada a la forma "compra + reverso automático"; extenderla
+a N pasos independientes con selección de escenarios libres es explícitamente C3+, no C2 (fuera
+de alcance, punto 26).
+
+**K. Tests:** 1331 passed al cerrar C1 → **1355 passed** al cierre de C2 (24 nuevos: 6 de
+gramática pura, 9 del resolver -incluidos los 4 adversariales de seguridad-, 4 E2E reales
+-2 de flujo correcto, 2 de clasificación de errores en ejecución-, 5 de validación de
+definición). 0 skipped. `git diff --check` limpio en cada commit. Migración real aplicada
+contra la base de desarrollo con backup (`sibutestlab8583.db.bak-preC2-20260913-193647`),
+78 filas antes/después, `PRAGMA foreign_key_check` vacío, re-ejecutada para confirmar
+idempotencia. Recorrido manual en navegador real confirmando que el mecanismo de C1 (derivado
+por `orden`) sigue funcionando sin cambios tras la migración y el código nuevo de C2.
+
+**L. Commits:** `3fef508` (C2.1), `754d1c3` (C2.2), `6f0cd77` (C2.3), `e4e0208` (C2.4).
+
+**Próximo paso:** dos caminos disponibles, decisión del propietario -ninguno bloqueado por el
+otro-:
+1. **0420/0430** sobre el motor de secuencias ya construido (una tercera operación derivada,
+   análoga a `financial_reversal`, reutilizando `EjecutorDeSecuencia` sin cambios de forma).
+2. **C3** -expectativas dinámicas (un valor esperado que dependa de `{{step...}}`, hoy
+   explícitamente diferido, punto 19) y/o data-driven (CONTINUE_ON_FAILURE, retries/timeout de
+   paso, ver sección 6, subfase C3 actualizada).
+**No se avanzó a ninguna de las dos todavía.**

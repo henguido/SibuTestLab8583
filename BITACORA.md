@@ -2946,3 +2946,51 @@ navegador real: crear escenario, crear secuencia, ejecutarla, navegar la corrida
 `a81e080` (C1.1 modelo+persistencia), `e139522` (C1.2 contexto+ejecutor), `f52eaf5` (C1.3 UI
 mínima). Sin merge a `main` — pendiente de aprobación del propietario. Reporte completo
 (secciones A-N) en `docs/roadmap/SIBU_3.md` sección 10.
+
+## 2026-09-14 · Cierre de C1 (evidencia real); C1 integrado a main; C2 — Contexto y variables entre pasos
+
+**Cierre de C1:** revisando la Corrida de secuencia #1 real (ejecución #73 → contexto → ejecución
+#74, `ejecucion_origen_id=73`), el propietario confirmó que C1 alcanzó su objetivo arquitectónico
+y priorizó proteger explícitamente, con una prueba dedicada, la semántica transaccional-vs-QA:
+dos transacciones APROBADAS sin expectativas es `SIN_EXPECTATIVAS`, nunca un `PASS` implícito;
+una transacción RECHAZADA con una expectativa que esperaba ese rechazo SÍ es `PASS` de QA -son
+ejes independientes (`EstadoEjecucion` vs. `EstadoEvaluacion`/`EstadoPasoSecuencia`), y el
+checkpoint documentó la Corrida #1 real como evidencia funcional (`docs/roadmap/SIBU_3.md`
+sección 10.F).
+
+**C1 integrado a `main`:** merge `989991e`, historia preservada. Suite 1331 passed antes y
+después. Smoke real en navegador: una secuencia nueva 0200→0400 creada y ejecutada sobre `main`,
+resultado `SIN EXPECTATIVAS`.
+
+**C2 — Contexto y variables entre pasos:** primera generalización SEGURA del acceso a datos de
+un paso anterior, más allá del vínculo estructural fijo de C1 (`origen_paso_orden`). Sintaxis
+decidida con evidencia, no por gusto: `{{step.<paso_id>.request|response.deNN}}` y
+`{{step.<paso_id>.execution_id}}` -misma gramática `{{...}}` de Fase A (todo el campo o nada,
+nunca mezclado con texto literal), pero un SEGUNDO reconocedor
+(`application/variables_secuencia.py`, no una extensión del regex de Fase A): resuelven en dos
+momentos distintos del flujo, nunca compiten por el mismo campo. `PasoSecuencia` gana un
+`paso_id` estable (distinto de `orden`, que sigue siendo la autoridad de precedencia temporal)
+para que una referencia sobreviva a un futuro reordenamiento.
+
+**Seguridad reutilizada, no reinventada:** `perfil.es_sensible()` se comprueba SIEMPRE primero
+-DE2/DE35/DE45 rechazados incluso si el perfil ni los declara-, misma autoridad consolidada en
+B3/B6/B7. Validación de dependencias (paso inexistente, referencia hacia adelante, circular) al
+GUARDAR la definición, nunca en ejecución; una referencia que se cuela después (escenario
+editado fuera de ese flujo) se sigue rechazando en el motor, en tiempo real, como defensa en
+profundidad.
+
+**E2E real:** dos compras financieras independientes donde la segunda transmite de verdad, en
+su propio DE37, el DE38 que el host asignó a la primera -confirmado leyendo el mensaje REAL
+persistido, TCP/codec/SQLite reales-. Segunda E2E: `execution_id` (metadata interna) resuelto y
+usado sin necesitar tratarse como campo ISO.
+
+**Sin UI dedicada, decisión explícita:** ni Fase A tiene ayuda en pantalla sobre su sintaxis de
+variables hoy; agregar una solo para C2 habría sido inconsistente. El mecanismo se opera desde
+la misma superficie que ya existe (campos editables de un escenario).
+
+**Tests:** 1331 passed al cerrar C1 → 1355 passed al cerrar C2 (24 nuevos, 0 skipped). Migración
+real (columna `paso_id`) aplicada con backup
+(`sibutestlab8583.db.bak-preC2-20260913-193647`), 78 filas antes/después, `PRAGMA
+foreign_key_check` vacío. Commits: `3fef508` (C2.1), `754d1c3` (C2.2), `6f0cd77` (C2.3),
+`e4e0208` (C2.4). Sin merge a `main` — pendiente de aprobación del propietario. Reporte completo
+(secciones A-L) en `docs/roadmap/SIBU_3.md` sección 11.
