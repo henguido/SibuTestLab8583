@@ -39,7 +39,7 @@ async def _ejecutar(composicion, ruta, *, codigo="00", monto="150.00", puerto=No
     resolucion servidor-autoritativa (`_interpretar_formulario`) tiene algo
     real que resolver.
     """
-    host = composicion.host_simulado(codigo_respuesta=codigo)
+    host = await composicion.host_simulado(codigo_respuesta=codigo)
     async with host:
         conexion = await composicion.administracion_conexiones.crear(
             DatosNuevaConexion(

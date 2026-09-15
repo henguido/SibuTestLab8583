@@ -27,6 +27,7 @@ from .adapters.persistence.sqlite_repos import (
     RepositorioDestinosSQLite,
     RepositorioEjecucionesSQLite,
     RepositorioEscenariosSQLite,
+    RepositorioEstadoReglasHostSQLite,
     RepositorioEventosReglasHostSQLite,
     RepositorioReglasHostSQLite,
     RepositorioSecuenciasSQLite,
@@ -124,6 +125,7 @@ class Composicion:
         self._corridas_secuencia = RepositorioCorridasSecuenciaSQLite(configuracion.ruta_base_datos)
         self._reglas_host = RepositorioReglasHostSQLite(configuracion.ruta_base_datos)
         self._eventos_reglas_host = RepositorioEventosReglasHostSQLite(configuracion.ruta_base_datos)
+        self._estado_reglas_host = RepositorioEstadoReglasHostSQLite(configuracion.ruta_base_datos)
         self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
@@ -185,11 +187,15 @@ class Composicion:
 
     @property
     def administracion_reglas_host(self) -> ServicioReglasHost:
-        return ServicioReglasHost(self._reglas_host, self._perfil)
+        return ServicioReglasHost(self._reglas_host, self._perfil, self._estado_reglas_host)
 
     @property
     def eventos_reglas_host(self) -> RepositorioEventosReglasHostSQLite:
         return self._eventos_reglas_host
+
+    @property
+    def estado_reglas_host(self) -> RepositorioEstadoReglasHostSQLite:
+        return self._estado_reglas_host
 
     @property
     def ejecutor_escenarios(self) -> EjecutorDeEscenarios:
@@ -367,12 +373,26 @@ class Composicion:
             tiempo_limite=limite,
         )
 
-    def host_simulado(self, codigo_respuesta: str = "00") -> HostSimulado:
+    async def host_simulado(self, codigo_respuesta: str = "00") -> HostSimulado:
         """Host de demostracion, para el comando `sibu-host-demo`.
 
         La aplicacion web NO lo levanta: la arquitectura lo mantiene como
         proceso aparte y la demostracion usa dos terminales.
-        """
+
+        Carga el conjunto vigente de Reglas del Host (activas e inactivas;
+        `evaluar_reglas` filtra por `activa`) y conecta los repositorios de
+        eventos/estado para que el proceso real de `sibu-host-demo` aplique
+        D1/D2 exactamente igual que las pruebas -es una foto tomada al
+        arrancar, no una recarga en caliente: un cambio de reglas en la web
+        requiere reiniciar este proceso para verse, igual que cualquier otro
+        cambio de configuracion de un servidor de demostracion."""
+        reglas = await self._reglas_host.listar()
         return HostSimulado(
-            self._codec, self._perfil, self._framing, codigo_respuesta=codigo_respuesta
+            self._codec,
+            self._perfil,
+            self._framing,
+            codigo_respuesta=codigo_respuesta,
+            reglas=reglas,
+            repositorio_eventos=self._eventos_reglas_host,
+            repositorio_estado=self._estado_reglas_host,
         )

@@ -2380,6 +2380,13 @@ def _leer_datos_regla(formulario) -> DatosNuevaRegla:
         prioridad = int((formulario.get("prioridad") or "0").strip())
     except ValueError:
         raise ValueError("La prioridad debe ser un número entero.")
+    # D2: vacio = ilimitada (mismo criterio ya usado por delay_ms: cadena
+    # vacia -> valor sentinel, nunca un error de forma).
+    max_aplicaciones_bruto = (formulario.get("max_aplicaciones") or "").strip()
+    try:
+        max_aplicaciones = int(max_aplicaciones_bruto) if max_aplicaciones_bruto else None
+    except ValueError:
+        raise ValueError("El número máximo de aplicaciones debe ser un número entero.")
     return DatosNuevaRegla(
         nombre=(formulario.get("nombre") or "").strip(),
         prioridad=prioridad,
@@ -2388,6 +2395,7 @@ def _leer_datos_regla(formulario) -> DatosNuevaRegla:
         de39=(formulario.get("de39") or "").strip(),
         campos_adicionales=_leer_campos_respuesta(formulario),
         comportamiento=ComportamientoRegla(tipo=tipo_comportamiento, delay_ms=delay_ms),
+        max_aplicaciones=max_aplicaciones,
     )
 
 
@@ -2437,13 +2445,18 @@ async def _formulario_regla_host(
 
 @enrutador.get("/reglas-host", response_class=HTMLResponse)
 async def reglas_host_lista(request: Request, composicion: Composicion = Depends(obtener_composicion)):
-    reglas = await composicion.administracion_reglas_host.listar()
+    servicio = composicion.administracion_reglas_host
+    reglas = await servicio.listar()
+    filas = [
+        presentacion.fila_de_regla_host(r, await servicio.obtener_estado(r.regla_id))
+        for r in reglas
+    ]
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="reglas_host.html",
         context={
             "seccion": "reglas_host",
-            "filas": [presentacion.fila_de_regla_host(r) for r in reglas],
+            "filas": filas,
         },
     )
 
@@ -2513,6 +2526,20 @@ async def regla_host_duplicar(
 ):
     try:
         await composicion.administracion_reglas_host.duplicar(regla_id)
+    except ReglaHostNoEncontrada:
+        return _regla_host_no_encontrada(request)
+    return RedirectResponse("/reglas-host", status_code=303)
+
+
+@enrutador.post("/reglas-host/{regla_id}/reiniciar-contador", response_class=HTMLResponse)
+async def regla_host_reiniciar_contador(
+    request: Request, regla_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    """Accion EXPLICITA (D2, punto 20 del checkpoint): pone el contador en
+    0 sin tocar la configuracion ni la auditoria historica. Siempre POST,
+    nunca GET -mismo criterio que activar/desactivar/duplicar."""
+    try:
+        await composicion.administracion_reglas_host.reiniciar_contador(regla_id)
     except ReglaHostNoEncontrada:
         return _regla_host_no_encontrada(request)
     return RedirectResponse("/reglas-host", status_code=303)

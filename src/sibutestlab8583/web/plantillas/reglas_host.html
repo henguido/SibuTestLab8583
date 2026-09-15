@@ -20,6 +20,7 @@
           <th>Condiciones</th>
           <th>Respuesta</th>
           <th>Comportamiento</th>
+          <th>Aplicaciones</th>
           <th>Estado</th>
           <th>Acciones</th>
         </tr>
@@ -32,8 +33,17 @@
           <td class="mono">{{ fila.resumen_condiciones }}</td>
           <td class="mono">{{ fila.resumen_respuesta }}</td>
           <td>{{ fila.comportamiento }}</td>
+          <td class="mono">
+            {% if fila.progreso_aplicaciones %}
+            {{ fila.progreso_aplicaciones }}
+            {% else %}
+            <span class="vacio">∞</span>
+            {% endif %}
+          </td>
           <td>
-            {% if fila.activa %}
+            {% if fila.agotada %}
+            <span class="chip chip--agotada">Activa · agotada</span>
+            {% elif fila.activa %}
             <span class="chip chip--activa">Activa</span>
             {% else %}
             <span class="chip chip--inactiva">Inactiva</span>
@@ -51,6 +61,11 @@
                   {{ 'Desactivar' if fila.activa else 'Reactivar' }}
                 </button>
               </form>
+              {% if fila.progreso_aplicaciones %}
+              <form method="post" action="/reglas-host/{{ fila.regla_id }}/reiniciar-contador">
+                <button class="enlace-boton" type="submit">Reiniciar contador</button>
+              </form>
+              {% endif %}
             </div>
           </td>
         </tr>

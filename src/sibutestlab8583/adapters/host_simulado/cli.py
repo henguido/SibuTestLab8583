@@ -46,7 +46,9 @@ def _argumentos(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 async def _servir(host: str, puerto: int, codigo: str) -> None:
-    simulado = Composicion(Configuracion.desde_entorno()).host_simulado(codigo_respuesta=codigo)
+    simulado = await Composicion(Configuracion.desde_entorno()).host_simulado(
+        codigo_respuesta=codigo
+    )
     direccion, puerto_real = await simulado.iniciar(host, puerto)
     print(f"Host simulado escuchando en {direccion}:{puerto_real}")
     print(f"Responde el codigo {codigo}. Ctrl+C para detener.")

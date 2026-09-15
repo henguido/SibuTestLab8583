@@ -15,10 +15,12 @@ from sibutestlab8583.domain.reglas_host import (
     CAMPO_MTI,
     CondicionRegla,
     ComportamientoRegla,
+    EstadoReglaHost,
     GeneradorValor,
     ReglaHost,
     RespuestaRegla,
     TipoComportamiento,
+    es_agotada,
     es_generador,
     evaluar_reglas,
     generador_referenciado,
@@ -256,3 +258,88 @@ def test_mensaje_de_error_de_validacion_nunca_incluye_el_valor():
     with pytest.raises(ValueError) as exc:
         validar_regla(regla, PERFIL_GENERICO)
     assert pan not in str(exc.value)
+
+
+# --------------------------------------------------- D2: estado limitado ---
+
+
+def test_max_aplicaciones_debe_ser_positivo_o_ausente():
+    with pytest.raises(ValueError, match="max_aplicaciones"):
+        _regla(max_aplicaciones=0)
+    with pytest.raises(ValueError, match="max_aplicaciones"):
+        _regla(max_aplicaciones=-1)
+    _regla(max_aplicaciones=1)  # no debe lanzar
+
+
+def test_estado_regla_host_no_admite_contador_negativo():
+    with pytest.raises(ValueError, match="negativo"):
+        EstadoReglaHost(regla_id="RULE-1", aplicaciones_consumidas=-1)
+
+
+def test_es_agotada_regla_ilimitada_nunca_esta_agotada():
+    regla = _regla(max_aplicaciones=None)
+    assert es_agotada(regla, None) is False
+    assert es_agotada(regla, EstadoReglaHost(regla_id="RULE-1", aplicaciones_consumidas=999)) is False
+
+
+def test_es_agotada_sin_estado_previo_nunca_esta_agotada():
+    regla = _regla(max_aplicaciones=1)
+    assert es_agotada(regla, None) is False
+
+
+def test_es_agotada_compara_consumidas_contra_el_limite():
+    regla = _regla(max_aplicaciones=2)
+    assert es_agotada(regla, EstadoReglaHost(regla_id="RULE-1", aplicaciones_consumidas=1)) is False
+    assert es_agotada(regla, EstadoReglaHost(regla_id="RULE-1", aplicaciones_consumidas=2)) is True
+    assert es_agotada(regla, EstadoReglaHost(regla_id="RULE-1", aplicaciones_consumidas=3)) is True
+
+
+def test_evaluar_reglas_salta_una_regla_agotada_y_sigue_con_la_siguiente():
+    """Caso prioritario del checkpoint D2 (punto 3): regla A (limite 1,
+    agotada) no debe ganar; regla B (fallback, sin limite) debe ganar en su
+    lugar -nunca cae directo al comportamiento default del host."""
+    regla_a = ReglaHost(
+        nombre="A", prioridad=10, activa=True,
+        condiciones=(CondicionRegla(CAMPO_MTI, "igual", "0800"),),
+        respuesta=RespuestaRegla(de39="00"),
+        comportamiento=ComportamientoRegla(tipo=TipoComportamiento.TIMEOUT.value),
+        max_aplicaciones=1, regla_id="RULE-A",
+    )
+    regla_b = ReglaHost(
+        nombre="B", prioridad=20, activa=True,
+        condiciones=(CondicionRegla(CAMPO_MTI, "igual", "0800"),),
+        respuesta=RespuestaRegla(de39="00"),
+        regla_id="RULE-B",
+    )
+    estados = {"RULE-A": EstadoReglaHost(regla_id="RULE-A", aplicaciones_consumidas=1)}
+    ganadora = evaluar_reglas([regla_a, regla_b], {}, "0800", estados)
+    assert ganadora.nombre == "B"
+
+
+def test_evaluar_reglas_sin_estado_previo_la_regla_con_limite_gana_primero():
+    regla_a = ReglaHost(
+        nombre="A", prioridad=10, activa=True,
+        condiciones=(CondicionRegla(CAMPO_MTI, "igual", "0800"),),
+        respuesta=RespuestaRegla(de39="00"),
+        max_aplicaciones=1, regla_id="RULE-A",
+    )
+    regla_b = ReglaHost(
+        nombre="B", prioridad=20, activa=True,
+        condiciones=(CondicionRegla(CAMPO_MTI, "igual", "0800"),),
+        respuesta=RespuestaRegla(de39="00"),
+        regla_id="RULE-B",
+    )
+    ganadora = evaluar_reglas([regla_a, regla_b], {}, "0800", {})
+    assert ganadora.nombre == "A"
+
+
+def test_evaluar_reglas_default_de_estados_preserva_d1():
+    """Sin pasar `estados` en absoluto (llamada D1), ninguna regla puede
+    estar agotada -mismo comportamiento exacto que antes de D2."""
+    regla = ReglaHost(
+        nombre="A", prioridad=10, activa=True,
+        condiciones=(CondicionRegla(CAMPO_MTI, "igual", "0800"),),
+        respuesta=RespuestaRegla(de39="00"),
+        max_aplicaciones=1, regla_id="RULE-A",
+    )
+    assert evaluar_reglas([regla], {}, "0800") is regla

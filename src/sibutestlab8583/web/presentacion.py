@@ -1473,7 +1473,13 @@ def _etiqueta_campo(numero: str) -> str:
 @dataclass(frozen=True)
 class FilaReglaHost:
     """Una fila de la lista de Reglas del Host -resumen de solo lectura,
-    nunca la fuente de verdad (esa es `ReglaHost`, ver `domain.reglas_host`)."""
+    nunca la fuente de verdad (esa es `ReglaHost`, ver `domain.reglas_host`).
+
+    `progreso_aplicaciones` (D2): `None` si la regla es ilimitada (nunca se
+    muestra columna de progreso para esas); si tiene `max_aplicaciones`, un
+    texto tipo "1 / 1" o "3 / 5". `agotada` (D2): propiedad ya DERIVADA en
+    el dominio (`domain.reglas_host.es_agotada`), nunca recalculada aqui -
+    esta clase solo la transporta para la plantilla."""
 
     regla_id: str
     nombre: str
@@ -1482,9 +1488,11 @@ class FilaReglaHost:
     resumen_condiciones: str
     resumen_respuesta: str
     comportamiento: str
+    progreso_aplicaciones: str | None = None
+    agotada: bool = False
 
 
-def fila_de_regla_host(regla: ReglaHost) -> FilaReglaHost:
+def fila_de_regla_host(regla: ReglaHost, estado=None) -> FilaReglaHost:
     resumen_condiciones = " Y ".join(
         f"{_etiqueta_campo(c.campo)} {_ETIQUETA_OPERADOR.get(c.operador, c.operador)}"
         + (f" {c.valor}" if c.valor is not None else "")
@@ -1498,6 +1506,14 @@ def fila_de_regla_host(regla: ReglaHost) -> FilaReglaHost:
     comportamiento = regla.comportamiento.tipo
     if regla.comportamiento.tipo == "delay":
         comportamiento = f"delay ({regla.comportamiento.delay_ms} ms)"
+
+    progreso: str | None = None
+    agotada = False
+    if regla.max_aplicaciones is not None:
+        consumidas = estado.aplicaciones_consumidas if estado is not None else 0
+        progreso = f"{consumidas} / {regla.max_aplicaciones}"
+        agotada = consumidas >= regla.max_aplicaciones
+
     return FilaReglaHost(
         regla_id=regla.regla_id,
         nombre=regla.nombre,
@@ -1506,4 +1522,6 @@ def fila_de_regla_host(regla: ReglaHost) -> FilaReglaHost:
         resumen_condiciones=resumen_condiciones,
         resumen_respuesta=resumen_respuesta,
         comportamiento=comportamiento,
+        progreso_aplicaciones=progreso,
+        agotada=agotada,
     )
