@@ -1459,11 +1459,12 @@ Fase E. Ver checkpoint D2 en la sección 15.
 
 ## 15. Checkpoint D2 — Reglas del Host con estado controlado
 
-**Estado: COMPLETO para el alcance acordado.** Rama `feature/host-simulator-d2-stateful-rules`,
-commits `906593d` (D2.1: modelo), `9353499` (D2.2: persistencia/atomicidad), `d32ce30` (D2.3-D2.4:
-matching stateful + auditoría), `640d627` (D2.5: E2E retry de C3), `34dba88` (D2.6: UI),
-`ea118e7` (D2.7a: seguridad). **No mergeado a `main`** — queda en la rama, pendiente de revisión
-del propietario.
+**Estado: COMPLETO, incluido el cierre del gap de restart.** Rama
+`feature/host-simulator-d2-stateful-rules`, commits `906593d` (D2.1: modelo), `9353499` (D2.2:
+persistencia/atomicidad), `d32ce30` (D2.3-D2.4: matching stateful + auditoría), `640d627` (D2.5:
+E2E retry de C3), `34dba88` (D2.6: UI), `ea118e7` (D2.7a: seguridad), `95393d1` (D2.7b: docs),
+D2.8 (cierre del restart real, ver punto J). **Pendiente de integrar a `main`** una vez cerrado
+este punto — ver verificación final más abajo.
 
 **A. Integración de D1:** confirmada antes de abrir D2 — `main`/`origin/main` en `fc69dbd`. Suite
 completa reconciliada: 1493 passed + 2 skipped (artefacto de `PATH`) = 1495 passed/0 skipped con
@@ -1524,12 +1525,42 @@ aislado, 20 corrutinas concurrentes, exactamente una tiene éxito; (2) contra el
 completo (TCP real), 10 solicitudes Echo concurrentes reales compitiendo por una regla
 `max_aplicaciones=1`, exactamente una recibe el rechazo, las demás caen al fallback.
 
-**J. Restart:** no se implementó una prueba de restart real de proceso (reiniciar
-`sibu-host-demo` como subproceso) — la garantía de persistencia se demuestra indirectamente: el
-contador vive en SQLite (tabla `reglas_host_estado`), fuera del proceso Python, exactamente igual
-que `secuencias.valor` (STAN) ya sobrevive un restart hoy sin código adicional. Se documenta como
-inferencia razonada a partir de un precedente ya probado, no como una prueba directa nueva —
-transparente sobre esta limitación en vez de afirmar algo no verificado.
+**J. Restart — cerrado con un proceso real (D2.8):** el checkpoint original documentaba esta
+garantía solo por inferencia. Se cerró con evidencia directa, en dos niveles:
+
+- *Gap encontrado y corregido primero:* `Composicion.host_simulado()` (la fábrica que usa
+  `sibu-host-demo`) nunca conectaba reglas/eventos/estado — decisión deliberada de D1 para "no
+  romper el comando existente" (ver punto L de la sección 14), pero eso significaba que el
+  proceso real jamás había aplicado NINGUNA regla D1/D2, con o sin restart. Sin corregir esto,
+  la prueba de restart pedida era imposible de ejecutar contra el comando real. Se volvió
+  `async`, carga `listar()` de `reglas_host` al arrancar (una foto tomada al iniciar, no
+  recarga en caliente — un cambio de reglas en la web requiere reiniciar el proceso para verse,
+  igual que cualquier configuración de un servidor de demostración) y conecta
+  `repositorio_eventos`/`repositorio_estado`. `sibu-host-demo` sigue arrancando sin argumentos
+  nuevos. Los tres call-sites (`cli.py`, `test_web_vertical.py`, y el propio método) se
+  actualizaron a `await`; suite de esos archivos re-verificada (15 passed).
+- *Prueba automatizada* (`tests/test_d2_restart_real.py`): lanza `sibu-host-demo` como un
+  PROCESO REAL nuevo (`python -m sibutestlab8583.adapters.host_simulado.cli`, no una instancia
+  de clase reiniciada dentro del proceso de la prueba), con las dos reglas del encargo (timeout
+  `max_aplicaciones=1` + fallback normal) ya persistidas. Primer Echo → TIMEOUT, contador queda
+  en 1 en SQLite. El proceso se MATA (`terminate`/`wait`, con `kill` de respaldo), se confirma
+  que ya no escucha (`poll() is not None` y un intento de conexión TCP falla). Se lanza un
+  SEGUNDO proceso (PID distinto) sobre la MISMA base SQLite. Segundo Echo → APROBADA (la regla
+  timeout seguía agotada, ganó el fallback). Verificado tras el segundo proceso: contador sigue
+  en 1 (no volvió a subir), los dos eventos de auditoría con su `match_number` correcto, y
+  `PRAGMA foreign_key_check` vacío.
+- *Verificación manual adicional, en el puerto real 8583* (no solo un puerto efímero de prueba):
+  mismas dos reglas creadas en la base de desarrollo real (backup previo
+  `sibutestlab8583.db.bak-preRestartManual-*`), `sibu-host-demo` arrancado como proceso de
+  Windows real, Echo → TIMEOUT, contador confirmado en 1, proceso terminado con `taskkill /F`
+  por PID, puerto confirmado libre por `netstat`, proceso NUEVO arrancado (PID distinto
+  confirmado por `netstat`), Echo → APROBADA, contador seguía en 1, auditoría y
+  `foreign_key_check` limpios. Las dos reglas de esta demostración se desactivaron después
+  (`cambiar_estado activa=False`, nunca borradas — mismo principio que el resto del proyecto:
+  nunca eliminar filas con auditoría asociada).
+
+Con esto, la limitación señalada en la primera versión de este checkpoint queda cerrada con
+evidencia directa, no solo por analogía.
 
 **K. UI — recorrido real:** campo "Número máximo de aplicaciones" (vacío = sin límite, mismo
 patrón que `comportamiento_delay_ms`); columna "Aplicaciones" ("N / M" o "∞"); chip "Activa ·

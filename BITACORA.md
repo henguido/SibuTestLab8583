@@ -3180,3 +3180,23 @@ preservadas, `PRAGMA foreign_key_check` vacío. Commits:
 `906593d`/`9353499`/`d32ce30`/`640d627`/`34dba88`/`ea118e7`. Sin merge a `main` — pendiente de
 aprobación del propietario. Reporte completo (secciones A-P) en `docs/roadmap/SIBU_3.md`
 sección 15.
+
+**Cierre del gap de restart (D2.8, mismo día):** el propietario aprobó D2 con una única condición
+de cierre antes del merge -una prueba real de que el contador de aplicaciones sobrevive un
+reinicio de PROCESO, no solo de instancia en memoria. Al construirla se encontró un hallazgo real:
+`Composicion.host_simulado()` (la fábrica que usa `sibu-host-demo`) nunca conectaba
+reglas/eventos/estado -decisión deliberada tomada en D1 para "no romper el comando existente"
+(ver `docs/roadmap/SIBU_3.md` sección 14.L), pero eso significaba que el proceso real jamás había
+aplicado ninguna regla D1/D2, con o sin restart. Se corrigió: el método pasó a `async`, carga
+`listar()` de `reglas_host` al arrancar (una foto al iniciar, no recarga en caliente) y conecta
+los repositorios de eventos/estado; `sibu-host-demo` sigue arrancando sin argumentos nuevos.
+Con esa corrección, se probó en dos niveles: (1) automatizado
+(`tests/test_d2_restart_real.py`), lanzando `sibu-host-demo` como un PROCESO real vía
+`python -m ...` (no una instancia de clase), matando el proceso, confirmando que el puerto queda
+libre, y levantando un segundo proceso con PID distinto sobre la misma base SQLite; (2) manual,
+contra la base de desarrollo real en el puerto 8583 real, con `taskkill /F` por PID y `netstat`
+confirmando el puerto libre y el PID nuevo. En ambos niveles: la regla de límite 1 seguía agotada,
+el fallback normal respondió, el contador permaneció en 1, la auditoría registró ambos eventos con
+su `match_number`, y `PRAGMA foreign_key_check` quedó vacío. Suite reconciliada:
+1523 passed + 2 skipped (Bash, artefacto de `PATH`) = 1525 passed / 0 skipped con el `PATH`
+corregido.
