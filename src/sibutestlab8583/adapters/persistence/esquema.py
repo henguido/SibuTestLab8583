@@ -468,6 +468,25 @@ CREATE TABLE IF NOT EXISTS proxy_mensajes (
     interpretable INTEGER NOT NULL,
     creado_en     TEXT    NOT NULL
 );
+
+-- Trazabilidad de procedencia (Fase E2, 2026-09-21, punto 19 del encargo):
+-- de que Sesion/mensaje de Proxy nacio un Escenario. Tabla SEPARADA de
+-- `escenarios` -mismo principio que ya separa configuracion de auditoria en
+-- D1/D2/E1-: un escenario se edita/duplica libremente (`duplicar()` genera
+-- un `escenario_id` nuevo), y la procedencia de CADA copia es un hecho
+-- historico propio que nunca deberia mutar ni arrastrarse en silencio.
+-- `escenario_id` es PK Y FK 1:1 -un escenario nace de a lo sumo una unica
+-- captura (nunca al reves: la misma captura SI puede originar varios
+-- escenarios distintos, punto 20 del encargo)-. `mensaje_id_respuesta` es
+-- NULL cuando el escenario se creo a partir de una solicitud sin respuesta
+-- correlacionada (caso permitido: Echo timeout, por ejemplo).
+CREATE TABLE IF NOT EXISTS escenarios_origen_captura (
+    escenario_id        TEXT NOT NULL PRIMARY KEY REFERENCES escenarios(escenario_id),
+    session_id          TEXT NOT NULL REFERENCES proxy_sesiones(session_id),
+    mensaje_id_solicitud INTEGER NOT NULL REFERENCES proxy_mensajes(mensaje_id),
+    mensaje_id_respuesta INTEGER REFERENCES proxy_mensajes(mensaje_id),
+    creado_en           TEXT NOT NULL
+);
 """
 
 #: Nombre de la secuencia del numero de trazabilidad.
