@@ -373,6 +373,17 @@ class RepositorioMensajesProxy(Protocol):
 
 
 @runtime_checkable
+class RepositorioOrigenCapturaEscenario(Protocol):
+    """Trazabilidad de procedencia (Fase E2): de que sesion/mensaje del
+    Proxy nacio un Escenario -tabla separada de `RepositorioEscenarios`,
+    mismo principio que ya separa configuracion de auditoria en D1/D2/E1."""
+
+    async def registrar(self, origen: "OrigenCapturaEscenario") -> None: ...
+
+    async def obtener_por_escenario(self, escenario_id: str) -> "OrigenCapturaEscenario | None": ...
+
+
+@runtime_checkable
 class VerificadorDeConexion(Protocol):
     """Comprobacion TCP puntual de "Probar conexion", ajena al recorrido de compra.
 

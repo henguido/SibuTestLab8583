@@ -21,6 +21,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Sequence
+
+from .validacion import mti_de_respuesta
 
 
 class EstadoSesionProxy(str, Enum):
@@ -77,6 +80,69 @@ class SesionProxy:
 
 
 @dataclass(frozen=True)
+class IntercambioProxy:
+    """Un par logico solicitud/respuesta DERIVADO en tiempo de lectura por
+    `derivar_intercambios` -nunca persistido (Fase E2, punto 2 del encargo:
+    "no persistirlo automaticamente si puede derivarse"). `respuesta` es
+    `None` cuando no se encontro una correlacion confiable -nunca se
+    inventa una pareja por posicion (punto 3)."""
+
+    solicitud: "MensajeProxyCapturado"
+    respuesta: "MensajeProxyCapturado | None"
+    correlacionado: bool
+
+
+def derivar_intercambios(mensajes: Sequence["MensajeProxyCapturado"]) -> tuple[IntercambioProxy, ...]:
+    """Empareja cada solicitud (`CLIENTE_A_UPSTREAM`) interpretable con la
+    primera respuesta (`UPSTREAM_A_CLIENTE`) interpretable, no usada
+    todavia, cuyo MTI sea exactamente `mti_de_respuesta(mti_solicitud)` y
+    que haya ocurrido despues en el tiempo -mismo criterio de "el orden
+    importa" que ya usa RN-3 para correlacionar solicitud/respuesta del
+    lado cliente-host (`domain.validacion`).
+
+    Deliberadamente NO correlaciona por posicion/orden -el `orden` de
+    `MensajeProxyCapturado` es un contador POR DIRECCION (ver
+    `adapters.proxy.servidor`), nunca un indice global de la sesion- ni por
+    STAN -el proxy nunca lo captura, ver el aviso de seguridad de este
+    modulo-. Una solicitud sin respuesta correlacionada (agotamiento,
+    desconexion, MTI no reconocido, o una respuesta ya consumida por una
+    solicitud anterior) queda con `respuesta=None`/`correlacionado=False`
+    -nunca se inventa una pareja por cercania posicional (E2, punto 3)."""
+    ordenados = sorted(mensajes, key=lambda m: (m.creado_en, m.orden))
+    respuestas_disponibles = [
+        m for m in ordenados
+        if m.direccion is DireccionMensajeProxy.UPSTREAM_A_CLIENTE and m.interpretable
+    ]
+    consumidas: set[int | None] = set()
+    intercambios: list[IntercambioProxy] = []
+    for solicitud in ordenados:
+        if solicitud.direccion is not DireccionMensajeProxy.CLIENTE_A_UPSTREAM:
+            continue
+        respuesta_encontrada: MensajeProxyCapturado | None = None
+        if solicitud.interpretable:
+            try:
+                esperado = mti_de_respuesta(solicitud.mti)
+            except (KeyError, IndexError):
+                esperado = None
+            if esperado is not None:
+                for candidata in respuestas_disponibles:
+                    clave = candidata.mensaje_id if candidata.mensaje_id is not None else id(candidata)
+                    if (
+                        clave not in consumidas
+                        and candidata.mti == esperado
+                        and candidata.creado_en >= solicitud.creado_en
+                    ):
+                        respuesta_encontrada = candidata
+                        consumidas.add(clave)
+                        break
+        intercambios.append(IntercambioProxy(
+            solicitud=solicitud, respuesta=respuesta_encontrada,
+            correlacionado=respuesta_encontrada is not None,
+        ))
+    return tuple(intercambios)
+
+
+@dataclass(frozen=True)
 class MensajeProxyCapturado:
     """Metadata segura de UN frame que cruzo el proxy en una direccion.
     Nunca contiene el payload ni ningun campo del mensaje -ver el aviso de
@@ -89,4 +155,18 @@ class MensajeProxyCapturado:
     mti: str | None = None
     interpretable: bool = True
     mensaje_id: int | None = None
+    creado_en: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class OrigenCapturaEscenario:
+    """Trazabilidad de procedencia (Fase E2): un Escenario nacio de esta
+    sesion/mensaje del Proxy. Tabla separada de `Escenario` -mismo principio
+    de D1/D2/E1: la procedencia es un hecho historico, nunca deberia mutar
+    ni arrastrarse en silencio al duplicar el escenario."""
+
+    escenario_id: str
+    session_id: str
+    mensaje_id_solicitud: int
+    mensaje_id_respuesta: int | None = None
     creado_en: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
