@@ -346,6 +346,33 @@ class RepositorioEstadoReglasHost(Protocol):
 
 
 @runtime_checkable
+class RepositorioSesionesProxy(Protocol):
+    """Sesiones del Proxy ISO 8583 (Fase E1). `crear` persiste la sesion
+    recien aceptada (estado `CONECTANDO`); `actualizar` persiste cambios de
+    estado posteriores (pasa a `ACTIVA`, y finalmente a `CERRADA` con
+    `fin`/`motivo_cierre`) -siempre el mismo `session_id`, nunca una fila
+    nueva por cambio de estado."""
+
+    async def crear(self, sesion: "SesionProxy") -> None: ...
+
+    async def actualizar(self, sesion: "SesionProxy") -> None: ...
+
+    async def obtener(self, session_id: str) -> "SesionProxy | None": ...
+
+    async def listar(self, limite: int = 50) -> Sequence["SesionProxy"]: ...
+
+
+@runtime_checkable
+class RepositorioMensajesProxy(Protocol):
+    """Metadata segura de los frames capturados por una sesion del Proxy
+    -nunca el payload (ver `domain.proxy.MensajeProxyCapturado`)."""
+
+    async def registrar(self, mensaje: "MensajeProxyCapturado") -> None: ...
+
+    async def listar_por_sesion(self, session_id: str) -> Sequence["MensajeProxyCapturado"]: ...
+
+
+@runtime_checkable
 class VerificadorDeConexion(Protocol):
     """Comprobacion TCP puntual de "Probar conexion", ajena al recorrido de compra.
 

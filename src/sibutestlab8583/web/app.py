@@ -2545,6 +2545,50 @@ async def regla_host_reiniciar_contador(
     return RedirectResponse("/reglas-host", status_code=303)
 
 
+@enrutador.get("/proxy/sesiones", response_class=HTMLResponse)
+async def proxy_sesiones_lista(request: Request, composicion: Composicion = Depends(obtener_composicion)):
+    """Lista de solo lectura -el proxy en si es un proceso aparte (`sibu-
+    proxy`), mismo criterio que el host simulado: la web NO lo levanta ni
+    lo detiene, solo observa lo que ya persistio."""
+    sesiones = await composicion.sesiones_proxy.listar()
+    filas = [presentacion.fila_de_sesion_proxy(s) for s in sesiones]
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="proxy_sesiones.html",
+        context={"seccion": "proxy_sesiones", "filas": filas},
+    )
+
+
+@enrutador.get("/proxy/sesiones/{session_id}", response_class=HTMLResponse)
+async def proxy_sesion_detalle(
+    request: Request, session_id: str, composicion: Composicion = Depends(obtener_composicion)
+):
+    sesion = await composicion.sesiones_proxy.obtener(session_id)
+    if sesion is None:
+        return PLANTILLAS.TemplateResponse(
+            request=request,
+            name="no_encontrado.html",
+            context={
+                "seccion": "proxy_sesiones",
+                "titulo": "Sesión no encontrada",
+                "detalle": "La sesión solicitada no existe o ya no está disponible.",
+                "ruta_vuelta": "/proxy/sesiones",
+                "texto_vuelta": "Volver a Sesiones del Proxy",
+            },
+            status_code=404,
+        )
+    mensajes = await composicion.mensajes_proxy.listar_por_sesion(session_id)
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="proxy_sesion_detalle.html",
+        context={
+            "seccion": "proxy_sesiones",
+            "sesion": presentacion.fila_de_sesion_proxy(sesion),
+            "filas_mensajes": [presentacion.fila_de_mensaje_proxy(m) for m in mensajes],
+        },
+    )
+
+
 @enrutador.get("/secuencias", response_class=HTMLResponse)
 async def secuencias_lista(
     request: Request, composicion: Composicion = Depends(obtener_composicion)

@@ -25,9 +25,9 @@ qué fase está en qué estado:
 | B — Modelo multi-MTI, subfase B8 (aviso de reverso, 0420/0430) | **IMPLEMENTADA**, integrada a `main` (merge `9a7dd32`) |
 | C — Secuencias transaccionales, subfase C3 (política de continuación STOP/CONTINUE, expectativas dinámicas, retry mínimo seguro) | **IMPLEMENTADA**, integrada a `main` (merge `a7be884`) |
 | D — Host Simulator 2.0, subfase D1 (motor de reglas declarativas, persistencia SQLite, UI) | **IMPLEMENTADA**, integrada a `main` (merge `fc69dbd`) |
-| D — Host Simulator 2.0, subfase D2 (reglas con estado limitado: `max_aplicaciones`, atomicidad real) | **IMPLEMENTADA** en `feature/host-simulator-d2-stateful-rules` (commits `906593d`/`9353499`/`d32ce30`/`640d627`/`34dba88`/`ea118e7`, sin mergear a `main`, en revisión) |
-| D — Host Simulator 2.0, subfase D1 (motor de reglas declarativas, persistencia SQLite, UI) | **IMPLEMENTADA** en `feature/host-simulator-d1-rules-engine` (commits `8fcbb36`/`791fa6b`/`39c4215`/`f6da670`/`d4538f9`/`4a498bf`, sin mergear a `main`, en revisión) |
-| D1-D3, E, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
+| D — Host Simulator 2.0, subfase D2 (reglas con estado limitado: `max_aplicaciones`, atomicidad real, cierre de restart real D2.8) | **IMPLEMENTADA**, integrada a `main` (merge `e7fefe8`) |
+| E — Client/Server/Proxy, subfase E1 (proxy TCP transparente) | **IMPLEMENTADA** en `feature/proxy-e1-transparent` (sin mergear a `main`, en revisión) |
+| D3, E2+, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
 10 agentes especializados (investigación/diseño, sin escritura de código salvo lo que el
@@ -496,11 +496,14 @@ arbitraria, proxy, load, EMV, crypto -ver checkpoint sección 14 para el detalle
 garantías de seguridad que ya aplica el resto del proyecto (nunca PAN completo fuera del ámbito
 transaccional).
 
-**Estado:** sin diseño propio producido en esta jornada (ningún agente lo cubrió en detalle más
-allá de mencionarlo como gap competitivo, sección 3). Requiere un documento de diseño dedicado
-antes de cualquier código — mismo criterio que las fases anteriores.
+**E1 — Proxy transparente: IMPLEMENTADO** en `feature/proxy-e1-transparent` (2026-09-21), sin
+mergear a `main` — pendiente de revisión del propietario. Diseño previo por 4 agentes read-only
+(transporte, arquitectura, seguridad, UX) antes de escribir código. Ver checkpoint completo en la
+sección 16.
 
-**NO se implementa hasta tener ese diseño.**
+**NO implementado en E1 (deliberado):** múltiples upstreams, TLS, pool de conexiones upstream
+reutilizables entre sesiones, reintentos/failover, routing por contenido, MITM/transformaciones,
+capture-to-scenario, replay, load, EMV/crypto — ver sección 16.N para el detalle completo.
 
 ### Fase F — Performance Lab
 
@@ -1459,12 +1462,12 @@ Fase E. Ver checkpoint D2 en la sección 15.
 
 ## 15. Checkpoint D2 — Reglas del Host con estado controlado
 
-**Estado: COMPLETO, incluido el cierre del gap de restart.** Rama
+**Estado: COMPLETO, incluido el cierre del gap de restart, e INTEGRADO a `main`.** Rama
 `feature/host-simulator-d2-stateful-rules`, commits `906593d` (D2.1: modelo), `9353499` (D2.2:
 persistencia/atomicidad), `d32ce30` (D2.3-D2.4: matching stateful + auditoría), `640d627` (D2.5:
 E2E retry de C3), `34dba88` (D2.6: UI), `ea118e7` (D2.7a: seguridad), `95393d1` (D2.7b: docs),
-D2.8 (cierre del restart real, ver punto J). **Pendiente de integrar a `main`** una vez cerrado
-este punto — ver verificación final más abajo.
+`ed0ee16` (D2.8: cierre del restart real, ver punto J). Merge a `main` (`--no-ff`, historia
+conservada) en `e7fefe8`; push confirmado (`HEAD == origin/main == e7fefe8`).
 
 **A. Integración de D1:** confirmada antes de abrir D2 — `main`/`origin/main` en `fc69dbd`. Suite
 completa reconciliada: 1493 passed + 2 skipped (artefacto de `PATH`) = 1495 passed/0 skipped con
@@ -1581,22 +1584,141 @@ estructuralmente incapaz de contener un PAN (solo `regla_id`/contador entero/tim
 reset nunca borra auditoría histórica.
 
 **N. Tests:** 1495 passed/0 skipped al abrir D2 (tras integrar D1 y reconciliar el artefacto de
-`PATH`) → **1522 passed/0 skipped** al cierre de D2 (27 nuevos: 8 de modelo puro, 5 de
-persistencia/atomicidad incluida la prueba de concurrencia real, 5 de matching stateful contra
-`HostSimulado`, 1 de E2E principal con retry de C3, 4 de UI web, 4 de seguridad). Fase A, B6-B8,
-C1-C3, D1 intactas (sus propias suites pasan sin modificación).
+`PATH`) → 1522 passed/0 skipped al cierre funcional de D2 → **1525 passed/0 skipped** tras D2.8
+(cierre del restart, 3 nuevos) y confirmados otra vez, iguales, post-merge a `main`. Fase A,
+B6-B8, C1-C3, D1 intactas (sus propias suites pasan sin modificación).
 
 **O. Commits:** `906593d` (D2.1: modelo de estado limitado), `9353499` (D2.2: persistencia y
 atomicidad), `d32ce30` (D2.3-D2.4: matching stateful + auditoría con match_number), `640d627`
-(D2.5: E2E principal, retry de C3 automático), `34dba88` (D2.6: UI), `ea118e7` (D2.7a: seguridad).
-No mergeado a `main` — queda en `feature/host-simulator-d2-stateful-rules`, pendiente de
+(D2.5: E2E principal, retry de C3 automático), `34dba88` (D2.6: UI), `ea118e7` (D2.7a: seguridad),
+`95393d1` (D2.7b: docs), `ed0ee16` (D2.8: cierre del restart real). Merge a `main` en `e7fefe8`
+(`--no-ff`, historia conservada), push confirmado.
+
+**P. Próximo paso — decidido por el propietario:** **Fase E** (Client/Server/Proxy), comenzando
+por **E1 — Proxy transparente**, sobre **D3** (simulación adversarial/`visto_antes`) y **C4**
+(data-driven). Razón arquitectónica del propietario: con cliente, host simulado, reglas
+declarativas y stateful, escenarios, suites, secuencias, retry y control de flujo ya resueltos, el
+siguiente salto funcional es poder colocar Sibu entre un cliente real y un host/switch. Ver
+checkpoint E1 en la sección 16.
+
+## 16. Checkpoint E1 — Proxy TCP ISO 8583 transparente
+
+**Estado: COMPLETO para el alcance acordado.** Rama `feature/proxy-e1-transparent`, creada desde
+el nuevo `main` (tras integrar D2). **No mergeada a `main`** — queda en la rama, pendiente de
 revisión del propietario.
 
-**P. Próximo paso:** tres caminos disponibles, ninguno bloqueado por el otro — **D3** (simulación
-adversarial/`visto_antes`/modos de falla restantes), **C4** (data-driven u otras capacidades de
-secuencia), o **Fase E** (Client/Server/Proxy). D2 demostró que el estado limitado se integra de
-verdad con el retry de C3 sin test doubles (punto H), y que la atomicidad real de SQLite (mismo
-patrón que `GeneradorStanSQLite`) es suficiente para concurrencia real sin necesitar locks de
-proceso (punto I) — señal de que el laboratorio tiene ahora una base sólida tanto para reglas
-declarativas como para el próximo incremento de estado (`visto_antes`) si se necesita. Decisión
-pendiente del propietario.
+**A. Integración D2:** confirmada antes de abrir E1 — `main`/`origin/main` en `e7fefe8` (ver
+sección 15). La rama E1 parte de ese punto.
+
+**B. Arquitectura del Proxy — investigación primero:** cuatro agentes read-only (transporte,
+arquitectura, seguridad, UX) antes de escribir código, mismo criterio que D1/D2. Hallazgo clave
+del agente de transporte: ni `TransporteTcp` ni `HostSimulado._atender` son reutilizables tal
+cual para el proxy — ambos modelan "una conexión = un solo mensaje = cierre", mientras que E1
+necesita conexiones PERSISTENTES con lectura concurrente en ambos sentidos. Lo que SÍ es
+reutilizable sin cambios es el framing (`FramingDemostracion.leer_mensaje_completo`/`preparar`),
+que ya trabaja sobre bytes opacos sin invocar nunca el codec — exactamente la costura que separa
+"delimitar" de "interpretar" que el proxy necesita.
+
+Decisión de diseño (agente de arquitectura, implementada tal cual): `SesionProxy` (dataclass
+mutable — describe una conexión VIVA, a diferencia de `ReglaHost`/`EventoReglaHost` que son
+inmutables por representar configuración/auditoría ya decidida) con `session_id` opaco (uuid4,
+no correlativo — no revela volumen de tráfico), `estado` (`CONECTANDO`/`ACTIVA`/`CERRADA`) y
+`motivo_cierre` explícito (siete valores: EOF/error por cada lado, timeout de inactividad, fallo
+de conexión al upstream, apagado del proxy) — nunca un booleano "activo/inactivo" suelto, mismo
+principio que D2 ya estableció con `EstadoReglaHost`/`es_agotada`.
+
+**C. Full duplex — dos pumps + cierre coordinado:** cada sesión lanza dos `asyncio.Task`
+concurrentes (`_pump`, uno por sentido). `asyncio.wait({tarea_c2u, tarea_u2c},
+return_when=FIRST_COMPLETED)`: en cuanto UN lado termina (EOF, error, o timeout de inactividad),
+`_atender` cierra ambos escritores y cancela la tarea pendiente — nunca queda una tarea huérfana
+corriendo después de que la sesión terminó. Hallazgo real durante las pruebas: la tarea cancelada
+podía perder silenciosamente el registro de auditoría de un mensaje que YA se había reenviado de
+verdad, si la cancelación llegaba mientras `_registrar_mensaje` seguía en vuelo (una carrera
+genuina entre ambos pumps, reproducida por `test_mensaje_no_interpretable_atraviesa_sin_bloquear_
+el_trafico`). Corregido envolviendo esa escritura en `asyncio.shield`: la cancelación sigue
+deteniendo el pump de inmediato, pero el registro ya en curso completa en segundo plano en vez de
+abortarse a medias.
+
+**D. Framing — reutilizado sin cambios:** el proxy usa el MISMO `FramingDemostracion` que el
+cliente y `HostSimulado`. Nunca se inventó un protocolo nuevo (punto 6 del encargo).
+
+**E. Persistencia:** dos tablas nuevas, `proxy_sesiones` (config/estado de la conexión, UPDATE de
+la misma fila en cada cambio de estado) y `proxy_mensajes` (auditoría append-only, FK hacia
+`proxy_sesiones`) — separadas por el mismo principio que D1/D2 ya establecieron entre
+configuración y auditoría. Migración puramente aditiva (`CREATE TABLE IF NOT EXISTS`), aplicada
+con backup a la base de desarrollo real (`sibutestlab8583.db.bak-preE1-*`), `PRAGMA
+foreign_key_check` limpio antes y después.
+
+**F. Seguridad:** `MensajeProxyCapturado` es estructuralmente ciego a los campos de un
+mensaje — mismo principio que `EventoReglaHost` en D1/D2: el dataclass no tiene NINGÚN campo
+`payload`/`raw`/`Mapping` que pudiera aceptar un valor arbitrario del mensaje, solo metadata
+(dirección, orden, longitud, MTI si decodificó, si fue interpretable). Probado en dos niveles: (1)
+estructural (`test_mensaje_proxy_capturado_no_tiene_ningun_campo_para_el_payload`); (2) de extremo
+a extremo — una compra financiera REAL con el PAN sintético de la tarjeta demo cruza el proxy, y
+se escanean TODAS las filas de `proxy_sesiones`/`proxy_mensajes` con la misma heurística de 12-19
+dígitos consecutivos que ya protege el repositorio Git, sin ningún hallazgo. Una prueba adicional
+confirma que el forwarding no depende de que el codec tenga éxito: con un codec que SIEMPRE falla
+al decodificar, el proxy sigue reenviando el mensaje real perfectamente, solo lo marca
+`interpretable=False` en la observabilidad.
+
+**G. Transparencia byte-for-byte:** `test_bytes_forwarding_es_exacto_en_ambos_sentidos` (prueba
+OBLIGATORIA, punto 30) compara bytes CRUDOS -no campos ISO ya interpretados- en cada extremo real:
+`request_cliente == request_upstream` y `response_upstream == response_cliente`, con un payload
+arbitrario de 100 bytes y una respuesta distinguible (bytes invertidos). El pump nunca hace
+`decode -> modificar -> encode -> enviar`: reenvía el MISMO payload que leyó, y decodifica una
+copia DESPUÉS de reenviar, solo para observabilidad.
+
+**H. CLI:** `sibu-proxy` (entry point nuevo en `pyproject.toml`), mismo esqueleto que
+`sibu-host-demo` (`argparse` + `Configuracion.desde_entorno()`). Puerto de escucha por defecto
+8584 (distinto de 8583, para que ambos procesos convivan en la demo de tres terminales).
+`--upstream-host`/`--upstream-puerto` reutilizan por defecto `SIBU_HOST_DESTINO`/
+`SIBU_PUERTO_DESTINO` (las mismas variables que ya configuraban "a dónde apunta el cliente") en
+vez de inventar un segundo mecanismo de configuración paralelo.
+
+**I. UI — recorrido real:** `/proxy/sesiones` (lista, solo lectura) y `/proxy/sesiones/{id}`
+(detalle: metadatos de la sesión + mensajes capturados en orden, dirección, timestamp, longitud,
+MTI). Deliberadamente SIN control de iniciar/detener el proceso desde la web — mismo criterio que
+`sibu-host-demo`: "la web no levanta el host" se aplica igual al proxy, y un mecanismo de
+arranque/parada remoto vía heartbeat habría sido alcance nuevo no pedido explícitamente por los
+criterios de aceptación (punto 13: "UI mínima funciona SI SE IMPLEMENTA"). Verificado en
+navegador real contra la base de desarrollo (migrada primero con backup, `PRAGMA
+foreign_key_check` limpio): dos procesos reales (`sibu-host-demo` + `sibu-proxy`) atendieron un
+Echo real cada uno, las dos sesiones aparecieron en la lista con su estado/motivo de cierre, y el
+detalle mostró los dos mensajes capturados (`0800`/`0810`) sin ningún dato sensible.
+
+**J. E2E — casos realizados (puntos 24-28 del encargo):** (1) `0800`→`0810` a través del proxy
+contra un `HostSimulado` real; (2) `0200`→`0210` ídem; (3) una regla D1 real del upstream
+(rechazo `DE39=51`) atraviesa el proxy sin alterarse — demuestra integración Proxy + Host Rules
+(ver K); (4) un upstream que acepta la conexión y la cierra sin responder se refleja como un
+fallo de transporte limpio del lado del cliente, sin que el proxy se cuelgue; (5) un frame que NO
+decodifica como ISO 8583 cruza igual, comparado byte a byte, marcado `interpretable=False` sin
+bloquear el tráfico. Además: upstream caído AL CONECTAR (puerto real sin nada escuchando, nunca
+un doble) cierra la conexión-cliente sin inventar una respuesta y lo registra
+(`FALLO_CONEXION_UPSTREAM`); y una E2E con dos PROCESOS REALES del sistema operativo
+(`sibu-host-demo` + `sibu-proxy`, cada uno su propio PID, lanzados con `python -m ...`) para la
+primera E2E del encargo, mismo patrón que el cierre del restart de D2.
+
+**K. Integración con Host Rules:** la regla D1 de rechazo por monto (creada real, persistida vía
+`ServicioReglasHost.crear()`) gobierna la respuesta del `HostSimulado` real detrás del proxy; el
+cliente, hablando SOLO con el proxy, recibe `DE39=51` exactamente igual que si hablara
+directamente con el host — el proxy no supo ni necesitó saber que había una regla de por medio.
+
+**L. Concurrencia:** ocho conexiones-cliente simultáneas contra un mismo proxy y un mismo
+upstream, cada una con su propia sesión aislada (sin STAN ni datos de transacción compartidos
+entre ellas, mismo principio que D2 ya estableció por regla en vez de por host) — las ocho
+terminan aprobadas, con ocho `session_id` distintos persistidos.
+
+**M. Tests:** 1525 passed/0 skipped al abrir E1 (tras integrar D2) → **1549 passed/0 skipped** al
+cierre de E1 (24 nuevos: 3 de migración de esquema, 6 de persistencia de sesiones/mensajes, 8 de
+E2E del proxy [incluida la prueba byte-for-byte obligatoria], 2 de seguridad, 4 de CLI, 1 de
+E2E con dos procesos reales). Fase A, B, C, D intactas (sus propias suites pasan sin
+modificación).
+
+**N. Commits:** `c0c214b` (E1.1: modelo de dominio y persistencia), `6498677` (E1.2:
+`ProxyIso8583` + CLI), `f0516a6` (E1.3: entry point), `dddd0e4` (E1.4: UI de solo lectura),
+`7fb42ed` (E1.5: 24 pruebas nuevas). No mergeado a `main` — queda en
+`feature/proxy-e1-transparent`, pendiente de revisión del propietario.
+
+**O. Próximo paso:** decisión del propietario — mismos tres caminos que al cierre de D2 (**D3**,
+**C4**), más ahora **E2** (transformación activa sobre el proxy, fuera de alcance de E1 por
+diseño) como cuarta opción. Ninguno se inicia sin autorización explícita.

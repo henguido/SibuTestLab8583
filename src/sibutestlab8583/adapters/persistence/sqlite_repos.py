@@ -43,6 +43,13 @@ from ...domain.modelos import (
     Suite,
     TarjetaPrueba,
 )
+from ...domain.proxy import (
+    DireccionMensajeProxy,
+    EstadoSesionProxy,
+    MensajeProxyCapturado,
+    MotivoCierreProxy,
+    SesionProxy,
+)
 from ...domain.reglas_host import (
     ComportamientoRegla,
     CondicionRegla,
@@ -1452,4 +1459,124 @@ def _a_estado_regla_host(fila: aiosqlite.Row) -> EstadoReglaHost:
         regla_id=fila["regla_id"],
         aplicaciones_consumidas=fila["aplicaciones_consumidas"],
         actualizado_en=datetime.fromisoformat(fila["actualizado_en"]),
+    )
+
+
+class RepositorioSesionesProxySQLite(_RepositorioSQLite):
+    """Sesiones del Proxy ISO 8583 (Fase E1). `crear` inserta la fila una
+    sola vez (session_id como PK); `actualizar` es siempre un UPDATE de esa
+    misma fila -una sesion nunca produce mas de una fila, sin importar
+    cuantas veces cambie de estado."""
+
+    async def crear(self, sesion: SesionProxy) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "INSERT INTO proxy_sesiones"
+                " (session_id, cliente_host, cliente_puerto, upstream_host,"
+                "  upstream_puerto, estado, motivo_cierre, inicio, fin)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    sesion.session_id,
+                    sesion.cliente_host,
+                    sesion.cliente_puerto,
+                    sesion.upstream_host,
+                    sesion.upstream_puerto,
+                    sesion.estado.value,
+                    sesion.motivo_cierre.value if sesion.motivo_cierre else None,
+                    sesion.inicio.isoformat(),
+                    sesion.fin.isoformat() if sesion.fin else None,
+                ),
+            )
+            await conexion.commit()
+
+    async def actualizar(self, sesion: SesionProxy) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "UPDATE proxy_sesiones SET estado = ?, motivo_cierre = ?, fin = ?"
+                " WHERE session_id = ?",
+                (
+                    sesion.estado.value,
+                    sesion.motivo_cierre.value if sesion.motivo_cierre else None,
+                    sesion.fin.isoformat() if sesion.fin else None,
+                    sesion.session_id,
+                ),
+            )
+            await conexion.commit()
+
+    async def obtener(self, session_id: str) -> SesionProxy | None:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM proxy_sesiones WHERE session_id = ?", (session_id,)
+            ) as cursor:
+                fila = await cursor.fetchone()
+        return _a_sesion_proxy(fila) if fila else None
+
+    async def listar(self, limite: int = 50) -> Sequence[SesionProxy]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM proxy_sesiones ORDER BY inicio DESC LIMIT ?", (limite,)
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_sesion_proxy(f) for f in filas]
+
+
+def _a_sesion_proxy(fila: aiosqlite.Row) -> SesionProxy:
+    return SesionProxy(
+        session_id=fila["session_id"],
+        cliente_host=fila["cliente_host"],
+        cliente_puerto=fila["cliente_puerto"],
+        upstream_host=fila["upstream_host"],
+        upstream_puerto=fila["upstream_puerto"],
+        estado=EstadoSesionProxy(fila["estado"]),
+        motivo_cierre=MotivoCierreProxy(fila["motivo_cierre"]) if fila["motivo_cierre"] else None,
+        inicio=datetime.fromisoformat(fila["inicio"]),
+        fin=datetime.fromisoformat(fila["fin"]) if fila["fin"] else None,
+    )
+
+
+class RepositorioMensajesProxySQLite(_RepositorioSQLite):
+    """Metadata segura de los frames capturados por una sesion -nunca el
+    payload (ver `domain.proxy.MensajeProxyCapturado`)."""
+
+    async def registrar(self, mensaje: MensajeProxyCapturado) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "INSERT INTO proxy_mensajes"
+                " (session_id, direccion, orden, longitud, mti, interpretable, creado_en)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    mensaje.session_id,
+                    mensaje.direccion.value,
+                    mensaje.orden,
+                    mensaje.longitud,
+                    mensaje.mti,
+                    int(mensaje.interpretable),
+                    mensaje.creado_en.isoformat(),
+                ),
+            )
+            await conexion.commit()
+
+    async def listar_por_sesion(self, session_id: str) -> Sequence[MensajeProxyCapturado]:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM proxy_mensajes WHERE session_id = ? ORDER BY orden",
+                (session_id,),
+            ) as cursor:
+                filas = await cursor.fetchall()
+        return [_a_mensaje_proxy(f) for f in filas]
+
+
+def _a_mensaje_proxy(fila: aiosqlite.Row) -> MensajeProxyCapturado:
+    return MensajeProxyCapturado(
+        mensaje_id=fila["mensaje_id"],
+        session_id=fila["session_id"],
+        direccion=DireccionMensajeProxy(fila["direccion"]),
+        orden=fila["orden"],
+        longitud=fila["longitud"],
+        mti=fila["mti"],
+        interpretable=bool(fila["interpretable"]),
+        creado_en=datetime.fromisoformat(fila["creado_en"]),
     )

@@ -429,6 +429,45 @@ CREATE TABLE IF NOT EXISTS reglas_host_estado (
     aplicaciones_consumidas INTEGER NOT NULL DEFAULT 0,
     actualizado_en          TEXT    NOT NULL
 );
+
+-- Proxy ISO 8583 transparente (Fase E1, 2026-09-21). Una sesion de proxy es
+-- la conexion-cliente y su conexion-upstream emparejada 1:1 -separada de
+-- `proxy_mensajes` por el mismo principio que ya separa configuracion de
+-- auditoria en D1/D2: la sesion cambia de estado mientras vive (UPDATE de
+-- la misma fila, nunca INSERT por cambio); los mensajes son auditoria
+-- append-only. `estado`/`motivo_cierre` son texto (mismo criterio que
+-- `EstadoEjecucion`/`comportamiento_tipo`: el enum de Python es la
+-- autoridad, la columna solo lo transporta).
+CREATE TABLE IF NOT EXISTS proxy_sesiones (
+    session_id      TEXT    PRIMARY KEY,
+    cliente_host    TEXT    NOT NULL,
+    cliente_puerto  INTEGER NOT NULL,
+    upstream_host   TEXT    NOT NULL,
+    upstream_puerto INTEGER NOT NULL,
+    estado          TEXT    NOT NULL,
+    motivo_cierre   TEXT,
+    inicio          TEXT    NOT NULL,
+    fin             TEXT
+);
+
+-- Metadata SEGURA de cada frame capturado por una sesion -NUNCA el
+-- payload, NUNCA ningun campo del mensaje (ver el aviso de seguridad en
+-- `domain/proxy.py::MensajeProxyCapturado`, mismo principio estructural que
+-- `reglas_host_eventos`: el conjunto de columnas es cerrado, no hay una
+-- columna JSON/BLOB de proposito general donde un PAN pudiera colarse).
+-- `mti` es NULL cuando el frame no pudo decodificarse -el proxy lo
+-- reenvia igual (punto 10 del encargo: "no bloquea el trafico"), solo
+-- queda constancia de que no fue interpretable.
+CREATE TABLE IF NOT EXISTS proxy_mensajes (
+    mensaje_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id    TEXT    NOT NULL REFERENCES proxy_sesiones(session_id),
+    direccion     TEXT    NOT NULL,
+    orden         INTEGER NOT NULL,
+    longitud      INTEGER NOT NULL,
+    mti           TEXT,
+    interpretable INTEGER NOT NULL,
+    creado_en     TEXT    NOT NULL
+);
 """
 
 #: Nombre de la secuencia del numero de trazabilidad.

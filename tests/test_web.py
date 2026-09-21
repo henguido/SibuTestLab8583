@@ -458,6 +458,15 @@ class ComposicionFalsa:
             self._repositorio_reglas_host, self.perfil, self._repositorio_estado_reglas_host
         )
 
+        from sibutestlab8583.adapters.persistence.sqlite_repos import (
+            RepositorioMensajesProxySQLite,
+            RepositorioSesionesProxySQLite,
+        )
+
+        # Fase E1: mismo criterio -SQLite real sobre el mismo espejo-.
+        self.sesiones_proxy = RepositorioSesionesProxySQLite(self._ruta_suites)
+        self.mensajes_proxy = RepositorioMensajesProxySQLite(self._ruta_suites)
+
     def bitmap_hex(self, mensaje):
         try:
             return self._codec_real.bitmap_hex(mensaje, self.perfil)
