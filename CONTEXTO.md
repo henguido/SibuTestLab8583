@@ -4,7 +4,7 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-14 (D2 — Reglas del Host con estado controlado)
+**Última actualización:** 2026-09-21 (E1 — Proxy TCP ISO 8583 transparente)
 
 ## Estado actual
 
@@ -79,8 +79,8 @@ real con el retry de Echo de C3 (una regla de timeout lo activa de verdad, sin t
 Hallazgo corregido en la verificación de navegador: el selector de campo exponía claves
 estructurales del bitmap ("h"/"p"/"t") como si fueran campos ISO reales.
 
-**D2 — Reglas del Host con estado controlado** (`feature/host-simulator-d2-stateful-rules`,
-commits `906593d`/`9353499`/`d32ce30`/`640d627`/`34dba88`/`ea118e7`, sin mergear todavía):
+**D2 — Reglas del Host con estado controlado** (integrado a `main`, merge `e7fefe8`; commits
+`906593d`/`9353499`/`d32ce30`/`640d627`/`34dba88`/`ea118e7`/`95393d1`/`ed0ee16`):
 `ReglaHost.max_aplicaciones` (atributo de nivel-regla, no una condición especial -mas simple de
 explicar, confirmado por el agente de diseño-). `EstadoReglaHost` (contador) vive en una tabla
 SEPARADA (`reglas_host_estado`), mismo principio que ya separa configuración de auditoría:
@@ -93,7 +93,28 @@ tiene éxito-. La prueba de fuego (razón central de Fase D): una secuencia C3 c
 contra una regla D2 de timeout (límite 1) más un fallback, TOTALMENTE AUTOMÁTICA -sin alternar
 nada desde la prueba, a diferencia del equivalente D1/C3 que necesitaba alternar `regla.activa`
 manualmente-. UI: campo "Número máximo de aplicaciones", columna "Aplicaciones" ("N / M" o "∞"),
-chip "Activa · agotada", acción "Reiniciar contador" -verificado en navegador real-.
+chip "Activa · agotada", acción "Reiniciar contador" -verificado en navegador real-. Cierre del
+gap de restart (D2.8): `Composicion.host_simulado()` no conectaba reglas/eventos/estado -corregido
+(ahora `async`, carga las reglas vigentes al arrancar)-; probado con un proceso REAL de
+`sibu-host-demo` matado y reemplazado por uno nuevo sobre la misma SQLite, contador y auditoría
+preservados. Integrado a `main` tras verificación post-merge completa.
+
+**E1 — Proxy TCP ISO 8583 transparente** (`feature/proxy-e1-transparent`, sin mergear todavía):
+Cliente → `ProxyIso8583` → upstream (host/switch). Dos "pumps" concurrentes por sesión
+(`asyncio.Task`), coordinados con `asyncio.wait(FIRST_COMPLETED)` -en cuanto un lado se cae, se
+cierra el otro y se cancela su tarea, sin huérfanas-. Reutiliza el framing existente sin cambios;
+NUNCA decodifica para decidir el forwarding (probado con un codec que siempre falla: el proxy
+sigue reenviando igual de bien). `SesionProxy`/`MensajeProxyCapturado` en tablas separadas
+(`proxy_sesiones`/`proxy_mensajes`), el segundo estructuralmente ciego al payload -mismo principio
+que `EventoReglaHost` de D1/D2-. Hallazgo real: una carrera entre los dos pumps podía perder el
+registro de auditoría de un mensaje ya reenviado si la cancelación llegaba mientras el registro
+seguía en vuelo -corregido con `asyncio.shield`-. Prueba byte-for-byte obligatoria confirmada:
+bytes crudos idénticos en ambos extremos, en ambos sentidos. Seguridad probada de extremo a
+extremo: una compra financiera real con PAN sintético cruza el proxy sin dejar rastro en
+`proxy_sesiones`/`proxy_mensajes`. CLI `sibu-proxy` (puerto por defecto 8584). UI de solo lectura
+(`/proxy/sesiones`), sin control de iniciar/detener desde la web -mismo criterio que
+`sibu-host-demo`-, verificada con dos procesos reales. Ver checkpoint completo en
+`docs/roadmap/SIBU_3.md` sección 16.
 
 Detalle completo (reportes A-N/A-L/A-O/A-N/A-O/A-P) en `docs/roadmap/SIBU_3.md` secciones 9, 10,
 11, 12, 13, 14 y 15; decisiones de gobernanza en `BITACORA.md`. Suite completa: **1522 passed,
@@ -448,12 +469,13 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-**D2 (reglas del Host con estado controlado) está completo en
-`feature/host-simulator-d2-stateful-rules`, sin mergear a `main` — pendiente de aprobación del
-propietario.** D1 ya fue aprobado e integrado a `main` (`fc69dbd`) antes de abrir D2. Próximo
-paso propuesto en el checkpoint (`docs/roadmap/SIBU_3.md` sección 15.P): **D3**
-(`visto_antes`/modos de falla restantes), **C4** (capacidades adicionales de secuencia), o
-**Fase E** (Client/Server/Proxy). Decisión pendiente del propietario.
+**E1 (proxy TCP ISO 8583 transparente) está completo en `feature/proxy-e1-transparent`, sin
+mergear a `main` — pendiente de aprobación del propietario.** D1 y D2 ya fueron aprobados e
+integrados a `main` (`fc69dbd`, `e7fefe8`) antes de abrir E1. El propietario decidió Fase E sobre
+D3/C4 (ver checkpoint `docs/roadmap/SIBU_3.md` sección 16.O): próximo paso a decidir entre **D3**
+(`visto_antes`/modos de falla restantes), **C4** (capacidades adicionales de secuencia), o **E2**
+(transformación activa sobre el proxy, fuera de alcance de E1 por diseño). Decisión pendiente del
+propietario.
 
 Las cinco mejoras funcionales pedidas el 2026-09-07 (ver «Estado actual» e «Historial de
 avances») están implementadas y verificadas, pero **sin commit ni push todavía** -queda para

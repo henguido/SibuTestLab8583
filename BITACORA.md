@@ -3200,3 +3200,56 @@ el fallback normal respondió, el contador permaneció en 1, la auditoría regis
 su `match_number`, y `PRAGMA foreign_key_check` quedó vacío. Suite reconciliada:
 1523 passed + 2 skipped (Bash, artefacto de `PATH`) = 1525 passed / 0 skipped con el `PATH`
 corregido.
+
+Integrado a `main` en `e7fefe8` (`--no-ff`, historia conservada), tras verificación post-merge
+completa (suite, PAN guard, diff-check, FK check, smokes de reglas stateful y retry de C3
+automático) y push confirmado (`HEAD == origin/main`).
+
+## 2026-09-21 — E1: Proxy TCP ISO 8583 transparente
+
+El propietario autorizó Fase E (Client/Server/Proxy) sobre D3/C4, comenzando por E1 -proxy
+transparente, sin transformación de tráfico todavía-. Rama `feature/proxy-e1-transparent` desde
+el nuevo `main`. Cuatro agentes read-only (transporte, arquitectura, seguridad, UX) antes de
+escribir código, mismo criterio que D1/D2.
+
+**Hallazgo de investigación clave:** ni `TransporteTcp` ni `HostSimulado._atender` son
+reutilizables tal cual para el proxy -ambos modelan "una conexión = un solo mensaje = cierre",
+mientras que un proxy transparente full-duplex necesita conexiones persistentes con lectura
+concurrente en ambos sentidos. El framing (`FramingDemostracion`) SÍ es reutilizable sin cambios,
+porque ya trabaja sobre bytes opacos sin invocar nunca el codec.
+
+**Decisión de diseño:** dos "pumps" concurrentes por sesión (`asyncio.Task`), coordinados con
+`asyncio.wait(..., FIRST_COMPLETED)` -en cuanto un lado se cae, se cierra el otro y se cancela su
+tarea, sin dejar huérfanas. `SesionProxy` (estado explícito: conectando/activa/cerrada, con un
+`motivo_cierre` de siete valores posibles) y `MensajeProxyCapturado` (metadata segura,
+estructuralmente ciega al payload -mismo principio que `EventoReglaHost` de D1/D2) en tablas
+separadas (`proxy_sesiones`/`proxy_mensajes`), migración puramente aditiva.
+
+**Hallazgo real durante las pruebas (una carrera genuina):** cuando un lado de la conexión cerraba
+justo después de que el otro pump terminara de reenviar un mensaje, la cancelación coordinada
+podía interrumpir el registro de auditoría de ESE mensaje a medias -perdiéndolo silenciosamente,
+aunque el mensaje SÍ se había reenviado de verdad. Corregido envolviendo esa escritura en
+`asyncio.shield`: la cancelación sigue deteniendo el pump de inmediato, pero el registro ya en
+curso completa en segundo plano. Reproducido de forma determinista por
+`test_mensaje_no_interpretable_atraviesa_sin_bloquear_el_trafico` antes del fix.
+
+**Transparencia byte-for-byte, probada literalmente:** `test_bytes_forwarding_es_exacto_en_ambos_
+sentidos` compara bytes CRUDOS -no campos ISO interpretados- en cada extremo real, con un payload
+arbitrario y una respuesta distinguible. El pump nunca decodifica para decidir el forwarding: una
+prueba dedicada usa un codec que SIEMPRE falla al decodificar y confirma que el proxy sigue
+reenviando el mensaje real igual de bien, solo marcándolo `interpretable=False`.
+
+**Seguridad probada de extremo a extremo, no solo estructuralmente:** una compra financiera real
+con el PAN sintético de la tarjeta demo cruza el proxy, y se escanean todas las filas de
+`proxy_sesiones`/`proxy_mensajes` con la misma heurística de 12-19 dígitos consecutivos que ya
+protege el repositorio Git -sin ningún hallazgo.
+
+**UI deliberadamente mínima y de solo lectura:** `/proxy/sesiones` y su detalle, SIN control de
+iniciar/detener el proceso desde la web (mismo criterio que `sibu-host-demo`: la web no lo
+levanta). Verificado con navegador real contra la base de desarrollo, con dos procesos reales
+(`sibu-host-demo` + `sibu-proxy`) atendiendo tráfico real primero (backup previo
+`sibutestlab8583.db.bak-preE1-*`, migración aplicada, `PRAGMA foreign_key_check` limpio).
+
+**Tests:** 1525 passed al abrir E1 (tras integrar D2) → ver commit de cierre para el total final.
+Sin merge a `main` -pendiente de aprobación del propietario. Reporte completo (secciones A-O) en
+`docs/roadmap/SIBU_3.md` sección 16.
