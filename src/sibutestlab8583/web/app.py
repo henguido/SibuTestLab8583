@@ -47,6 +47,7 @@ from ..application.corredor_suites import (
 )
 from ..application.ejecutor_escenarios import EscenarioNoEjecutable
 from ..application.ejecutor_secuencia import SecuenciaNoEjecutable
+from ..application.captura_a_escenario import InteraccionNoImportable
 from ..application.escenarios import (
     DatosEdicionEscenario,
     DatosNuevoEscenario,
@@ -1752,13 +1753,23 @@ async def escenarios_lista(
     buscar: str = Query(""),
     composicion: Composicion = Depends(obtener_composicion),
 ):
+    escenarios = await composicion.administracion_escenarios.listar(buscar=buscar)
+    # E2: trazabilidad de procedencia -"desde captura de Proxy"-, consulta
+    # aparte por escenario (catalogo de tamaño de laboratorio, sin paginar;
+    # nunca la fuente de verdad, solo un rotulo visible para quien audite).
+    origenes = {}
+    for escenario in escenarios:
+        origen = await composicion.origen_captura_escenario.obtener_por_escenario(escenario.escenario_id)
+        if origen is not None:
+            origenes[escenario.escenario_id] = origen.session_id
     return PLANTILLAS.TemplateResponse(
         request=request,
         name="escenarios.html",
         context={
             "seccion": "escenarios",
-            "escenarios": await composicion.administracion_escenarios.listar(buscar=buscar),
+            "escenarios": escenarios,
             "buscar": buscar,
+            "origenes_captura": origenes,
         },
     )
 
@@ -2585,8 +2596,134 @@ async def proxy_sesion_detalle(
             "seccion": "proxy_sesiones",
             "sesion": presentacion.fila_de_sesion_proxy(sesion),
             "filas_mensajes": [presentacion.fila_de_mensaje_proxy(m) for m in mensajes],
+            "filas_intercambios": presentacion.filas_de_intercambios(mensajes),
+            "session_id": session_id,
         },
     )
+
+
+_MAX_CAMPOS_MANUALES_CAPTURA = 6
+
+
+def _leer_campos_manuales_captura(formulario, disponibles: frozenset[str]) -> dict[str, str]:
+    """Mismo patron numerado que `_leer_campos_respuesta` (D1): filas fijas
+    `campo_manual_{i}`/`valor_manual_{i}`. Ignora silenciosamente un numero
+    que el perfil no ofrece como opcional para este MTI -la UI real nunca
+    emite un `<option>` para eso, asi que no hay necesidad de rechazar en
+    seco como si en `_leer_expectativas`."""
+    campos: dict[str, str] = {}
+    for i in range(1, _MAX_CAMPOS_MANUALES_CAPTURA + 1):
+        campo = (formulario.get(f"campo_manual_{i}") or "").strip()
+        valor = (formulario.get(f"valor_manual_{i}") or "").strip()
+        if campo and valor and campo in disponibles:
+            campos[campo] = valor
+    return campos
+
+
+async def _formulario_crear_escenario_captura(
+    request: Request, composicion: Composicion, session_id: str, mensaje_id_solicitud: int,
+    *, error: str | None = None, valores=None, estado_http: int = 200,
+):
+    try:
+        propuesta = await composicion.captura_a_escenario.proponer(session_id, mensaje_id_solicitud)
+    except InteraccionNoImportable as motivo:
+        return PLANTILLAS.TemplateResponse(
+            request=request,
+            name="no_encontrado.html",
+            context={
+                "seccion": "proxy_sesiones",
+                "titulo": "No se puede crear un escenario desde aquí",
+                "detalle": str(motivo),
+                "ruta_vuelta": f"/proxy/sesiones/{session_id}",
+                "texto_vuelta": "Volver a la sesión",
+            },
+            status_code=400,
+        )
+    v = valores or {}
+    return PLANTILLAS.TemplateResponse(
+        request=request,
+        name="proxy_crear_escenario.html",
+        context={
+            "seccion": "proxy_sesiones",
+            "session_id": session_id,
+            "propuesta": propuesta,
+            "tarjetas": await composicion.administracion_tarjetas.listar(),
+            "conexiones": await composicion.administracion_conexiones.listar_activas(),
+            "v": v,
+            "error": error,
+        },
+        status_code=estado_http,
+    )
+
+
+@enrutador.get(
+    "/proxy/sesiones/{session_id}/mensajes/{mensaje_id_solicitud}/crear-escenario",
+    response_class=HTMLResponse,
+)
+async def proxy_crear_escenario_formulario(
+    request: Request, session_id: str, mensaje_id_solicitud: int,
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    return await _formulario_crear_escenario_captura(request, composicion, session_id, mensaje_id_solicitud)
+
+
+@enrutador.post(
+    "/proxy/sesiones/{session_id}/mensajes/{mensaje_id_solicitud}/crear-escenario",
+    response_class=HTMLResponse,
+)
+async def proxy_crear_escenario_guardar(
+    request: Request, session_id: str, mensaje_id_solicitud: int,
+    composicion: Composicion = Depends(obtener_composicion),
+):
+    """POST del formulario de revision (E2, punto 12/31 del encargo): NUNCA
+    guarda automaticamente -esta es la unica ruta que persiste algo, y solo
+    tras la revision humana del formulario. Reutiliza `ServicioEscenarios.
+    crear` a traves de `ServicioCapturaAEscenario.crear_desde_captura`, sin
+    ningun camino de guardado paralelo."""
+    formulario = await request.form()
+    try:
+        propuesta = await composicion.captura_a_escenario.proponer(session_id, mensaje_id_solicitud)
+    except InteraccionNoImportable as motivo:
+        return PLANTILLAS.TemplateResponse(
+            request=request,
+            name="no_encontrado.html",
+            context={
+                "seccion": "proxy_sesiones",
+                "titulo": "No se puede crear un escenario desde aquí",
+                "detalle": str(motivo),
+                "ruta_vuelta": f"/proxy/sesiones/{session_id}",
+                "texto_vuelta": "Volver a la sesión",
+            },
+            status_code=400,
+        )
+
+    nombre = (formulario.get("nombre") or "").strip()
+    card_id = (formulario.get("card_id") or "").strip() or None
+    monto_bruto = (formulario.get("monto") or "").strip()
+    conexion_id = (formulario.get("conexion_id") or "").strip()
+    try:
+        monto = presentacion.validar_monto(monto_bruto) if monto_bruto else None
+        campos_manuales = _leer_campos_manuales_captura(
+            formulario, propuesta.campos_opcionales_disponibles
+        )
+        expectativas = _leer_expectativas(
+            formulario, composicion.perfil, propuesta.mti_respuesta
+        )
+        creado = await composicion.captura_a_escenario.crear_desde_captura(
+            DatosNuevoEscenario(
+                nombre=nombre, mti=propuesta.mti_solicitud, conexion_id=conexion_id,
+                card_id=card_id, monto=monto, campos_manuales=campos_manuales,
+                expectativas=expectativas,
+            ),
+            session_id=session_id, mensaje_id_solicitud=propuesta.mensaje_id_solicitud,
+            mensaje_id_respuesta=propuesta.mensaje_id_respuesta,
+        )
+    except ValueError as error:
+        return await _formulario_crear_escenario_captura(
+            request, composicion, session_id, mensaje_id_solicitud,
+            error=str(error), valores=formulario, estado_http=400,
+        )
+    return RedirectResponse("/escenarios", status_code=303)
 
 
 @enrutador.get("/secuencias", response_class=HTMLResponse)

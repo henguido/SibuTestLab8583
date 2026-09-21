@@ -19,6 +19,38 @@
 </section>
 
 <section class="panel">
+  <h2>Intercambios</h2>
+  {% if filas_intercambios %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Intercambios">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Intercambio</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas_intercambios %}
+        <tr>
+          <td class="mono">{{ fila.resumen }}</td>
+          <td>
+            {% if fila.puede_crear_escenario %}
+            <a href="/proxy/sesiones/{{ session_id }}/mensajes/{{ fila.mensaje_id_solicitud }}/crear-escenario">Crear escenario</a>
+            {% else %}
+            <span class="campo__pista">{{ fila.motivo_no_disponible }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="estado-vacio">Ningún intercambio identificable todavía en esta sesión.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
   <h2>Mensajes capturados</h2>
   {% if filas_mensajes %}
   <div class="desplazable" tabindex="0" role="region" aria-label="Mensajes capturados">
