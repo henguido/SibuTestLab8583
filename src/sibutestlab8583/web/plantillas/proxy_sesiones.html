@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import encabezado_pagina %}
+{% block titulo %}Sesiones del Proxy · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+{{ encabezado_pagina(
+  'Sesiones del Proxy',
+  'Conexiones observadas por el proxy TCP ISO 8583 transparente. El proxy corre como proceso aparte (sibu-proxy); esta pantalla solo observa lo ya persistido, nunca lo inicia ni lo detiene.'
+) }}
+
+<section class="panel">
+  {% if filas %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Sesiones del Proxy">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th>Cliente</th>
+          <th>Upstream</th>
+          <th>Inicio</th>
+          <th>Fin</th>
+          <th>Estado</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas %}
+        <tr>
+          <td class="mono">{{ fila.cliente }}</td>
+          <td class="mono">{{ fila.upstream }}</td>
+          <td class="mono">{{ fila.inicio }}</td>
+          <td class="mono">{{ fila.fin or '—' }}</td>
+          <td><span class="chip chip--{{ fila.estado_chip }}">{{ fila.estado_texto }}</span></td>
+          <td><a href="/proxy/sesiones/{{ fila.session_id }}">Ver detalle</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="estado-vacio">Todavía no hay ninguna sesión. Arranca <code>sibu-proxy</code> y envía tráfico a través de él.</p>
+  {% endif %}
+</section>
+{% endblock %}

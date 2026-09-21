@@ -33,6 +33,7 @@ from ..domain.modelos import (
     MensajeIso,
     ResultadoCompra,
 )
+from ..domain.proxy import DireccionMensajeProxy, MensajeProxyCapturado, MotivoCierreProxy, SesionProxy
 from ..domain.reglas_host import CAMPO_MTI, ReglaHost
 from .operaciones import OPERACIONES_CON_TARJETA
 
@@ -189,6 +190,9 @@ GRUPOS_NAV: tuple[GrupoNav, ...] = (
     )),
     GrupoNav("Host Simulado", (
         Seccion("reglas_host", "/reglas-host", "Reglas del Host"),
+    )),
+    GrupoNav("Proxy", (
+        Seccion("proxy_sesiones", "/proxy/sesiones", "Sesiones del Proxy"),
     )),
     GrupoNav("Configuración", (
         Seccion("conexiones", "/configuracion/conexiones", "Conexiones"),
@@ -1524,4 +1528,89 @@ def fila_de_regla_host(regla: ReglaHost, estado=None) -> FilaReglaHost:
         comportamiento=comportamiento,
         progreso_aplicaciones=progreso,
         agotada=agotada,
+    )
+
+
+#: Texto legible para cada motivo de cierre -nunca el `.value` crudo del
+#: enum en pantalla, mismo criterio que el resto de la presentacion.
+_ETIQUETA_MOTIVO_CIERRE: Mapping[str, str] = {
+    MotivoCierreProxy.EOF_CLIENTE.value: "cliente cerró",
+    MotivoCierreProxy.EOF_UPSTREAM.value: "upstream cerró",
+    MotivoCierreProxy.ERROR_CLIENTE.value: "error de transporte (cliente)",
+    MotivoCierreProxy.ERROR_UPSTREAM.value: "error de transporte (upstream)",
+    MotivoCierreProxy.TIMEOUT_INACTIVIDAD.value: "inactividad",
+    MotivoCierreProxy.FALLO_CONEXION_UPSTREAM.value: "no se pudo conectar al upstream",
+    MotivoCierreProxy.APAGADO_PROXY.value: "proxy detenido",
+}
+
+#: Motivos que representan un cierre limpio -chip distinto de un error de
+#: transporte, mismo principio que ya separa pass/fail de activa/inactiva.
+_MOTIVOS_CIERRE_LIMPIO = frozenset({
+    MotivoCierreProxy.EOF_CLIENTE.value,
+    MotivoCierreProxy.EOF_UPSTREAM.value,
+    MotivoCierreProxy.APAGADO_PROXY.value,
+})
+
+
+@dataclass(frozen=True)
+class FilaSesionProxy:
+    """Una fila de la lista de Sesiones del Proxy -resumen de solo lectura
+    (la fuente de verdad es `SesionProxy`, ver `domain.proxy`)."""
+
+    session_id: str
+    cliente: str
+    upstream: str
+    inicio: str
+    fin: str | None
+    estado_chip: str
+    estado_texto: str
+
+
+def fila_de_sesion_proxy(sesion: SesionProxy) -> FilaSesionProxy:
+    if sesion.estado.value == "activa":
+        chip, texto = "activa", "Activa"
+    elif sesion.motivo_cierre is not None and sesion.motivo_cierre.value in _MOTIVOS_CIERRE_LIMPIO:
+        chip, texto = "inactiva", "Cerrada"
+    else:
+        chip, texto = "fail", "Cerrada (error)"
+    if sesion.motivo_cierre is not None:
+        texto += f" · {_ETIQUETA_MOTIVO_CIERRE.get(sesion.motivo_cierre.value, sesion.motivo_cierre.value)}"
+    return FilaSesionProxy(
+        session_id=sesion.session_id,
+        cliente=f"{sesion.cliente_host}:{sesion.cliente_puerto}",
+        upstream=f"{sesion.upstream_host}:{sesion.upstream_puerto}",
+        inicio=sesion.inicio.strftime("%Y-%m-%d %H:%M:%S"),
+        fin=sesion.fin.strftime("%Y-%m-%d %H:%M:%S") if sesion.fin else None,
+        estado_chip=chip,
+        estado_texto=texto,
+    )
+
+
+@dataclass(frozen=True)
+class FilaMensajeProxy:
+    """Una fila de la lista de mensajes capturados por una sesion -metadata
+    segura unicamente, nunca el payload (ver `domain.proxy.
+    MensajeProxyCapturado`)."""
+
+    orden: int
+    direccion_etiqueta: str
+    creado_en: str
+    longitud: int
+    mti: str | None
+    interpretable: bool
+
+
+def fila_de_mensaje_proxy(mensaje: MensajeProxyCapturado) -> FilaMensajeProxy:
+    etiqueta = (
+        "Cliente → Upstream"
+        if mensaje.direccion == DireccionMensajeProxy.CLIENTE_A_UPSTREAM
+        else "Upstream → Cliente"
+    )
+    return FilaMensajeProxy(
+        orden=mensaje.orden,
+        direccion_etiqueta=etiqueta,
+        creado_en=mensaje.creado_en.strftime("%Y-%m-%d %H:%M:%S"),
+        longitud=mensaje.longitud,
+        mti=mensaje.mti,
+        interpretable=mensaje.interpretable,
     )

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import encabezado_pagina, senal %}
+{% block titulo %}Sesión del Proxy · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+{{ encabezado_pagina('Sesión del Proxy', sesion.session_id) }}
+
+<section class="panel">
+  <table class="tabla">
+    <tbody>
+      <tr><th>Cliente</th><td class="mono">{{ sesion.cliente }}</td></tr>
+      <tr><th>Upstream</th><td class="mono">{{ sesion.upstream }}</td></tr>
+      <tr><th>Inicio</th><td class="mono">{{ sesion.inicio }}</td></tr>
+      <tr><th>Fin</th><td class="mono">{{ sesion.fin or '—' }}</td></tr>
+      <tr><th>Estado</th><td><span class="chip chip--{{ sesion.estado_chip }}">{{ sesion.estado_texto }}</span></td></tr>
+    </tbody>
+  </table>
+  <p><a href="/proxy/sesiones">← Volver a Sesiones del Proxy</a></p>
+</section>
+
+<section class="panel">
+  <h2>Mensajes capturados</h2>
+  {% if filas_mensajes %}
+  <div class="desplazable" tabindex="0" role="region" aria-label="Mensajes capturados">
+    <table class="tabla">
+      <thead>
+        <tr>
+          <th class="num">#</th>
+          <th>Dirección</th>
+          <th>Timestamp</th>
+          <th class="num">Longitud</th>
+          <th>MTI</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fila in filas_mensajes %}
+        <tr>
+          <td class="num mono">{{ fila.orden }}</td>
+          <td>{{ fila.direccion_etiqueta }}</td>
+          <td class="mono">{{ fila.creado_en }}</td>
+          <td class="num mono">{{ fila.longitud }}</td>
+          <td class="mono">
+            {% if fila.interpretable %}
+            {{ fila.mti }}
+            {% else %}
+            <span class="aviso__senal">{{ senal('invalida', 15) }}</span> no interpretable
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="estado-vacio">Metadata únicamente -el proxy nunca persiste el contenido del mensaje ni campos sensibles.</p>
+  {% else %}
+  <p class="estado-vacio">Todavía no se capturó ningún mensaje en esta sesión.</p>
+  {% endif %}
+</section>
+{% endblock %}
