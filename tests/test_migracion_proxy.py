@@ -38,6 +38,33 @@ async def test_inicializar_es_idempotente_sobre_las_tablas_del_proxy(base):
     }
 
 
+async def test_una_base_nueva_ya_nace_con_la_tabla_de_origen_captura_e2(base):
+    with sqlite3.connect(base) as conexion:
+        nombres = {
+            fila[0]
+            for fila in conexion.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    assert "escenarios_origen_captura" in nombres
+
+
+async def test_escenarios_origen_captura_tiene_fk_hacia_escenarios(base):
+    with sqlite3.connect(base) as conexion:
+        conexion.execute("PRAGMA foreign_keys = ON")
+        try:
+            conexion.execute(
+                "INSERT INTO escenarios_origen_captura"
+                " (escenario_id, session_id, mensaje_id_solicitud, creado_en)"
+                " VALUES ('no-existe', 'no-existe', 1, '2026-09-21T00:00:00+00:00')"
+            )
+            conexion.commit()
+            fallo = False
+        except sqlite3.IntegrityError:
+            fallo = True
+    assert fallo
+
+
 async def test_proxy_mensajes_tiene_fk_hacia_proxy_sesiones(base):
     with sqlite3.connect(base) as conexion:
         conexion.execute("PRAGMA foreign_keys = ON")

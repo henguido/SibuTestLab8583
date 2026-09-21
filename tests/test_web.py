@@ -467,6 +467,18 @@ class ComposicionFalsa:
         self.sesiones_proxy = RepositorioSesionesProxySQLite(self._ruta_suites)
         self.mensajes_proxy = RepositorioMensajesProxySQLite(self._ruta_suites)
 
+        from sibutestlab8583.adapters.persistence.sqlite_repos import (
+            RepositorioOrigenCapturaEscenarioSQLite,
+        )
+        from sibutestlab8583.application.captura_a_escenario import ServicioCapturaAEscenario
+
+        # Fase E2: mismo criterio -SQLite real sobre el mismo espejo-.
+        self.origen_captura_escenario = RepositorioOrigenCapturaEscenarioSQLite(self._ruta_suites)
+        self.captura_a_escenario = ServicioCapturaAEscenario(
+            self.sesiones_proxy, self.mensajes_proxy, self.origen_captura_escenario,
+            self._repositorio_destinos, self.administracion_escenarios, self.perfil,
+        )
+
     def bitmap_hex(self, mensaje):
         try:
             return self._codec_real.bitmap_hex(mensaje, self.perfil)
