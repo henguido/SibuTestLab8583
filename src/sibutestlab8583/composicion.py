@@ -18,6 +18,7 @@ from typing import Mapping
 
 from .adapters.host_simulado import HostSimulado
 from .adapters.iso8583.codec import CodecIso8583
+from .adapters.proxy import ProxyIso8583
 from .adapters.persistence.esquema import ruta_base_datos
 from .adapters.persistence.sqlite_repos import (
     GeneradorStanSQLite,
@@ -29,8 +30,10 @@ from .adapters.persistence.sqlite_repos import (
     RepositorioEscenariosSQLite,
     RepositorioEstadoReglasHostSQLite,
     RepositorioEventosReglasHostSQLite,
+    RepositorioMensajesProxySQLite,
     RepositorioReglasHostSQLite,
     RepositorioSecuenciasSQLite,
+    RepositorioSesionesProxySQLite,
     RepositorioSuitesSQLite,
     RepositorioTarjetasSQLite,
 )
@@ -126,6 +129,8 @@ class Composicion:
         self._reglas_host = RepositorioReglasHostSQLite(configuracion.ruta_base_datos)
         self._eventos_reglas_host = RepositorioEventosReglasHostSQLite(configuracion.ruta_base_datos)
         self._estado_reglas_host = RepositorioEstadoReglasHostSQLite(configuracion.ruta_base_datos)
+        self._sesiones_proxy = RepositorioSesionesProxySQLite(configuracion.ruta_base_datos)
+        self._mensajes_proxy = RepositorioMensajesProxySQLite(configuracion.ruta_base_datos)
         self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
@@ -196,6 +201,32 @@ class Composicion:
     @property
     def estado_reglas_host(self) -> RepositorioEstadoReglasHostSQLite:
         return self._estado_reglas_host
+
+    @property
+    def sesiones_proxy(self) -> RepositorioSesionesProxySQLite:
+        return self._sesiones_proxy
+
+    @property
+    def mensajes_proxy(self) -> RepositorioMensajesProxySQLite:
+        return self._mensajes_proxy
+
+    def proxy(self, destino_upstream: DestinoTcp | None = None) -> ProxyIso8583:
+        """Proxy de demostracion, para el comando `sibu-proxy`.
+
+        `destino_upstream` por defecto reutiliza `configuracion.
+        destino_por_defecto` (mismas variables `SIBU_HOST_DESTINO`/
+        `SIBU_PUERTO_DESTINO` que ya configuran a donde apunta el cliente) -
+        evita inventar un segundo mecanismo de configuracion paralelo para
+        "el destino" solo porque ahora lo consume el proxy en vez del
+        cliente. La web NO lo levanta -mismo criterio que `host_simulado()`."""
+        return ProxyIso8583(
+            self._framing,
+            destino_upstream or self.configuracion.destino_por_defecto,
+            codec=self._codec,
+            perfil=self._perfil,
+            repositorio_sesiones=self._sesiones_proxy,
+            repositorio_mensajes=self._mensajes_proxy,
+        )
 
     @property
     def ejecutor_escenarios(self) -> EjecutorDeEscenarios:
