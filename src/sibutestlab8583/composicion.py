@@ -31,6 +31,7 @@ from .adapters.persistence.sqlite_repos import (
     RepositorioEstadoReglasHostSQLite,
     RepositorioEventosReglasHostSQLite,
     RepositorioMensajesProxySQLite,
+    RepositorioOrigenCapturaEscenarioSQLite,
     RepositorioReglasHostSQLite,
     RepositorioSecuenciasSQLite,
     RepositorioSesionesProxySQLite,
@@ -43,6 +44,7 @@ from .adapters.transporte.tcp import (
     TransporteTcp,
     VerificadorDeConexionTcp,
 )
+from .application.captura_a_escenario import ServicioCapturaAEscenario
 from .application.comparacion_corridas import ServicioComparacionCorridas
 from .application.consultas import ServicioConsultas
 from .application.conexiones import ServicioConexiones
@@ -131,6 +133,9 @@ class Composicion:
         self._estado_reglas_host = RepositorioEstadoReglasHostSQLite(configuracion.ruta_base_datos)
         self._sesiones_proxy = RepositorioSesionesProxySQLite(configuracion.ruta_base_datos)
         self._mensajes_proxy = RepositorioMensajesProxySQLite(configuracion.ruta_base_datos)
+        self._origen_captura_escenario = RepositorioOrigenCapturaEscenarioSQLite(
+            configuracion.ruta_base_datos
+        )
         self._verificador_conexion = VerificadorDeConexionTcp()
         # El STAN vive en la base, no en memoria: debe seguir siendo unico
         # aunque el orquestador se construya de nuevo en cada peticion.
@@ -185,6 +190,21 @@ class Composicion:
     @property
     def administracion_escenarios(self) -> ServicioEscenarios:
         return ServicioEscenarios(self._escenarios, self._tarjetas, self._destinos, self._perfil)
+
+    @property
+    def captura_a_escenario(self) -> ServicioCapturaAEscenario:
+        """Fase E2: convertir un intercambio observado por el Proxy en un
+        Escenario reutilizable, con revision humana obligatoria antes de
+        guardar. Reutiliza `administracion_escenarios` -nunca un camino de
+        guardado paralelo."""
+        return ServicioCapturaAEscenario(
+            self._sesiones_proxy, self._mensajes_proxy, self._origen_captura_escenario,
+            self._destinos, self.administracion_escenarios, self._perfil,
+        )
+
+    @property
+    def origen_captura_escenario(self) -> RepositorioOrigenCapturaEscenarioSQLite:
+        return self._origen_captura_escenario
 
     @property
     def administracion_suites(self) -> ServicioSuites:
