@@ -3250,6 +3250,58 @@ levanta). Verificado con navegador real contra la base de desarrollo, con dos pr
 (`sibu-host-demo` + `sibu-proxy`) atendiendo tráfico real primero (backup previo
 `sibutestlab8583.db.bak-preE1-*`, migración aplicada, `PRAGMA foreign_key_check` limpio).
 
-**Tests:** 1525 passed al abrir E1 (tras integrar D2) → ver commit de cierre para el total final.
+**Tests:** 1525 passed al abrir E1 (tras integrar D2) → 1549 passed / 0 skipped al cierre.
+Integrado a `main` en `6f1eb5e` (`--no-ff`, historia conservada), tras verificación post-merge
+completa (suite, PAN guard, diff-check, FK check, smoke real cliente→proxy→host, byte-for-byte
+otra vez) y push confirmado. Reporte completo (secciones A-O) en `docs/roadmap/SIBU_3.md`
+sección 16.
+
+## 2026-09-21 — E2: Captura Proxy → Escenario reproducible
+
+El propietario autorizó E2 sobre D3/C4: convertir tráfico observado por el Proxy en escenarios de
+QA reutilizables, SIN transformación activa de mensajes proxied todavía. Rama
+`feature/proxy-e2-capture-to-scenario` desde el nuevo `main`. Cuatro agentes read-only (modelo de
+mensajes del proxy, escenarios/replay, frontera de seguridad, UX) antes de escribir código.
+
+**Hallazgo de investigación clave (agente A):** `orden` en `MensajeProxyCapturado` es un contador
+POR DIRECCIÓN (dos tareas `_pump` independientes, una por sentido) -nunca un índice global de la
+sesión. Correlacionar intercambios por posición habría sido incorrecto; `derivar_intercambios`
+(dominio, pura) empareja por MTI de respuesta esperado (`mti_de_respuesta`) y orden TEMPORAL, no
+por STAN (E1 nunca lo captura) ni por posición -una solicitud sin pareja confiable queda sin
+correlacionar, nunca con una pareja inventada.
+
+**Decisión de diseño que gobernó todo lo demás (agente de seguridad):** NO ampliar el modelo de
+captura de E1 para guardar monto/campos opcionales adicionales -hacerlo repetiría el riesgo ya
+documentado como abierto (ARCH-001: un campo "no sensible hoy" podría transportar datos de
+tarjeta mañana) sobre una tabla de auditoría append-only que no puede repararse retroactivamente.
+En cambio, el MTI ya capturado decide la operación; monto/tarjeta/campos opcionales los aporta la
+persona en el formulario de revisión -nunca inferidos de una captura que nunca los guardó.
+
+**Trazabilidad:** tabla separada `escenarios_origen_captura` (PK/FK 1:1 hacia `escenarios`) -mismo
+principio que D1/D2/E1 ya establecieron tres veces: configuración/entidad principal separada de
+auditoría/procedencia, para que duplicar un escenario nunca arrastre ni pierda su origen en
+silencio.
+
+**Hallazgo real durante las pruebas (una carrera genuina en código de E1, corregido aquí):** el
+`asyncio.shield` que E1.2 usaba para proteger el registro de auditoría de la cancelación de un
+pump protegía la ESCRITURA, pero nadie esperaba explícitamente a que esa tarea en segundo plano
+terminara antes de dar la sesión por finalizada -reproducido intermitentemente por las pruebas
+E2E de esta fase (un mensaje ya reenviado de verdad podía faltar en `proxy_mensajes` justo
+despues de cerrar la sesión). Corregido lanzando el registro como una tarea rastreada
+explícitamente (`tareas_auditoria`), que tanto `_atender` como `detener()` esperan antes de
+considerar la sesión/el proxy cerrados.
+
+**Seguridad probada de extremo a extremo:** una compra financiera real con PAN sintético,
+capturada y convertida en escenario, escanea limpio (heurística de 12-19 dígitos) en las CUATRO
+tablas involucradas (`proxy_sesiones`, `proxy_mensajes`, `escenarios`,
+`escenarios_origen_captura`).
+
+**Verificado en navegador real:** captura real vía dos procesos (`sibu-host-demo` + `sibu-proxy`)
+contra la base de desarrollo (backup previo `sibutestlab8583.db.bak-preE2-*`, migración aplicada,
+`PRAGMA foreign_key_check` limpio), intercambio visible, formulario de revisión completo,
+escenario creado con su rótulo de trazabilidad, y REEJECUTADO con éxito desde la pantalla de
+Escenarios (aprobada, QA PASS, PAN enmascarado).
+
+**Tests:** 1549 passed al abrir E2 (tras integrar E1) → ver commit de cierre para el total final.
 Sin merge a `main` -pendiente de aprobación del propietario. Reporte completo (secciones A-O) en
-`docs/roadmap/SIBU_3.md` sección 16.
+`docs/roadmap/SIBU_3.md` sección 17.
