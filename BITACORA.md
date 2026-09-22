@@ -3302,6 +3302,23 @@ contra la base de desarrollo (backup previo `sibutestlab8583.db.bak-preE2-*`, mi
 escenario creado con su rótulo de trazabilidad, y REEJECUTADO con éxito desde la pantalla de
 Escenarios (aprobada, QA PASS, PAN enmascarado).
 
-**Tests:** 1549 passed al abrir E2 (tras integrar E1) → ver commit de cierre para el total final.
-Sin merge a `main` -pendiente de aprobación del propietario. Reporte completo (secciones A-O) en
-`docs/roadmap/SIBU_3.md` sección 17.
+**Tests:** 1549 passed al abrir E2 (tras integrar E1) → 1573 passed/0 skipped al cierre funcional.
+Reporte completo (secciones A-O) en `docs/roadmap/SIBU_3.md` sección 17.
+
+**Cierre E2.1 -- correlación robusta STAN/RRN (mismo día, antes de integrar):** el propietario
+aprobó E2 funcionalmente pero pidió cerrar primero un riesgo real: un proxy full-duplex con dos
+solicitudes del mismo MTI en vuelo, con las respuestas llegando en orden invertido, podía
+correlacionarse mal con el algoritmo puramente temporal (FIFO). Se agregaron dos campos nombrados
+explícitamente a `MensajeProxyCapturado` -`stan`/`rrn`- como excepción deliberada y acotada a la
+regla de "solo metadata", nunca un `Mapping` genérico; `perfil.es_sensible` se vuelve a consultar
+en cada captura, nunca una lista independiente. `derivar_intercambios` ahora prioriza el
+correlador seguro sobre la posición temporal, con fallback temporal solo cuando es inequívoco.
+Probado con una E2E real: dos 0200 con STAN distinto por la misma conexión, respuestas en orden
+EXACTAMENTE invertido, correlación correcta confirmada (101↔101/102↔102, nunca FIFO); y el caso
+sin correladores suficientes, confirmado ambiguo y rechazado por `ServicioCapturaAEscenario.
+proponer`. Migración aditiva (`stan`/`rrn` nullable), aplicada con backup a la base real; filas
+históricas quedaron en `NULL`, nunca reconstruidas.
+
+**Integración final:** E2 + E2.1 mergeados juntos a `main` en `cd781ec` (`--no-ff`, historia
+conservada), tras verificación post-merge completa (suite 1583 passed/0 skipped, PAN guard,
+diff-check, FK check en la base real) y push confirmado (`HEAD == origin/main`).

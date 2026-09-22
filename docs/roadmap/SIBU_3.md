@@ -27,7 +27,8 @@ qué fase está en qué estado:
 | D — Host Simulator 2.0, subfase D1 (motor de reglas declarativas, persistencia SQLite, UI) | **IMPLEMENTADA**, integrada a `main` (merge `fc69dbd`) |
 | D — Host Simulator 2.0, subfase D2 (reglas con estado limitado: `max_aplicaciones`, atomicidad real, cierre de restart real D2.8) | **IMPLEMENTADA**, integrada a `main` (merge `e7fefe8`) |
 | E — Client/Server/Proxy, subfase E1 (proxy TCP transparente) | **IMPLEMENTADA**, integrada a `main` (merge `6f1eb5e`) |
-| E — Client/Server/Proxy, subfase E2 (captura → escenario reproducible) | **IMPLEMENTADA** en `feature/proxy-e2-capture-to-scenario` (sin mergear a `main`, en revisión) |
+| E — Client/Server/Proxy, subfase E2 (captura → escenario reproducible, incl. E2.1 correlación STAN/RRN) | **IMPLEMENTADA**, integrada a `main` (merge `cd781ec`) |
+| E — Client/Server/Proxy, subfase E3 (transformación controlada del proxy) | **EN PROGRESO** en `feature/proxy-e3-controlled-transformation` |
 | D3, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
@@ -501,16 +502,19 @@ transaccional).
 por 4 agentes read-only (transporte, arquitectura, seguridad, UX) antes de escribir código. Ver
 checkpoint completo en la sección 16.
 
-**E2 — Captura Proxy → Escenario reproducible: IMPLEMENTADO** en
-`feature/proxy-e2-capture-to-scenario`, sin mergear a `main` — pendiente de revisión del
-propietario. Sin transformación activa de mensajes proxied (eso sigue fuera de alcance). Diseño
-previo por 4 agentes read-only (modelo de mensajes del proxy, escenarios/replay, frontera de
-seguridad, UX) antes de escribir código. Ver checkpoint completo en la sección 17.
+**E2 — Captura Proxy → Escenario reproducible (incl. E2.1, correlación robusta STAN/RRN):
+IMPLEMENTADO, integrado a `main`** (merge `cd781ec`). Diseño previo por 4 agentes read-only
+(modelo de mensajes del proxy, escenarios/replay, frontera de seguridad, UX) antes de escribir
+código. Ver checkpoint completo en la sección 17.
+
+**E3 — Transformación controlada del Proxy: EN PROGRESO** en
+`feature/proxy-e3-controlled-transformation`. Opt-in explícito, default sigue transparente. Ver
+checkpoint en construcción en la sección 18.
 
 **NO implementado en E1/E2 (deliberado):** múltiples upstreams, TLS, pool de conexiones upstream
-reutilizables entre sesiones, reintentos/failover, routing por contenido, MITM/transformaciones,
-replay raw, capture automático masivo, PCAP, load, EMV/crypto — ver secciones 16.N/17.N para el
-detalle completo.
+reutilizables entre sesiones, reintentos/failover, routing por contenido, MITM/transformaciones
+NO gobernadas por reglas declarativas E3, replay raw, capture automático masivo, PCAP, load,
+EMV/crypto — ver secciones 16.N/17.N para el detalle completo.
 
 ### Fase F — Performance Lab
 
@@ -1733,9 +1737,11 @@ checkpoint E2 en la sección 17.
 
 ## 17. Checkpoint E2 — Captura Proxy → Escenario reproducible
 
-**Estado: COMPLETO para el alcance acordado.** Rama `feature/proxy-e2-capture-to-scenario`,
-creada desde el nuevo `main` (tras integrar E1). **No mergeada a `main`** — queda en la rama,
-pendiente de revisión del propietario.
+**Estado: COMPLETO, incluido el cierre del riesgo de correlación (E2.1), e INTEGRADO a `main`.**
+Rama `feature/proxy-e2-capture-to-scenario`, creada desde el nuevo `main` (tras integrar E1).
+Merge `--no-ff` (historia conservada) en `cd781ec`, tras verificación post-merge completa (suite,
+PAN guard, diff-check, FK check en la base real). Push confirmado (`HEAD == origin/main ==
+cd781ec`).
 
 **A. Integración E1:** confirmada antes de abrir E2 — `main`/`origin/main` en `6f1eb5e` (ver
 sección 16). Verificado en la base real: `proxy_sesiones`/`proxy_mensajes` presentes, `PRAGMA
@@ -1839,15 +1845,16 @@ Fases A-E1 intactas (sus propias suites pasan sin modificación, incluida la rep
 `ComposicionFalsa` -sin ella, cinco pruebas de escenarios ya existentes habrían quedado rotas por
 la nueva consulta de trazabilidad en `/escenarios`).
 
-**N. Commits:** `ce10e38` (E2.1: corrige pérdida de auditoría en el Proxy, hallazgo real de E1),
-`d7125c4` (E2.2: correlación de intercambios y trazabilidad, dominio), `ed2ad7f` (E2.3:
-persistencia `escenarios_origen_captura`), `c74409f` (E2.4: `ServicioCapturaAEscenario`),
-`647970f` (E2.5: UI), `fa66594` (E2.6: 24 pruebas nuevas). No mergeado a `main` — queda en
-`feature/proxy-e2-capture-to-scenario`, pendiente de revisión del propietario.
+**N. Commits:** `ce10e38` (subcommit interno "E2.1": corrige pérdida de auditoría en el Proxy,
+hallazgo real de E1 — no confundir con el checkpoint **E2.1** del propietario, ver más abajo),
+`d7125c4` (correlación de intercambios y trazabilidad, dominio), `ed2ad7f` (persistencia
+`escenarios_origen_captura`), `c74409f` (`ServicioCapturaAEscenario`), `647970f` (UI), `fa66594`
+(24 pruebas nuevas), `f8d422a` (docs), `47ffb44` (**E2.1** del propietario: correlación robusta
+STAN/RRN, ver el Addendum al final de esta sección). Merge a `main` en `cd781ec` (`--no-ff`,
+historia conservada), push confirmado.
 
-**O. Próximo paso:** decisión del propietario — **D3**, **C4**, o **E3**/E2+ (si en el futuro se
-decide ampliar E2, p. ej. capture-to-scenario para operaciones derivadas, o transformación activa
-del proxy). Ninguno se inicia sin autorización explícita.
+**O. Próximo paso — decidido por el propietario:** **E3** (transformación controlada del Proxy),
+sobre **D3** y **C4**. Ver checkpoint E3 en construcción en la sección 18.
 
 **Hallazgo real durante la construcción (no parte del diseño original, corregido en el camino):**
 un `asyncio.shield` alrededor del registro de auditoría de un mensaje (introducido en E1.2)
@@ -1907,3 +1914,8 @@ Scenario→Ejecutar→QA PASS reconfirmado (`test_captura_a_escenario_e2e.py`).
 
 Suite final: 1573 passed/0 skipped al cerrar E2 → **1583 passed/0 skipped** al cerrar E2.1 (10
 nuevos). `git diff --check` limpio, guardia PAN/Track limpia.
+
+**Integración final:** E2 + E2.1 mergeados juntos a `main` (commit `cd781ec`, `--no-ff`, historia
+conservada) tras esta verificación. Post-merge: suite completa reconfirmada verde (1583
+passed/0 skipped), PAN guard limpio, `git diff --check` limpio, `PRAGMA foreign_key_check` vacío
+en la base real. Push confirmado: `HEAD == origin/main == cd781ec`.

@@ -4,7 +4,8 @@ Memoria operativa para que una sesión nueva recupere el estado del proyecto sin
 No sustituye a `BITACORA.md` (evidencia académica, justificaciones, gobernanza) ni duplica
 `PROYECTO.md` (enunciado autoritativo del alcance) ni `ARQUITECTURA.md` (diseño detallado).
 
-**Última actualización:** 2026-09-21 (E2 — Captura Proxy → Escenario reproducible)
+**Última actualización:** 2026-09-22 (E2/E2.1 integrados a `main`; E3 — Transformación controlada
+del Proxy, en construcción)
 
 ## Estado actual
 
@@ -114,10 +115,16 @@ financiera real con PAN sintético cruza el proxy sin dejar rastro en `proxy_ses
 `sibu-host-demo`-, verificada con dos procesos reales. Ver checkpoint completo en
 `docs/roadmap/SIBU_3.md` sección 16.
 
-**E2 — Captura Proxy → Escenario reproducible** (`feature/proxy-e2-capture-to-scenario`, sin
-mergear todavía): `derivar_intercambios` (dominio, pura, nunca persistida) empareja solicitud/
-respuesta por MTI esperado (`mti_de_respuesta`) y orden temporal -nunca por posición ni STAN
-(E1 nunca lo captura); hallazgo clave: `orden` en `MensajeProxyCapturado` es por DIRECCIÓN, no un
+**E2 — Captura Proxy → Escenario reproducible** (integrado a `main`, merge `cd781ec`, incluye
+E2.1): `derivar_intercambios` (dominio, pura, nunca persistida) empareja solicitud/respuesta por
+MTI esperado (`mti_de_respuesta`) y, cuando están disponibles, correladores seguros (E2.1: STAN
+DE11 primero, RRN DE37 si no hay STAN) -esos correladores PESAN MÁS que la posición temporal,
+cerrando la ambigüedad real de un proxy full-duplex con dos solicitudes del mismo MTI en vuelo a
+la vez (probado con una E2E real: respuestas en orden invertido, correlación correcta por STAN,
+nunca FIFO). Sin correladores (captura histórica o el campo no viajó), cae a "única candidata por
+tiempo" -y solo si es realmente única; ambiguo sin eso, nunca una pareja inventada. `perfil.
+es_sensible` se vuelve a consultar en cada captura antes de persistir un correlador -nunca una
+lista independiente. Hallazgo clave: `orden` en `MensajeProxyCapturado` es por DIRECCIÓN, no un
 índice global. Decisión central: NO ampliar la captura de E1 con monto/campos opcionales (repetiría
 el riesgo ya abierto ARCH-001 sobre una tabla append-only) -el MTI capturado decide la operación,
 todo lo demás lo aporta la persona en el formulario de revisión, con separación visual
@@ -130,11 +137,17 @@ captura externa no tiene) quedan explícitamente "no importables". Trazabilidad 
 esperaba explícitamente antes de finalizar la sesión -corregido rastreando esas tareas y
 esperándolas en `_atender`/`detener()`. Reejecución real verificada en navegador: escenario creado
 desde una captura real se reejecuta con éxito (aprobada, QA PASS) exactamente igual que uno
-creado a mano. Ver checkpoint completo en `docs/roadmap/SIBU_3.md` sección 17.
+creado a mano. Ver checkpoint completo (incluido el Addendum E2.1) en `docs/roadmap/SIBU_3.md`
+sección 17.
 
-Detalle completo (reportes A-N/A-L/A-O/A-N/A-O/A-P) en `docs/roadmap/SIBU_3.md` secciones 9, 10,
-11, 12, 13, 14 y 15; decisiones de gobernanza en `BITACORA.md`. Suite completa: **1522 passed,
-0 skipped**.
+**E3 — Transformación controlada del Proxy** (`feature/proxy-e3-controlled-transformation`, recién
+creada, sin código todavía): objetivo permitir que Sibu modifique tráfico proxied de forma
+explícita, opt-in (default sigue transparente), gobernada por reglas declarativas separadas de
+`ReglaHost` -mismo principio D1/D2 de "nada de scripting". Ver checkpoint en construcción en
+`docs/roadmap/SIBU_3.md` sección 18.
+
+Detalle completo (reportes A-N/A-L/A-O/A-N/A-O/A-P) en `docs/roadmap/SIBU_3.md` secciones 9-17;
+decisiones de gobernanza en `BITACORA.md`. Suite completa: **1583 passed, 0 skipped**.
 
 **Estado anterior a Fase B (2026-09-09):**
 
@@ -485,14 +498,12 @@ más allá del código (RN-3) y bloqueo del envío si falta un campo obligatorio
 
 ## Próximo paso
 
-**E2 (captura Proxy → escenario reproducible) está completo en
-`feature/proxy-e2-capture-to-scenario`, sin mergear a `main` — pendiente de aprobación del
-propietario.** D1, D2 y E1 ya fueron aprobados e integrados a `main` (`fc69dbd`, `e7fefe8`,
-`6f1eb5e`) antes de abrir E2. El propietario decidió E2 sobre D3/C4 (ver checkpoint
-`docs/roadmap/SIBU_3.md` sección 17.O): próximo paso a decidir entre **D3**
-(`visto_antes`/modos de falla restantes), **C4** (capacidades adicionales de secuencia), o
-ampliar E2 (p. ej. hacia operaciones derivadas o transformación activa del proxy, ambas fuera de
-alcance por diseño). Decisión pendiente del propietario.
+**E3 (transformación controlada del Proxy) está en construcción en
+`feature/proxy-e3-controlled-transformation`.** D1, D2, E1 y E2 (con E2.1, correlación robusta
+STAN/RRN) ya fueron aprobados e integrados a `main` (`fc69dbd`, `e7fefe8`, `6f1eb5e`, `cd781ec`)
+antes de abrir E3. El propietario decidió E3 sobre D3/C4 (ver checkpoint `docs/roadmap/SIBU_3.md`
+sección 17.O): E3 aún no tiene código -investigación previa (4 agentes read-only) pendiente antes
+de implementar, siguiendo el mismo criterio de D1/D2/E1/E2.
 
 Las cinco mejoras funcionales pedidas el 2026-09-07 (ver «Estado actual» e «Historial de
 avances») están implementadas y verificadas, pero **sin commit ni push todavía** -queda para
