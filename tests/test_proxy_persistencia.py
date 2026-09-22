@@ -85,9 +85,12 @@ async def test_mensajes_se_listan_por_sesion_en_orden(base):
 async def test_mensaje_proxy_capturado_no_tiene_ningun_campo_para_el_payload():
     """Garantia ESTRUCTURAL (no de convencion): el dataclass no declara
     ningun campo `payload`/`raw`/`Mapping` que pudiera aceptar el contenido
-    de un mensaje -mismo principio que `EventoReglaHost` en D1/D2."""
+    de un mensaje -mismo principio que `EventoReglaHost` en D1/D2. `stan`/
+    `rrn` (E2.1) son la unica excepcion deliberada y acotada: dos campos
+    NOMBRADOS explicitamente, nunca un `Mapping` generico -ver el aviso de
+    seguridad en `domain/proxy.py`."""
     campos = set(MensajeProxyCapturado.__dataclass_fields__)
     assert campos == {
         "session_id", "direccion", "orden", "longitud", "mti",
-        "interpretable", "mensaje_id", "creado_en",
+        "interpretable", "mensaje_id", "creado_en", "stan", "rrn",
     }

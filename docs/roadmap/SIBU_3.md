@@ -26,8 +26,9 @@ qué fase está en qué estado:
 | C — Secuencias transaccionales, subfase C3 (política de continuación STOP/CONTINUE, expectativas dinámicas, retry mínimo seguro) | **IMPLEMENTADA**, integrada a `main` (merge `a7be884`) |
 | D — Host Simulator 2.0, subfase D1 (motor de reglas declarativas, persistencia SQLite, UI) | **IMPLEMENTADA**, integrada a `main` (merge `fc69dbd`) |
 | D — Host Simulator 2.0, subfase D2 (reglas con estado limitado: `max_aplicaciones`, atomicidad real, cierre de restart real D2.8) | **IMPLEMENTADA**, integrada a `main` (merge `e7fefe8`) |
-| E — Client/Server/Proxy, subfase E1 (proxy TCP transparente) | **IMPLEMENTADA** en `feature/proxy-e1-transparent` (sin mergear a `main`, en revisión) |
-| D3, E2+, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
+| E — Client/Server/Proxy, subfase E1 (proxy TCP transparente) | **IMPLEMENTADA**, integrada a `main` (merge `6f1eb5e`) |
+| E — Client/Server/Proxy, subfase E2 (captura → escenario reproducible) | **IMPLEMENTADA** en `feature/proxy-e2-capture-to-scenario` (sin mergear a `main`, en revisión) |
+| D3, F, G, H, I | **PLANIFICADO** o **INVESTIGACIÓN** (ver detalle en la sección de cada fase) |
 
 **Origen:** jornada de trabajo autónoma del 2026-09-11/12, coordinada por el agente principal con
 10 agentes especializados (investigación/diseño, sin escritura de código salvo lo que el
@@ -496,14 +497,20 @@ arbitraria, proxy, load, EMV, crypto -ver checkpoint sección 14 para el detalle
 garantías de seguridad que ya aplica el resto del proyecto (nunca PAN completo fuera del ámbito
 transaccional).
 
-**E1 — Proxy transparente: IMPLEMENTADO** en `feature/proxy-e1-transparent` (2026-09-21), sin
-mergear a `main` — pendiente de revisión del propietario. Diseño previo por 4 agentes read-only
-(transporte, arquitectura, seguridad, UX) antes de escribir código. Ver checkpoint completo en la
-sección 16.
+**E1 — Proxy transparente: IMPLEMENTADO, integrado a `main`** (merge `6f1eb5e`). Diseño previo
+por 4 agentes read-only (transporte, arquitectura, seguridad, UX) antes de escribir código. Ver
+checkpoint completo en la sección 16.
 
-**NO implementado en E1 (deliberado):** múltiples upstreams, TLS, pool de conexiones upstream
+**E2 — Captura Proxy → Escenario reproducible: IMPLEMENTADO** en
+`feature/proxy-e2-capture-to-scenario`, sin mergear a `main` — pendiente de revisión del
+propietario. Sin transformación activa de mensajes proxied (eso sigue fuera de alcance). Diseño
+previo por 4 agentes read-only (modelo de mensajes del proxy, escenarios/replay, frontera de
+seguridad, UX) antes de escribir código. Ver checkpoint completo en la sección 17.
+
+**NO implementado en E1/E2 (deliberado):** múltiples upstreams, TLS, pool de conexiones upstream
 reutilizables entre sesiones, reintentos/failover, routing por contenido, MITM/transformaciones,
-capture-to-scenario, replay, load, EMV/crypto — ver sección 16.N para el detalle completo.
+replay raw, capture automático masivo, PCAP, load, EMV/crypto — ver secciones 16.N/17.N para el
+detalle completo.
 
 ### Fase F — Performance Lab
 
@@ -1603,9 +1610,10 @@ checkpoint E1 en la sección 16.
 
 ## 16. Checkpoint E1 — Proxy TCP ISO 8583 transparente
 
-**Estado: COMPLETO para el alcance acordado.** Rama `feature/proxy-e1-transparent`, creada desde
-el nuevo `main` (tras integrar D2). **No mergeada a `main`** — queda en la rama, pendiente de
-revisión del propietario.
+**Estado: COMPLETO, e INTEGRADO a `main`.** Rama `feature/proxy-e1-transparent`, creada desde el
+nuevo `main` (tras integrar D2). Merge `--no-ff` (historia conservada) en `6f1eb5e`, tras
+verificación post-merge completa (suite, PAN guard, diff-check, FK check, smoke real
+cliente→proxy→host, byte-for-byte otra vez). Push confirmado (`HEAD == origin/main == 6f1eb5e`).
 
 **A. Integración D2:** confirmada antes de abrir E1 — `main`/`origin/main` en `e7fefe8` (ver
 sección 15). La rama E1 parte de ese punto.
@@ -1716,9 +1724,186 @@ modificación).
 
 **N. Commits:** `c0c214b` (E1.1: modelo de dominio y persistencia), `6498677` (E1.2:
 `ProxyIso8583` + CLI), `f0516a6` (E1.3: entry point), `dddd0e4` (E1.4: UI de solo lectura),
-`7fb42ed` (E1.5: 24 pruebas nuevas). No mergeado a `main` — queda en
-`feature/proxy-e1-transparent`, pendiente de revisión del propietario.
+`7fb42ed` (E1.5: 24 pruebas nuevas), `0702e3b` (E1.6: docs). Merge a `main` en `6f1eb5e`
+(`--no-ff`, historia conservada), push confirmado.
 
-**O. Próximo paso:** decisión del propietario — mismos tres caminos que al cierre de D2 (**D3**,
-**C4**), más ahora **E2** (transformación activa sobre el proxy, fuera de alcance de E1 por
-diseño) como cuarta opción. Ninguno se inicia sin autorización explícita.
+**O. Próximo paso — decidido por el propietario:** **E2** (Captura Proxy → Escenario
+reproducible), sobre **D3** y **C4** — sin transformación activa de mensajes proxied todavía. Ver
+checkpoint E2 en la sección 17.
+
+## 17. Checkpoint E2 — Captura Proxy → Escenario reproducible
+
+**Estado: COMPLETO para el alcance acordado.** Rama `feature/proxy-e2-capture-to-scenario`,
+creada desde el nuevo `main` (tras integrar E1). **No mergeada a `main`** — queda en la rama,
+pendiente de revisión del propietario.
+
+**A. Integración E1:** confirmada antes de abrir E2 — `main`/`origin/main` en `6f1eb5e` (ver
+sección 16). Verificado en la base real: `proxy_sesiones`/`proxy_mensajes` presentes, `PRAGMA
+foreign_key_check` limpio, las sesiones reales existentes preservadas, ningún PAN/Track
+persistido.
+
+**B. Correlación de intercambios:** cuatro agentes read-only antes de escribir código (modelo de
+mensajes del proxy, escenarios/replay, frontera de seguridad, UX). Hallazgo crítico del agente A:
+`orden` en `MensajeProxyCapturado` es un contador **por dirección** (dos tareas `_pump`
+independientes, una por sentido), nunca un índice global de la sesión — correlacionar por
+posición habría sido incorrecto. `derivar_intercambios` (domain/proxy.py, PURA, sin I/O) empareja
+cada solicitud interpretable con la primera respuesta interpretable posterior (por tiempo) cuyo
+MTI sea exactamente `mti_de_respuesta(mti_solicitud)` — nunca por STAN (E1 nunca lo captura,
+deliberado) ni por posición. Una solicitud sin pareja confiable queda `correlacionado=False`,
+nunca con una pareja inventada — probado con 8 casos unitarios incluyendo full-duplex con MTIs
+repetidos y una respuesta ya consumida que no se reutiliza para otra solicitud. **Nunca se
+persiste el intercambio**: se deriva en cada lectura, tal como pedía el encargo.
+
+**C. Modelo de propuesta:** `PropuestaEscenarioCapturado` (application/captura_a_escenario.py)
+es un paso intermedio deliberado, todavía NO un `Escenario` — describe qué hace falta pedir
+(tarjeta/monto obligatorios según `perfil.obligatorios`, campos opcionales del perfil, campos de
+expectativa permitidos, conexión sugerida por coincidencia host/puerto), nunca un valor ya
+"adivinado" de la captura. `ServicioCapturaAEscenario.proponer` valida la captura (interpretable,
+correlacionada, MTI con operación soportada) y nunca guarda nada; `crear_desde_captura` es la
+ÚNICA función que persiste, y lo hace delegando en `ServicioEscenarios.crear` sin ningún camino de
+guardado paralelo — un escenario nacido de una captura se reejecuta exactamente igual que uno
+creado a mano, vía el mismo `EjecutorDeEscenarios`.
+
+**D. Mapping captura → escenario:** decisión de investigación (agente de seguridad) que gobierna
+todo el diseño: `MensajeProxyCapturado` (E1) es y sigue siendo estructuralmente ciego a los
+campos del mensaje (solo MTI/dirección/timestamp/longitud) — E2 **no amplía E1** para capturar
+monto ni campos opcionales adicionales, porque hacerlo repetiría exactamente el riesgo que
+`ARCH-001` ya señala como abierto (un campo "no sensible hoy" podría transportar datos de tarjeta
+mañana) sobre una tabla de auditoría append-only que no puede repararse retroactivamente. En
+cambio: el MTI ya capturado decide la operación; el monto, la tarjeta y los campos opcionales los
+aporta la persona en el formulario de revisión — nunca inferidos de una captura que nunca los
+guardó. Solo MTI en `{0100, 0200, 0800}` tienen operación de escenario soportada
+(`_ADAPTADORES_POR_MTI` de `EjecutorDeEscenarios`); 0400/0420 dependen de una `ejecucion_origen`
+concreta de este sistema que una captura externa del Proxy no tiene, y quedan explícitamente "no
+importables", nunca forzadas.
+
+**E. Tarjeta:** selector de radio-buttons sobre el catálogo real de tarjetas de prueba
+(`card_id` + PAN enmascarado) — nunca un campo de texto libre, nunca el PAN capturado (que nunca
+existió en la captura, ver D).
+
+**F. Campos automáticos:** DE7/DE11/DE12/DE13 (y DE2/DE4/DE14 en operaciones con tarjeta) los
+sigue armando la capa estructural de `domain.armado` en cada ejecución — nunca se intentan
+congelar como `campos_manuales` de un escenario nacido de captura, ni podrían: `perfil.politica
+(mti).opcionales`/`.editables` los excluye por construcción, y `ServicioEscenarios.crear`
+(`valores_efectivos_editables`) rechaza cualquier intento (`ValueError`), probado explícitamente
+con DE11 (STAN).
+
+**G. Expectativas sugeridas:** convención declarada, nunca inferida — un checkbox "Esperar DE39 =
+00 (aprobada)" premarcado por defecto (con una nota explícita de que es una sugerencia de
+convención, no una lectura de la respuesta observada, que el proxy no registra) más un selector de
+estado esperado. Reutiliza `campos_permitidos_expectativa`/`validar_expectativas` ya existentes —
+un intento de expectativa sobre un campo sensible (DE35) se rechaza igual que en el resto del
+proyecto, sin una ruta alterna.
+
+**H. Trazabilidad:** tabla separada `escenarios_origen_captura` (PK/FK 1:1 hacia `escenarios`,
+más `session_id`/`mensaje_id_solicitud`/`mensaje_id_respuesta`) — mismo principio que D1/D2/E1 ya
+establecieron tres veces: separar configuración/entidad principal de auditoría/procedencia, para
+que duplicar un escenario nunca arrastre ni pierda en silencio su origen. Visible en
+`/escenarios` como un rótulo "Desde captura de Proxy" que enlaza de vuelta a la sesión — nunca
+oculto.
+
+**I. Seguridad:** probada de extremo a extremo, no solo estructural — una compra financiera real
+con el PAN sintético de la tarjeta demo, capturada por el proxy y convertida en escenario, escanea
+limpio (misma heurística de 12-19 dígitos) en las CUATRO tablas involucradas (`proxy_sesiones`,
+`proxy_mensajes`, `escenarios`, `escenarios_origen_captura`). `OrigenCapturaEscenario` es
+estructuralmente ciego igual que `MensajeProxyCapturado` (solo ids, nunca un campo de negocio).
+
+**J. UI:** sección "Intercambios" nueva en el detalle de sesión (`0200 → 0210` + "Crear
+escenario"), formulario de revisión con separación visual "Capturado" (solo lectura) / "Se usará
+en el escenario" (editable), aviso de seguridad siempre visible. Un MTI sin operación soportada
+muestra el motivo explicativo sin botón, nunca un enlace que no funciona. Verificado en navegador
+real contra la base de desarrollo (migrada primero con backup `sibutestlab8583.db.bak-preE2-*`,
+`PRAGMA foreign_key_check` limpio): captura real vía dos procesos (`sibu-host-demo` +
+`sibu-proxy`), intercambio `0200 → 0210` visible, formulario de revisión completo, escenario
+creado con el rótulo de trazabilidad, y **reejecutado con éxito** desde la pantalla de Escenarios
+(aprobada, QA PASS, PAN enmascarado en el isoscopio).
+
+**K. E2E — casos realizados (puntos 23-27 del encargo):** (1) `0200`→`0210/00` real capturado,
+convertido y reejecutado → PASS; (2) `0200`→`0210/51` (regla D1 real de rechazo) capturado,
+escenario con expectativa 51/rechazada → RECHAZADA pero QA PASS; (3) `0800`→`0810` (Echo)
+capturado y reejecutado sin tarjeta; (4) campos opcionales del perfil (DE18/DE25) SÍ se
+transfieren cuando el creador los agrega explícitamente en la revisión; (5) un campo que la
+política del perfil NO permite (DE11, automático) nunca se cuela silenciosamente — rechazado con
+`ValueError`. Además: un intercambio no correlacionado y un MTI sin operación soportada (0400)
+quedan explícitamente "no importables", nunca forzados.
+
+**L. Transparencia del Proxy:** E2 nunca toca `adapters/proxy/servidor.py` — opera enteramente
+sobre datos ya capturados por E1 (metadata) y sobre lo que la persona aporta en el formulario. El
+forwarding byte-for-byte de E1 permanece intacto (su propia suite, `test_proxy_e2e.py`, sigue
+pasando sin modificación).
+
+**M. Tests:** 1549 passed/0 skipped al abrir E2 (tras integrar E1) → **1573 passed/0 skipped** al
+cierre de E2 (24 nuevos: 8 de correlación de intercambios puros, 2 de migración de esquema
+adicionales, 7 E2E de captura-a-escenario con reejecución real, 3 de seguridad, 4 de UI web).
+Fases A-E1 intactas (sus propias suites pasan sin modificación, incluida la reparación de
+`ComposicionFalsa` -sin ella, cinco pruebas de escenarios ya existentes habrían quedado rotas por
+la nueva consulta de trazabilidad en `/escenarios`).
+
+**N. Commits:** `ce10e38` (E2.1: corrige pérdida de auditoría en el Proxy, hallazgo real de E1),
+`d7125c4` (E2.2: correlación de intercambios y trazabilidad, dominio), `ed2ad7f` (E2.3:
+persistencia `escenarios_origen_captura`), `c74409f` (E2.4: `ServicioCapturaAEscenario`),
+`647970f` (E2.5: UI), `fa66594` (E2.6: 24 pruebas nuevas). No mergeado a `main` — queda en
+`feature/proxy-e2-capture-to-scenario`, pendiente de revisión del propietario.
+
+**O. Próximo paso:** decisión del propietario — **D3**, **C4**, o **E3**/E2+ (si en el futuro se
+decide ampliar E2, p. ej. capture-to-scenario para operaciones derivadas, o transformación activa
+del proxy). Ninguno se inicia sin autorización explícita.
+
+**Hallazgo real durante la construcción (no parte del diseño original, corregido en el camino):**
+un `asyncio.shield` alrededor del registro de auditoría de un mensaje (introducido en E1.2)
+protegía la escritura de la cancelación del pump, pero nadie esperaba explícitamente a que esa
+tarea en segundo plano terminara antes de dar la sesión por finalizada — una carrera real,
+reproducida de forma intermitente por las pruebas E2E de esta fase (un mensaje capturado
+correctamente podía faltar en `proxy_mensajes` justo después de que la sesión terminara). Corregido
+lanzando el registro como una tarea rastreada explícitamente (`tareas_auditoria`), que tanto
+`_atender` como `detener()` esperan antes de considerar la sesión/el proxy cerrados -sin abortar
+la escritura ante una cancelación, pero tampoco sin dejarla huérfana. Documentado aquí porque es
+un ajuste a E1 (ya integrado a `main`) hecho durante el trabajo de E2.
+
+### Addendum E2.1 — Correlación robusta de intercambios Proxy (2026-09-21)
+
+**Riesgo cerrado:** el propietario aprobó E2 funcionalmente pero pidió cerrar un riesgo
+arquitectónico antes de integrar — un proxy full-duplex con dos solicitudes del mismo MTI en
+vuelo a la vez, y las respuestas llegando en orden **invertido**, podía correlacionarse mal con el
+algoritmo puramente temporal de E2 (FIFO habría emparejado la solicitud A con la primera respuesta
+en llegar, aunque esa respuesta fuera en realidad para B).
+
+**Decisión:** `MensajeProxyCapturado` gana dos campos NOMBRADOS explícitamente -`stan` (DE11) y
+`rrn` (DE37)- como excepción deliberada y acotada a la regla de "solo metadata" de E1/E2, nunca un
+`Mapping[str, str]` genérico. Elegidos porque ninguno de los dos es sensible; `perfil.es_sensible`
+se vuelve a consultar en CADA captura antes de persistirlos (`adapters/proxy/servidor.py::
+_registrar_mensaje`) — nunca se confía ciegamente en que "11"/"37" sean siempre seguros, y nunca
+se creó una lista independiente de "campos permitidos para proxy". Probado explícitamente: un
+perfil que marcara DE11 sensible hace que el proxy nunca lo persista, aunque esté en la whitelist
+de candidatos.
+
+**Algoritmo (`domain/proxy.py::derivar_intercambios`, reescrito):** para cada solicitud, se
+calculan las candidatas por MTI de respuesta esperado + orden temporal (igual que antes); si la
+solicitud trae un correlador seguro (STAN primero, RRN si no hay STAN) que coincide con
+EXACTAMENTE una candidata, esa pareja gana — sin importar la posición temporal. Solo si ningún
+correlador está disponible (captura anterior a E2.1, o el campo no viajó) se cae a "única
+candidata por tiempo", y solo si es realmente única. Con más de una candidata y sin un correlador
+que la distinga: `correlacionado=False`, nunca una pareja inventada. Nunca se exige DE37 si la
+solicitud no lo trae.
+
+**Migración:** aditiva, dos columnas nullable (`stan`, `rrn`) en `proxy_mensajes`, aplicada con
+backup a la base de desarrollo real (`sibutestlab8583.db.bak-preE2.1-*`). Confirmado en la base
+real: las seis filas capturadas antes de E2.1 quedaron con `stan`/`rrn` en `NULL` (nunca
+reconstruidos), y una captura nueva (proceso real `sibu-host-demo` + `sibu-proxy`) quedó con el
+STAN real poblado en ambos lados del intercambio. `PRAGMA foreign_key_check` limpio.
+
+**Tests:** 10 nuevos — 5 puros (`test_proxy_intercambios.py`: respuestas invertidas por STAN, mismo
+MTI sin correladores queda ambiguo, captura histórica sin correladores sigue funcionando, RRN
+desambigua sin STAN, nunca exige RRN si falta), 1 de seguridad (`perfil.es_sensible` bloquea la
+persistencia de un STAN si el perfil lo marca sensible), 2 de migración (columnas nuevas
+presentes/idempotente, fila histórica sin stan/rrn sigue legible), y 2 E2E **contra el proxy real**
+(`test_e2_1_correlacion_real.py`): dos 0200 reales con STAN distinto viajando por la MISMA
+conexión antes de que llegue ninguna respuesta, con un stub que responde en orden EXACTAMENTE
+invertido — confirmado que se correlacionan 101↔101/102↔102, nunca por FIFO; y el caso sin
+correladores suficientes, confirmado ambiguo y rechazado explícitamente por
+`ServicioCapturaAEscenario.proponer` (nunca ofrece "Crear escenario" sobre una correlación
+dudosa). Byte-for-byte de E1 reconfirmado sin cambios (`test_proxy_e2e.py` sigue verde). Capture→
+Scenario→Ejecutar→QA PASS reconfirmado (`test_captura_a_escenario_e2e.py`).
+
+Suite final: 1573 passed/0 skipped al cerrar E2 → **1583 passed/0 skipped** al cerrar E2.1 (10
+nuevos). `git diff --check` limpio, guardia PAN/Track limpia.

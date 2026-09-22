@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% from "_piezas.html" import senal, encabezado_pagina %}
+{% block titulo %}Crear escenario desde captura · SibuTestLab8583{% endblock %}
+
+{% block contenido %}
+{{ encabezado_pagina('Crear escenario desde captura', 'Revise cada campo antes de guardar -nada se copia automáticamente de lo observado.') }}
+
+{% if error %}
+<div class="aviso error">
+  <span class="aviso__senal">{{ senal('invalida', 19) }}</span>
+  <h2 class="aviso__titulo">Revise la solicitud</h2>
+  <p class="aviso__detalle">{{ error }}</p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <h2>Capturado</h2>
+  <table class="tabla">
+    <tbody>
+      <tr><th>Sesión</th><td class="mono">{{ session_id }}</td></tr>
+      <tr><th>Solicitud → Respuesta</th><td class="mono">{{ propuesta.mti_solicitud }} → {{ propuesta.mti_respuesta }}</td></tr>
+      <tr><th>Operación resuelta</th><td>{{ etiqueta_operacion(propuesta.operacion) }}</td></tr>
+    </tbody>
+  </table>
+  <p class="campo__pista">
+    Metadata únicamente -el proxy nunca persiste el contenido del mensaje ni campos sensibles.
+    Los valores de abajo NO provienen de este intercambio: se configuran para el escenario.
+  </p>
+</section>
+
+<section class="panel">
+  <h2>Se usará en el escenario</h2>
+  <form method="post" action="/proxy/sesiones/{{ session_id }}/mensajes/{{ propuesta.mensaje_id_solicitud }}/crear-escenario">
+    <div class="campo">
+      <label class="campo__rotulo" for="nombre">Nombre del escenario</label>
+      <input type="text" id="nombre" name="nombre" value="{{ v.get('nombre', propuesta.nombre_sugerido) }}" required>
+    </div>
+
+    {% if propuesta.requiere_tarjeta %}
+    <div class="campo">
+      <span class="campo__rotulo">Tarjeta de prueba</span>
+      {% for tarjeta in tarjetas %}
+      <label>
+        <input type="radio" name="card_id" value="{{ tarjeta.card_id }}"
+               {{ 'checked' if v.get('card_id') == tarjeta.card_id }}>
+        {{ tarjeta.card_id }} · {{ tarjeta.pan_enmascarado }}
+      </label><br>
+      {% endfor %}
+      {% if not tarjetas %}
+      <p class="campo__pista">No hay tarjetas de prueba administradas todavía.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if propuesta.requiere_monto %}
+    <div class="campo">
+      <label class="campo__rotulo" for="monto">Monto</label>
+      <input type="text" id="monto" name="monto" inputmode="decimal" value="{{ v.get('monto', '') }}" required>
+      <p class="campo__pista">No proviene de la captura -el proxy nunca guarda el monto observado.</p>
+    </div>
+    {% endif %}
+
+    {% if propuesta.campos_opcionales_disponibles %}
+    <div class="campo">
+      <span class="campo__rotulo">Campos opcionales (según el perfil)</span>
+      {% for i in range(1, 7) %}
+      <div>
+        <select name="campo_manual_{{ i }}">
+          <option value="">—</option>
+          {% for numero in propuesta.campos_opcionales_disponibles|sort %}
+          <option value="{{ numero }}">DE{{ numero }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="valor_manual_{{ i }}" placeholder="valor">
+      </div>
+      {% endfor %}
+      <p class="campo__pista">No importado a menos que lo agregue aquí explícitamente.</p>
+    </div>
+    {% endif %}
+
+    <div class="campo">
+      <span class="campo__rotulo">Expectativas sugeridas</span>
+      {% if '39' in propuesta.campos_expectativa_disponibles %}
+      <label>
+        <input type="checkbox" name="tipo_esperado_39" value="igual" checked>
+        Esperar DE39 = 00 (aprobada)
+      </label>
+      <input type="hidden" name="valor_esperado_39" value="00">
+      <p class="campo__pista">
+        Sugerencia por defecto para el flujo normal de esta operación -no se derivó de la
+        respuesta observada, que el proxy no registra.
+      </p>
+      {% endif %}
+      <div class="campo">
+        <label class="campo__rotulo" for="estado_esperado">Estado esperado</label>
+        <select id="estado_esperado" name="estado_esperado">
+          <option value="">Sin expectativa de estado</option>
+          <option value="aprobada" selected>Aprobada</option>
+          <option value="rechazada">Rechazada</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="campo">
+      <span class="campo__rotulo">Conexión destino</span>
+      {% for conexion in conexiones %}
+      <label>
+        <input type="radio" name="conexion_id" value="{{ conexion.conexion_id }}"
+               {{ 'checked' if (v.get('conexion_id') or propuesta.conexion_sugerida_id) == conexion.conexion_id }}>
+        {{ conexion.nombre }} ({{ conexion.host }}:{{ conexion.puerto }})
+        {% if conexion.conexion_id == propuesta.conexion_sugerida_id %}<span class="campo__pista">sugerida</span>{% endif %}
+      </label><br>
+      {% endfor %}
+      {% if not conexiones %}
+      <p class="campo__pista">No hay conexiones activas administradas todavía.</p>
+      {% endif %}
+    </div>
+
+    <button class="boton" type="submit">Guardar escenario</button>
+  </form>
+  <p><a href="/proxy/sesiones/{{ session_id }}">← Volver a la sesión</a></p>
+</section>
+{% endblock %}

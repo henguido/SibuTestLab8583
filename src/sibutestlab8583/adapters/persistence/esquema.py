@@ -468,6 +468,25 @@ CREATE TABLE IF NOT EXISTS proxy_mensajes (
     interpretable INTEGER NOT NULL,
     creado_en     TEXT    NOT NULL
 );
+
+-- Trazabilidad de procedencia (Fase E2, 2026-09-21, punto 19 del encargo):
+-- de que Sesion/mensaje de Proxy nacio un Escenario. Tabla SEPARADA de
+-- `escenarios` -mismo principio que ya separa configuracion de auditoria en
+-- D1/D2/E1-: un escenario se edita/duplica libremente (`duplicar()` genera
+-- un `escenario_id` nuevo), y la procedencia de CADA copia es un hecho
+-- historico propio que nunca deberia mutar ni arrastrarse en silencio.
+-- `escenario_id` es PK Y FK 1:1 -un escenario nace de a lo sumo una unica
+-- captura (nunca al reves: la misma captura SI puede originar varios
+-- escenarios distintos, punto 20 del encargo)-. `mensaje_id_respuesta` es
+-- NULL cuando el escenario se creo a partir de una solicitud sin respuesta
+-- correlacionada (caso permitido: Echo timeout, por ejemplo).
+CREATE TABLE IF NOT EXISTS escenarios_origen_captura (
+    escenario_id        TEXT NOT NULL PRIMARY KEY REFERENCES escenarios(escenario_id),
+    session_id          TEXT NOT NULL REFERENCES proxy_sesiones(session_id),
+    mensaje_id_solicitud INTEGER NOT NULL REFERENCES proxy_mensajes(mensaje_id),
+    mensaje_id_respuesta INTEGER REFERENCES proxy_mensajes(mensaje_id),
+    creado_en           TEXT NOT NULL
+);
 """
 
 #: Nombre de la secuencia del numero de trazabilidad.
@@ -646,6 +665,15 @@ COLUMNAS_AGREGADAS_REGLAS_HOST: tuple[tuple[str, str], ...] = (
 #: es el unico valor coherente para esas filas historicas.
 COLUMNAS_AGREGADAS_REGLAS_HOST_EVENTOS: tuple[tuple[str, str], ...] = (
     ("match_number", "INTEGER"),
+)
+
+#: E2.1: `stan`/`rrn` son posteriores a E1 -aditivas, nullable: un mensaje
+#: capturado antes de E2.1 nunca tuvo estos correladores extraidos, asi que
+#: `NULL` es el unico valor coherente para esas filas historicas (punto 6/7
+#: del encargo E2.1: nunca reconstruir un valor inexistente).
+COLUMNAS_AGREGADAS_PROXY_MENSAJES: tuple[tuple[str, str], ...] = (
+    ("stan", "TEXT"),
+    ("rrn", "TEXT"),
 )
 
 #: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
@@ -921,6 +949,7 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         )
         await _migrar(conexion, "reglas_host", COLUMNAS_AGREGADAS_REGLAS_HOST)
         await _migrar(conexion, "reglas_host_eventos", COLUMNAS_AGREGADAS_REGLAS_HOST_EVENTOS)
+        await _migrar(conexion, "proxy_mensajes", COLUMNAS_AGREGADAS_PROXY_MENSAJES)
         # Corre AL FINAL de las migraciones de columnas: reconstruye la tabla
         # completa (ver docstring), asi que necesita que todas las columnas
         # modernas ya existan -si una base historica todavia no tenia

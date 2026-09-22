@@ -52,6 +52,13 @@ logger = logging.getLogger(__name__)
 TIEMPO_LIMITE_CONEXION_POR_DEFECTO = 5.0
 TIEMPO_LIMITE_INACTIVIDAD_POR_DEFECTO = 120.0
 
+#: Correladores seguros (E2.1): los UNICOS dos campos que este adaptador
+#: intenta extraer para observabilidad, ademas del MTI -nunca una lista
+#: abierta. `perfil.es_sensible` sigue siendo la autoridad que decide si
+#: de verdad se persisten (ver `_registrar_mensaje`).
+CAMPO_STAN = "11"
+CAMPO_RRN = "37"
+
 _MOTIVO_EOF_POR_DIRECCION = {
     DireccionMensajeProxy.CLIENTE_A_UPSTREAM: MotivoCierreProxy.EOF_CLIENTE,
     DireccionMensajeProxy.UPSTREAM_A_CLIENTE: MotivoCierreProxy.EOF_UPSTREAM,
@@ -72,6 +79,7 @@ class _SesionActiva(NamedTuple):
     upstream_escritor: asyncio.StreamWriter
     tarea_c2u: asyncio.Task
     tarea_u2c: asyncio.Task
+    tareas_auditoria: list
 
 
 class ProxyIso8583:
@@ -126,7 +134,7 @@ class ProxyIso8583:
         for activa in list(self._sesiones.values()):
             activa.cliente_escritor.close()
             activa.upstream_escritor.close()
-            tareas.extend((activa.tarea_c2u, activa.tarea_u2c))
+            tareas.extend((activa.tarea_c2u, activa.tarea_u2c, *activa.tareas_auditoria))
         if tareas:
             await asyncio.gather(*tareas, return_exceptions=True)
         if self._servidor is not None:
@@ -172,18 +180,26 @@ class ProxyIso8583:
         if self._repositorio_sesiones is not None:
             await self._repositorio_sesiones.actualizar(sesion)
 
+        # Tareas de registro de auditoria (`_registrar_mensaje`), lanzadas
+        # SIN esperar en linea desde el pump -ver `_pump`- para que
+        # cancelar un pump (cuando el otro lado ya cerro) nunca aborte una
+        # escritura de auditoria que YA estaba en curso. Rastreadas aqui
+        # para poder esperarlas explicitamente antes de dar la sesion por
+        # terminada: un `asyncio.shield` sin esto protege la escritura de
+        # la cancelacion, pero nadie esperaria a que de verdad termine.
+        tareas_auditoria: list[asyncio.Task] = []
         contador_c2u = [0]
         contador_u2c = [0]
         tarea_c2u = asyncio.create_task(self._pump(
             cliente_lector, upstream_escritor, DireccionMensajeProxy.CLIENTE_A_UPSTREAM,
-            sesion, contador_c2u,
+            sesion, contador_c2u, tareas_auditoria,
         ))
         tarea_u2c = asyncio.create_task(self._pump(
             upstream_lector, cliente_escritor, DireccionMensajeProxy.UPSTREAM_A_CLIENTE,
-            sesion, contador_u2c,
+            sesion, contador_u2c, tareas_auditoria,
         ))
         self._sesiones[session_id] = _SesionActiva(
-            sesion, cliente_escritor, upstream_escritor, tarea_c2u, tarea_u2c
+            sesion, cliente_escritor, upstream_escritor, tarea_c2u, tarea_u2c, tareas_auditoria
         )
 
         try:
@@ -195,6 +211,8 @@ class ProxyIso8583:
                 pendiente.cancel()
             if pendientes:
                 await asyncio.gather(*pendientes, return_exceptions=True)
+            if tareas_auditoria:
+                await asyncio.gather(*tareas_auditoria, return_exceptions=True)
         finally:
             self._sesiones.pop(session_id, None)
             cliente_escritor.close()
@@ -213,6 +231,7 @@ class ProxyIso8583:
         direccion: DireccionMensajeProxy,
         sesion: SesionProxy,
         contador: list,
+        tareas_auditoria: list,
     ) -> MotivoCierreProxy:
         """Lee frames del origen y los reenvia AL ESCRITOR SIN TOCARLOS
         (punto 3: prohibido decode->modificar->encode->enviar para
@@ -240,15 +259,19 @@ class ProxyIso8583:
                     return _MOTIVO_ERROR_DESTINO_POR_DIRECCION[direccion]
 
                 contador[0] += 1
-                # `shield`: si ESTE pump se cancela (porque el otro lado ya
+                # Lanzada como tarea INDEPENDIENTE, nunca esperada en linea
+                # aqui: si ESTE pump se cancela (porque el otro lado ya
                 # cerro, ver `_atender`) mientras el registro de auditoria
-                # sigue en vuelo, la cancelacion debe interrumpir el pump
-                # -nunca la escritura ya en curso a SQLite-, o un cierre
-                # rapido del otro lado podria perder silenciosamente un
-                # mensaje que YA se reenvio de verdad.
-                await asyncio.shield(
+                # sigue en vuelo, la cancelacion del pump nunca debe abortar
+                # una escritura que YA esta en curso -un `await` directo (o
+                # incluso `asyncio.shield`, que protege la escritura pero
+                # a nadie deja esperandola) dejaria a `_atender` creyendo
+                # terminada la sesion antes de que el INSERT realmente
+                # comprometiera. `_atender` reune estas tareas explicitamente
+                # (`tareas_auditoria`) antes de finalizar la sesion.
+                tareas_auditoria.append(asyncio.ensure_future(
                     self._registrar_mensaje(sesion, direccion, contador[0], payload)
-                )
+                ))
         except asyncio.CancelledError:
             raise
         except OSError:
@@ -259,15 +282,28 @@ class ProxyIso8583:
     ) -> None:
         """Observabilidad de mejor esfuerzo, DESPUES de reenviar (nunca
         antes, nunca bloqueando el forwarding): intenta decodificar una
-        COPIA del payload solo para capturar el MTI. Si falla, el mensaje
-        queda igual registrado con `interpretable=False` -nunca se
+        COPIA del payload solo para capturar el MTI y, si estan presentes y
+        no son sensibles, los correladores seguros DE11 (STAN)/DE37 (RRN)
+        -E2.1, ver el aviso de seguridad en `domain.proxy`-. Si falla, el
+        mensaje queda igual registrado con `interpretable=False` -nunca se
         descarta, nunca detiene el trafico (punto 10)."""
         mti: str | None = None
         interpretable = False
+        stan: str | None = None
+        rrn: str | None = None
         if self._codec is not None and self._perfil is not None:
             try:
-                mti = self._codec.decodificar(bytes(payload), self._perfil).mti
+                decodificado = self._codec.decodificar(bytes(payload), self._perfil)
+                mti = decodificado.mti
                 interpretable = True
+                # Autoridad UNICA de sensibilidad -nunca una lista propia
+                # para el proxy (punto 3 del encargo E2.1): se vuelve a
+                # consultar en cada captura, nunca se confia en que "11"/
+                # "37" sean siempre seguros de antemano.
+                if CAMPO_STAN in decodificado.campos and not self._perfil.es_sensible(CAMPO_STAN):
+                    stan = decodificado.campos[CAMPO_STAN].valor
+                if CAMPO_RRN in decodificado.campos and not self._perfil.es_sensible(CAMPO_RRN):
+                    rrn = decodificado.campos[CAMPO_RRN].valor
             except ErrorDeCodec:
                 interpretable = False
             except Exception:  # nunca deja que un fallo de observabilidad tumbe el proxy
@@ -283,6 +319,8 @@ class ProxyIso8583:
             longitud=len(payload),
             mti=mti,
             interpretable=interpretable,
+            stan=stan,
+            rrn=rrn,
         )
         await self._repositorio_mensajes.registrar(mensaje)
 

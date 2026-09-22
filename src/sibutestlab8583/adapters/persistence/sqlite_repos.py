@@ -48,6 +48,7 @@ from ...domain.proxy import (
     EstadoSesionProxy,
     MensajeProxyCapturado,
     MotivoCierreProxy,
+    OrigenCapturaEscenario,
     SesionProxy,
 )
 from ...domain.reglas_host import (
@@ -1544,8 +1545,9 @@ class RepositorioMensajesProxySQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             await conexion.execute(
                 "INSERT INTO proxy_mensajes"
-                " (session_id, direccion, orden, longitud, mti, interpretable, creado_en)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " (session_id, direccion, orden, longitud, mti, interpretable, creado_en,"
+                "  stan, rrn)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     mensaje.session_id,
                     mensaje.direccion.value,
@@ -1554,6 +1556,8 @@ class RepositorioMensajesProxySQLite(_RepositorioSQLite):
                     mensaje.mti,
                     int(mensaje.interpretable),
                     mensaje.creado_en.isoformat(),
+                    mensaje.stan,
+                    mensaje.rrn,
                 ),
             )
             await conexion.commit()
@@ -1579,4 +1583,44 @@ def _a_mensaje_proxy(fila: aiosqlite.Row) -> MensajeProxyCapturado:
         mti=fila["mti"],
         interpretable=bool(fila["interpretable"]),
         creado_en=datetime.fromisoformat(fila["creado_en"]),
+        stan=_opcional(fila, "stan"),
+        rrn=_opcional(fila, "rrn"),
     )
+
+
+class RepositorioOrigenCapturaEscenarioSQLite(_RepositorioSQLite):
+    """Trazabilidad de procedencia (Fase E2): de que sesion/mensaje del
+    Proxy nacio un Escenario -tabla separada de `escenarios`."""
+
+    async def registrar(self, origen: OrigenCapturaEscenario) -> None:
+        async with self._conectar() as conexion:
+            await conexion.execute(
+                "INSERT INTO escenarios_origen_captura"
+                " (escenario_id, session_id, mensaje_id_solicitud, mensaje_id_respuesta, creado_en)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    origen.escenario_id,
+                    origen.session_id,
+                    origen.mensaje_id_solicitud,
+                    origen.mensaje_id_respuesta,
+                    origen.creado_en.isoformat(),
+                ),
+            )
+            await conexion.commit()
+
+    async def obtener_por_escenario(self, escenario_id: str) -> OrigenCapturaEscenario | None:
+        async with self._conectar() as conexion:
+            conexion.row_factory = aiosqlite.Row
+            async with conexion.execute(
+                "SELECT * FROM escenarios_origen_captura WHERE escenario_id = ?", (escenario_id,)
+            ) as cursor:
+                fila = await cursor.fetchone()
+        if fila is None:
+            return None
+        return OrigenCapturaEscenario(
+            escenario_id=fila["escenario_id"],
+            session_id=fila["session_id"],
+            mensaje_id_solicitud=fila["mensaje_id_solicitud"],
+            mensaje_id_respuesta=_opcional(fila, "mensaje_id_respuesta"),
+            creado_en=datetime.fromisoformat(fila["creado_en"]),
+        )

@@ -13,6 +13,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence
 
+from ..application.captura_a_escenario import MTIS_CON_OPERACION_IMPORTABLE
 from ..application.vista_previa import VistaPreviaMensaje
 from ..application.serializacion import (
     AVISO_HEREDADO,
@@ -33,7 +34,14 @@ from ..domain.modelos import (
     MensajeIso,
     ResultadoCompra,
 )
-from ..domain.proxy import DireccionMensajeProxy, MensajeProxyCapturado, MotivoCierreProxy, SesionProxy
+from ..domain.proxy import (
+    DireccionMensajeProxy,
+    IntercambioProxy,
+    MensajeProxyCapturado,
+    MotivoCierreProxy,
+    SesionProxy,
+    derivar_intercambios,
+)
 from ..domain.reglas_host import CAMPO_MTI, ReglaHost
 from .operaciones import OPERACIONES_CON_TARJETA
 
@@ -1598,6 +1606,56 @@ class FilaMensajeProxy:
     longitud: int
     mti: str | None
     interpretable: bool
+
+
+@dataclass(frozen=True)
+class FilaIntercambioProxy:
+    """Un intercambio DERIVADO (nunca persistido, ver `domain.proxy.
+    derivar_intercambios`) mostrado en el detalle de una sesion -con la
+    accion "Crear escenario" solo cuando de verdad se puede (E2, puntos
+    13/14/21 del encargo: MTI con operacion soportada Y correlacionado)."""
+
+    mensaje_id_solicitud: int
+    mensaje_id_respuesta: int | None
+    resumen: str
+    puede_crear_escenario: bool
+    motivo_no_disponible: str | None
+
+
+def filas_de_intercambios(mensajes: Sequence[MensajeProxyCapturado]) -> Sequence[FilaIntercambioProxy]:
+    """Solo intercambios cuya SOLICITUD es interpretable -un mensaje no
+    interpretable ya tiene su propio aviso en la tabla de mensajes cruda
+    (punto 21 del encargo: nunca ofrecer "Crear escenario" ahi); repetirlo
+    aqui seria ruido, no informacion nueva."""
+    filas = []
+    for intercambio in derivar_intercambios(mensajes):
+        if not intercambio.solicitud.interpretable or intercambio.solicitud.mti is None:
+            continue
+        filas.append(_fila_de_intercambio(intercambio))
+    return filas
+
+
+def _fila_de_intercambio(intercambio: IntercambioProxy) -> FilaIntercambioProxy:
+    solicitud = intercambio.solicitud
+    if not intercambio.correlacionado or intercambio.respuesta is None:
+        resumen = f"{solicitud.mti} → (sin respuesta correlacionada)"
+        motivo = "No se encontró una respuesta correlacionada con confianza."
+        puede = False
+    else:
+        resumen = f"{solicitud.mti} → {intercambio.respuesta.mti}"
+        if solicitud.mti not in MTIS_CON_OPERACION_IMPORTABLE:
+            motivo = f"El MTI {solicitud.mti} todavía no tiene un constructor de escenario soportado."
+            puede = False
+        else:
+            motivo = None
+            puede = True
+    return FilaIntercambioProxy(
+        mensaje_id_solicitud=solicitud.mensaje_id,
+        mensaje_id_respuesta=intercambio.respuesta.mensaje_id if intercambio.respuesta else None,
+        resumen=resumen,
+        puede_crear_escenario=puede,
+        motivo_no_disponible=motivo,
+    )
 
 
 def fila_de_mensaje_proxy(mensaje: MensajeProxyCapturado) -> FilaMensajeProxy:

@@ -51,7 +51,14 @@
         {% set es_echo = escenario.operacion == OPERACION_ECHO %}
         {% set ruta_pantalla = ruta_pantalla_por_operacion.get(escenario.operacion, '/') %}
         <tr>
-          <td>{{ escenario.nombre }}</td>
+          <td>
+            {{ escenario.nombre }}
+            {% if escenario.escenario_id in origenes_captura %}
+            <p class="campo__pista">
+              <a href="/proxy/sesiones/{{ origenes_captura[escenario.escenario_id] }}">Desde captura de Proxy</a>
+            </p>
+            {% endif %}
+          </td>
           <td>
             <span class="chip {{ 'chip--sintetica' if es_echo else 'chip--qa' }}">
               {{ etiqueta_operacion(escenario.operacion) }}
