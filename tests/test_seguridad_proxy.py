@@ -69,7 +69,7 @@ async def test_una_compra_financiera_real_cruza_el_proxy_sin_dejar_un_pan_persis
             " FROM proxy_sesiones"
         ).fetchall()
         filas_mensajes = conexion.execute(
-            "SELECT session_id, direccion, mti, interpretable FROM proxy_mensajes"
+            "SELECT session_id, direccion, mti, interpretable, stan, rrn FROM proxy_mensajes"
         ).fetchall()
     finally:
         conexion.close()
@@ -115,3 +115,42 @@ async def test_el_pump_nunca_decodifica_para_decidir_el_forwarding(base):
         (await RepositorioSesionesProxySQLite(base).listar())[0].session_id
     )
     assert mensajes and all(m.interpretable is False and m.mti is None for m in mensajes)
+
+
+async def test_e2_1_stan_nunca_se_persiste_si_el_perfil_lo_marca_sensible(base):
+    """Punto 3 del encargo E2.1: `perfil.es_sensible(DE)` es la UNICA
+    autoridad -se vuelve a consultar en cada captura. Si un perfil (hoy
+    hipotetico, mañana real) marcara DE11 como sensible, el proxy NUNCA
+    debe persistirlo como correlador, aunque este en la whitelist de
+    candidatos (`CAMPO_STAN`)."""
+    import dataclasses
+
+    from sibutestlab8583.adapters.proxy.servidor import CAMPO_STAN
+
+    perfil_con_stan_sensible = dataclasses.replace(
+        PERFIL_GENERICO, campos_sensibles=frozenset({CAMPO_STAN})
+    )
+    host = HostSimulado(CodecIso8583(), perfil_con_stan_sensible, FramingDemostracion())
+    async with host:
+        proxy = ProxyIso8583(
+            FramingDemostracion(), DestinoTcp(host=host.host, puerto=host.puerto),
+            codec=CodecIso8583(), perfil=perfil_con_stan_sensible,
+            repositorio_sesiones=RepositorioSesionesProxySQLite(base),
+            repositorio_mensajes=RepositorioMensajesProxySQLite(base),
+        )
+        async with proxy:
+            transporte = TransporteTcp(FramingDemostracion(), tiempo_limite=2.0)
+            orquestador = construir_orquestador(
+                base, transporte, destino=DestinoTcp(host=proxy.host, puerto=proxy.puerto),
+                tiempo_limite=2.0,
+            )
+            from sibutestlab8583.domain.modelos import DatosEcho
+            # Marcar DE11 sensible tambien afecta la validacion RN-3 del
+            # lado cliente (correlacion) -irrelevante para este test, que
+            # solo verifica que el PROXY nunca persiste el correlador.
+            await orquestador.ejecutar_network_echo(DatosEcho())
+
+    mensajes = await RepositorioMensajesProxySQLite(base).listar_por_sesion(
+        (await RepositorioSesionesProxySQLite(base).listar())[0].session_id
+    )
+    assert mensajes and all(m.stan is None for m in mensajes)

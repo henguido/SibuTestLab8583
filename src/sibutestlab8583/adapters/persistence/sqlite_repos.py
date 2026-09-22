@@ -1545,8 +1545,9 @@ class RepositorioMensajesProxySQLite(_RepositorioSQLite):
         async with self._conectar() as conexion:
             await conexion.execute(
                 "INSERT INTO proxy_mensajes"
-                " (session_id, direccion, orden, longitud, mti, interpretable, creado_en)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " (session_id, direccion, orden, longitud, mti, interpretable, creado_en,"
+                "  stan, rrn)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     mensaje.session_id,
                     mensaje.direccion.value,
@@ -1555,6 +1556,8 @@ class RepositorioMensajesProxySQLite(_RepositorioSQLite):
                     mensaje.mti,
                     int(mensaje.interpretable),
                     mensaje.creado_en.isoformat(),
+                    mensaje.stan,
+                    mensaje.rrn,
                 ),
             )
             await conexion.commit()
@@ -1580,6 +1583,8 @@ def _a_mensaje_proxy(fila: aiosqlite.Row) -> MensajeProxyCapturado:
         mti=fila["mti"],
         interpretable=bool(fila["interpretable"]),
         creado_en=datetime.fromisoformat(fila["creado_en"]),
+        stan=_opcional(fila, "stan"),
+        rrn=_opcional(fila, "rrn"),
     )
 
 

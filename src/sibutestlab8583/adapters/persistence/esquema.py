@@ -667,6 +667,15 @@ COLUMNAS_AGREGADAS_REGLAS_HOST_EVENTOS: tuple[tuple[str, str], ...] = (
     ("match_number", "INTEGER"),
 )
 
+#: E2.1: `stan`/`rrn` son posteriores a E1 -aditivas, nullable: un mensaje
+#: capturado antes de E2.1 nunca tuvo estos correladores extraidos, asi que
+#: `NULL` es el unico valor coherente para esas filas historicas (punto 6/7
+#: del encargo E2.1: nunca reconstruir un valor inexistente).
+COLUMNAS_AGREGADAS_PROXY_MENSAJES: tuple[tuple[str, str], ...] = (
+    ("stan", "TEXT"),
+    ("rrn", "TEXT"),
+)
+
 #: Lo mismo para `tarjetas_prueba`: `activa` y los ocho campos de laboratorio
 #: (titular en adelante) son posteriores a bases ya creadas por un clon
 #: anterior de este repositorio.
@@ -940,6 +949,7 @@ async def inicializar(ruta: Path | str | None = None, *, con_datos_demo: bool = 
         )
         await _migrar(conexion, "reglas_host", COLUMNAS_AGREGADAS_REGLAS_HOST)
         await _migrar(conexion, "reglas_host_eventos", COLUMNAS_AGREGADAS_REGLAS_HOST_EVENTOS)
+        await _migrar(conexion, "proxy_mensajes", COLUMNAS_AGREGADAS_PROXY_MENSAJES)
         # Corre AL FINAL de las migraciones de columnas: reconstruye la tabla
         # completa (ver docstring), asi que necesita que todas las columnas
         # modernas ya existan -si una base historica todavia no tenia

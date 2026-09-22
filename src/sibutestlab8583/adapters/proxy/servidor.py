@@ -52,6 +52,13 @@ logger = logging.getLogger(__name__)
 TIEMPO_LIMITE_CONEXION_POR_DEFECTO = 5.0
 TIEMPO_LIMITE_INACTIVIDAD_POR_DEFECTO = 120.0
 
+#: Correladores seguros (E2.1): los UNICOS dos campos que este adaptador
+#: intenta extraer para observabilidad, ademas del MTI -nunca una lista
+#: abierta. `perfil.es_sensible` sigue siendo la autoridad que decide si
+#: de verdad se persisten (ver `_registrar_mensaje`).
+CAMPO_STAN = "11"
+CAMPO_RRN = "37"
+
 _MOTIVO_EOF_POR_DIRECCION = {
     DireccionMensajeProxy.CLIENTE_A_UPSTREAM: MotivoCierreProxy.EOF_CLIENTE,
     DireccionMensajeProxy.UPSTREAM_A_CLIENTE: MotivoCierreProxy.EOF_UPSTREAM,
@@ -275,15 +282,28 @@ class ProxyIso8583:
     ) -> None:
         """Observabilidad de mejor esfuerzo, DESPUES de reenviar (nunca
         antes, nunca bloqueando el forwarding): intenta decodificar una
-        COPIA del payload solo para capturar el MTI. Si falla, el mensaje
-        queda igual registrado con `interpretable=False` -nunca se
+        COPIA del payload solo para capturar el MTI y, si estan presentes y
+        no son sensibles, los correladores seguros DE11 (STAN)/DE37 (RRN)
+        -E2.1, ver el aviso de seguridad en `domain.proxy`-. Si falla, el
+        mensaje queda igual registrado con `interpretable=False` -nunca se
         descarta, nunca detiene el trafico (punto 10)."""
         mti: str | None = None
         interpretable = False
+        stan: str | None = None
+        rrn: str | None = None
         if self._codec is not None and self._perfil is not None:
             try:
-                mti = self._codec.decodificar(bytes(payload), self._perfil).mti
+                decodificado = self._codec.decodificar(bytes(payload), self._perfil)
+                mti = decodificado.mti
                 interpretable = True
+                # Autoridad UNICA de sensibilidad -nunca una lista propia
+                # para el proxy (punto 3 del encargo E2.1): se vuelve a
+                # consultar en cada captura, nunca se confia en que "11"/
+                # "37" sean siempre seguros de antemano.
+                if CAMPO_STAN in decodificado.campos and not self._perfil.es_sensible(CAMPO_STAN):
+                    stan = decodificado.campos[CAMPO_STAN].valor
+                if CAMPO_RRN in decodificado.campos and not self._perfil.es_sensible(CAMPO_RRN):
+                    rrn = decodificado.campos[CAMPO_RRN].valor
             except ErrorDeCodec:
                 interpretable = False
             except Exception:  # nunca deja que un fallo de observabilidad tumbe el proxy
@@ -299,6 +319,8 @@ class ProxyIso8583:
             longitud=len(payload),
             mti=mti,
             interpretable=interpretable,
+            stan=stan,
+            rrn=rrn,
         )
         await self._repositorio_mensajes.registrar(mensaje)
 

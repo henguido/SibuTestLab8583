@@ -1859,3 +1859,51 @@ lanzando el registro como una tarea rastreada explícitamente (`tareas_auditoria
 `_atender` como `detener()` esperan antes de considerar la sesión/el proxy cerrados -sin abortar
 la escritura ante una cancelación, pero tampoco sin dejarla huérfana. Documentado aquí porque es
 un ajuste a E1 (ya integrado a `main`) hecho durante el trabajo de E2.
+
+### Addendum E2.1 — Correlación robusta de intercambios Proxy (2026-09-21)
+
+**Riesgo cerrado:** el propietario aprobó E2 funcionalmente pero pidió cerrar un riesgo
+arquitectónico antes de integrar — un proxy full-duplex con dos solicitudes del mismo MTI en
+vuelo a la vez, y las respuestas llegando en orden **invertido**, podía correlacionarse mal con el
+algoritmo puramente temporal de E2 (FIFO habría emparejado la solicitud A con la primera respuesta
+en llegar, aunque esa respuesta fuera en realidad para B).
+
+**Decisión:** `MensajeProxyCapturado` gana dos campos NOMBRADOS explícitamente -`stan` (DE11) y
+`rrn` (DE37)- como excepción deliberada y acotada a la regla de "solo metadata" de E1/E2, nunca un
+`Mapping[str, str]` genérico. Elegidos porque ninguno de los dos es sensible; `perfil.es_sensible`
+se vuelve a consultar en CADA captura antes de persistirlos (`adapters/proxy/servidor.py::
+_registrar_mensaje`) — nunca se confía ciegamente en que "11"/"37" sean siempre seguros, y nunca
+se creó una lista independiente de "campos permitidos para proxy". Probado explícitamente: un
+perfil que marcara DE11 sensible hace que el proxy nunca lo persista, aunque esté en la whitelist
+de candidatos.
+
+**Algoritmo (`domain/proxy.py::derivar_intercambios`, reescrito):** para cada solicitud, se
+calculan las candidatas por MTI de respuesta esperado + orden temporal (igual que antes); si la
+solicitud trae un correlador seguro (STAN primero, RRN si no hay STAN) que coincide con
+EXACTAMENTE una candidata, esa pareja gana — sin importar la posición temporal. Solo si ningún
+correlador está disponible (captura anterior a E2.1, o el campo no viajó) se cae a "única
+candidata por tiempo", y solo si es realmente única. Con más de una candidata y sin un correlador
+que la distinga: `correlacionado=False`, nunca una pareja inventada. Nunca se exige DE37 si la
+solicitud no lo trae.
+
+**Migración:** aditiva, dos columnas nullable (`stan`, `rrn`) en `proxy_mensajes`, aplicada con
+backup a la base de desarrollo real (`sibutestlab8583.db.bak-preE2.1-*`). Confirmado en la base
+real: las seis filas capturadas antes de E2.1 quedaron con `stan`/`rrn` en `NULL` (nunca
+reconstruidos), y una captura nueva (proceso real `sibu-host-demo` + `sibu-proxy`) quedó con el
+STAN real poblado en ambos lados del intercambio. `PRAGMA foreign_key_check` limpio.
+
+**Tests:** 10 nuevos — 5 puros (`test_proxy_intercambios.py`: respuestas invertidas por STAN, mismo
+MTI sin correladores queda ambiguo, captura histórica sin correladores sigue funcionando, RRN
+desambigua sin STAN, nunca exige RRN si falta), 1 de seguridad (`perfil.es_sensible` bloquea la
+persistencia de un STAN si el perfil lo marca sensible), 2 de migración (columnas nuevas
+presentes/idempotente, fila histórica sin stan/rrn sigue legible), y 2 E2E **contra el proxy real**
+(`test_e2_1_correlacion_real.py`): dos 0200 reales con STAN distinto viajando por la MISMA
+conexión antes de que llegue ninguna respuesta, con un stub que responde en orden EXACTAMENTE
+invertido — confirmado que se correlacionan 101↔101/102↔102, nunca por FIFO; y el caso sin
+correladores suficientes, confirmado ambiguo y rechazado explícitamente por
+`ServicioCapturaAEscenario.proponer` (nunca ofrece "Crear escenario" sobre una correlación
+dudosa). Byte-for-byte de E1 reconfirmado sin cambios (`test_proxy_e2e.py` sigue verde). Capture→
+Scenario→Ejecutar→QA PASS reconfirmado (`test_captura_a_escenario_e2e.py`).
+
+Suite final: 1573 passed/0 skipped al cerrar E2 → **1583 passed/0 skipped** al cerrar E2.1 (10
+nuevos). `git diff --check` limpio, guardia PAN/Track limpia.
